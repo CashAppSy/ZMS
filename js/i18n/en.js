@@ -14,7 +14,8 @@
       tasks: "Tasks",
       people: "People & Departments",
       reports: "Reports",
-      settings: "Settings"
+      settings: "Settings",
+      activity: "Activity"
     },
     common: {
       add: "Add", edit: "Edit", delete: "Delete", save: "Save", cancel: "Cancel",
@@ -56,6 +57,8 @@
       upcomingTasks: "Upcoming (7 days)", noLate: "No overdue tasks 🎉",
       noUpcoming: "Nothing due in the next 7 days",
       workload: "Team workload",
+      overallProgress: "Overall progress",
+      overallSub: "Mean progress of {n} top-level projects",
       newTask: "New task", newProject: "New project", nMembers: "{n} members",
       activeProjects: "Active projects", tasksTotal: "Total tasks",
       emptyHint: "No data yet. Create a project, a task, or load demo data to see the dashboard filled with important information.",
@@ -202,6 +205,21 @@
       importFrom: "Import from file"
     },
     sync: { synced: "Auto-synced: data updated from file" },
+    activity: {
+      title: "Activity log",
+      empty: "No activity logged yet — edits to tasks, projects, people and departments will appear here.",
+      export: "Export CSV",
+      clear: "Clear log",
+      clearConfirm: "Clear the whole activity log? This cannot be undone.",
+      cleared: "Activity log cleared",
+      at: "When", user: "User", entity: "Entity", entityName: "Item",
+      action: "Action", detail: "Details",
+      entities: { task: "Task", project: "Project", person: "Person", department: "Department" },
+      actions: {
+        created: "created", updated: "updated", status: "changed status",
+        progress: "changed progress", deleted: "deleted", archived: "archived"
+      }
+    },
     auth: {
       loginTitle: "Sign in",
       login: "Sign in",

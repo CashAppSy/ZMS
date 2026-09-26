@@ -8,6 +8,91 @@
 
   var U = PMS.utils;
 
+  // ------- global activity log (ZMS-R06) -------
+  // Every create/edit/status/progress/delete is appended to `activities`
+  // (newest first, capped). The admin-only "Activity log" view lists them and
+  // the cloud sync ships them as an append-only per-record collection
+  // (zms_activities) so every device records the same history.
+  var LOG_LIMIT = 500;
+  var LOGGED_COLLECTIONS = ["tasks", "projects", "people", "departments"];
+  var LOG_NOISE = ["id", "createdAt", "updatedAt", "activity", "checklist", "comments"];
+  // Per-collection key stored on an entry = singular entity name (matches the
+  // activity.entities i18n keys and the entity colors in the view).
+  var ENTITY_KEY = { tasks: "task", projects: "project", people: "person", departments: "department" };
+
+  function actorName() {
+    var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    return u ? (u.name || u.username || u.email || "") : "";
+  }
+
+  function entityLabel(collection, rec) {
+    if (!rec) return "";
+    if (collection === "tasks") return rec.title || "";
+    if (rec.name != null) {
+      if (typeof rec.name === "string") return rec.name;
+      return rec.name.en || rec.name.ar || "";
+    }
+    return "";
+  }
+
+  function statusLabel(collection, key) {
+    if (!key) return "—";
+    var list = collection === "project"
+      ? PMS.store.data.projectStatuses : PMS.store.data.taskStatuses;
+    var s = (list || []).find(function (x) { return x.key === key; });
+    return s && s.name ? (s.name.en || s.name.ar || key) : key;
+  }
+
+  function makeEntry(collection, rec, action, detail) {
+    var now = new Date().toISOString();
+    var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    return {
+      id: PMS.ids.uuid(),
+      at: now,
+      updatedAt: now,
+      ts: Date.now(),
+      actor: actorName(),
+      actorId: u ? u.id : null,
+      entity: ENTITY_KEY[collection] || collection,
+      entityId: rec ? rec.id : null,
+      entityName: entityLabel(collection, rec),
+      action: action,
+      detail: detail || ""
+    };
+  }
+
+  function pushLog(d, entry) {
+    if (!Array.isArray(d.activities)) d.activities = [];
+    d.activities.unshift(entry);
+    if (d.activities.length > LOG_LIMIT) d.activities.length = LOG_LIMIT;
+  }
+
+  function fieldChanged(prev, cur, key) {
+    return JSON.stringify(prev ? prev[key] : undefined) !== JSON.stringify(cur ? cur[key] : undefined);
+  }
+
+  // Build (and append) an entry describing what a generic update() changed.
+  // Fields the status UI manages itself (activity, comments, clocks) never
+  // count as changes, so a plain status/progress touch logs exactly that.
+  function logUpdate(d, collection, prev, target, patch) {
+    if (LOGGED_COLLECTIONS.indexOf(collection) === -1) return;
+    var changed = Object.keys(patch || {}).filter(function (k) {
+      return LOG_NOISE.indexOf(k) === -1 && fieldChanged(prev, target, k);
+    });
+    if (!changed.length) return;
+    var entry;
+    if (changed.indexOf("status") !== -1) {
+      entry = makeEntry(collection, target, "status",
+        statusLabel(collection, prev.status) + " → " + statusLabel(collection, target.status));
+    } else if (changed.indexOf("progress") !== -1) {
+      entry = makeEntry(collection, target, "progress",
+        (prev.progress === undefined ? 0 : prev.progress) + "% → " + (target.progress === undefined ? 0 : target.progress) + "%");
+    } else {
+      entry = makeEntry(collection, target, "updated", changed.join(", "));
+    }
+    pushLog(d, entry);
+  }
+
   function list(collection) {
     return PMS.store.data[collection] || [];
   }
@@ -25,6 +110,7 @@
     record.updatedAt = now;
     PMS.store.commit(function (d) {
       d[collection].push(record);
+      if (LOGGED_COLLECTIONS.indexOf(collection) !== -1) pushLog(d, makeEntry(collection, record, "created"));
     }, "add-" + collection);
     return record;
   }
@@ -32,12 +118,14 @@
   function update(collection, id, patch) {
     var record = find(collection, id);
     if (!record) return null;
+    var prev = U.deepClone(record);
     PMS.store.commit(function (d) {
       var target = d[collection].find(function (x) { return x.id === id; });
       if (target) U.deepClone(patch) && Object.keys(patch || {}).forEach(function (k) {
         target[k] = U.deepClone(patch[k]);
       });
       if (target) target.updatedAt = new Date().toISOString();
+      if (target) logUpdate(d, collection, prev, target, patch);
     }, "update-" + collection);
     return record;
   }
@@ -54,7 +142,9 @@
       update: function (id, patch) { return update("departments", id, patch); },
       remove: function (id) {
         PMS.store.commit(function (d) {
+          var rec = d.departments.find(function (x) { return x.id === id; });
           d.departments = d.departments.filter(function (x) { return x.id !== id; });
+          if (rec) pushLog(d, makeEntry("departments", rec, "deleted"));
         }, "remove-department");
         return true;
       }
@@ -71,6 +161,7 @@
         PMS.store.commit(function (d) {
           var p = d.people.find(function (x) { return x.id === id; });
           if (p) { p.status = "inactive"; p.updatedAt = new Date().toISOString(); }
+          if (p) pushLog(d, makeEntry("people", p, "archived"));
         }, "archive-person");
         return true;
       }
@@ -96,8 +187,10 @@
         }
         collect(id);
         PMS.store.commit(function (d) {
+          var root = d.projects.find(function (p) { return p.id === id; });
           d.projects = d.projects.filter(function (p) { return toDelete.indexOf(p.id) === -1; });
           d.tasks = d.tasks.filter(function (t) { return toDelete.indexOf(t.projectId) === -1; });
+          if (root) pushLog(d, makeEntry("projects", root, "deleted"));
         }, "remove-project");
         return true;
       },
@@ -137,12 +230,14 @@
           });
         }
         PMS.store.commit(function (d) {
+          var root = d.tasks.find(function (t) { return t.id === id; });
           d.tasks = d.tasks.filter(function (t) { return toDelete.indexOf(t.id) === -1; });
           d.tasks.forEach(function (t) {
             t.dependencies = (t.dependencies || []).filter(function (dep) {
               return toDelete.indexOf(dep) === -1;
             });
           });
+          if (root) pushLog(d, makeEntry("tasks", root, "deleted"));
         }, "remove-task");
         return true;
       },
@@ -216,5 +311,16 @@
         }, "remove-filter");
       }
     }
+  };
+
+  PMS.activity = {
+    entries: function () {
+      return (PMS.store.data && PMS.store.data.activities) || [];
+    },
+    clear: function () {
+      PMS.store.commit(function (d) { d.activities = []; }, "clear-activities");
+      return true;
+    },
+    limit: LOG_LIMIT
   };
 })(window.PMS);

@@ -135,3 +135,35 @@ html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(
 
 /* Gantt dependency arrow marker */
 #gantt-arrowhead { fill: var(--text-faint); }
+
+/* ---------- Activity log ---------- */
+.dash-charts .overall-ring-card .card-body { padding-block-start: var(--space-4); }
+.act-list { display: flex; flex-direction: column; gap: var(--space-2); margin-block-start: var(--space-4); }
+.act-row {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.act-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.act-main { flex: 1; min-width: 0; }
+.act-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.act-name { font-weight: 700; }
+.act-action { color: var(--text-muted); font-size: 0.85rem; }
+.act-detail { margin-block-start: 2px; font-size: 0.85rem; color: var(--text-muted); word-break: break-word; }
+.act-meta { flex: 0 0 auto; text-align: end; }
+.act-actor { display: block; font-size: 0.8rem; color: var(--text); font-weight: 600; }
+.act-time { display: block; font-size: 0.72rem; color: var(--text-faint); margin-block-start: 2px; }
+@media (max-width: 640px) {
+  .act-row { flex-wrap: wrap; }
+  .act-meta { text-align: start; }
+}

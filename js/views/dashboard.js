@@ -34,6 +34,13 @@
     });
     var avg = progN ? progSum / progN : 0;
 
+    // overall progress: mean projectProgress across the top-level projects
+    // (empty tree falls back to the leaf-task average)
+    var roots = projects.filter(function (p) { return !p.parentId; });
+    var rootSum = 0;
+    roots.forEach(function (p) { rootSum += PMS.progress.projectProgress(data, p.id, 0); });
+    var overall = roots.length ? rootSum / roots.length : avg;
+
     // by status/priority
     var byStatus = {}, byPriority = {};
     tasks.forEach(function (tsk) { byStatus[tsk.status] = (byStatus[tsk.status] || 0) + 1; byPriority[tsk.priority] = (byPriority[tsk.priority] || 0) + 1; });
@@ -74,6 +81,7 @@
 
     // Charts row
     var charts = h("div.dash-charts");
+    charts.appendChild(overallCard(overall, roots.length));
     charts.appendChild(chartCard(t("dashboard.byStatus"), donutChart(byStatus, statusColors, totalTasks)));
     charts.appendChild(chartCard(t("dashboard.byPriority"), donutChart(byPriority, prioColors, totalTasks)));
     charts.appendChild(progressCard(t("dashboard.byProject"), topProjects(projects)));
@@ -114,6 +122,26 @@
     var card = h("div.card.chart-card");
     var head = h("div.card-header", [h("div.card-title", { text: title })]);
     var body = h("div.card-body", [svgEl]);
+    card.appendChild(head);
+    card.appendChild(body);
+    return card;
+  }
+
+  // Big Zain-colored overall-progress ring (centerpiece of the dashboard).
+  function overallCard(percent, rootCount) {
+    var card = h("div.card.chart-card.overall-ring-card");
+    var head = h("div.card-header", [h("div.card-title", { text: t("dashboard.overallProgress") })]);
+    var ring = PMS.charts.ring(percent, { size: 190, thick: 24, color: "#23AEB7" });
+    ring.style.display = "block";
+    var body = h("div.card-body", [
+      ring,
+      h("div.chart-legend", [
+        h("span.lg-item", [
+          h("span.lg-swatch", { style: { background: "var(--brand-grad)" } }),
+          h("span", { text: t("dashboard.overallSub", { n: rootCount }) })
+        ])
+      ])
+    ]);
     card.appendChild(head);
     card.appendChild(body);
     return card;

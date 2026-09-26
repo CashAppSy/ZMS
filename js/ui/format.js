@@ -64,7 +64,7 @@
 
   function progressChip(percent) {
     var el = h("span.u-flex", { style: { gap: "6px" } });
-    el.appendChild(h("span.progress-track", { style: { width: "70px", height: "6px", display: "inline-block" } }, [h("span.progress-fill", { style: { width: Math.round(percent) + "%" } })]));
+    el.appendChild(h("span.progress-track", { style: { width: "80px", height: "8px", display: "inline-block" } }, [h("span.progress-fill", { style: { width: Math.round(percent) + "%" } })]));
     el.appendChild(h("span.progress-label", { text: PMS.utils.pct(percent) }));
     return el;
   }

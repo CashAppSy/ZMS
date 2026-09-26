@@ -16,6 +16,9 @@ rules_version = '2';
 //       activity, updatedAt — the exact fields the status UI writes);
 //     - everything else on tasks/projects stays admin-only, and
 //       deleting a project/task record is ALWAYS admin-only.
+//   The global activity log (zms_activities, round 6) is an append-only
+//   per-record collection: any ACTIVE team member may create an entry,
+//   everyone may read, only admins may delete (clearing the log).
 //   The other collections (departments, people, statuses,
 //   priorities, custom field defs, saved filters) stay in the
 //   whole-document model where members are read-only and managers
@@ -170,6 +173,19 @@ service cloud.firestore {
       allow update: if isAdmin(request.auth.uid)
         || isTaskProjectManaged(request.auth.uid, resource.data)
         || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- append-only global activity log (round 6) ----
+    // read  : any ACTIVE team member (the admin review screen reads it)
+    // create: any ACTIVE team member (everyone who performs an action records
+    //         their own entry; entries are immutable once created)
+    // update: never — append-only, no field edits
+    // delete: admin only (clearing the log)
+    match /zms_activities/{id} {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create: if isActiveUser(request.auth.uid);
+      allow update: if false;
       allow delete: if isAdmin(request.auth.uid);
     }
 

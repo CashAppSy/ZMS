@@ -72,7 +72,7 @@ const root = () => document.getElementById("view-root");
   section("Core services");
 
   const d = PMS.schema.defaultData();
-  ok("schema.defaultData shapes", Array.isArray(d.departments) && Array.isArray(d.tasks) && Array.isArray(d.taskStatuses) && Array.isArray(d.priorities));
+  ok("schema.defaultData shapes", Array.isArray(d.departments) && Array.isArray(d.tasks) && Array.isArray(d.taskStatuses) && Array.isArray(d.priorities) && Array.isArray(d.activities));
   ok("schema VERSION set", typeof PMS.schema.VERSION === "number");
 
   const ids = [PMS.ids.uuid(), PMS.ids.uuid(), PMS.ids.uuid()];
@@ -140,6 +140,31 @@ const root = () => document.getElementById("view-root");
   const raw = { schemaVersion: 1, departments: [], people: [], projects: [], tasks: [], customFieldDefs: [], savedFilters: [] };
   PMS.store.ensureShape(raw);
   ok("ensureShape backfills statuses/priorities ", raw.taskStatuses.length === 4 && raw.priorities.length === 4 && raw.settings);
+  ok("ensureShape adds activities array", Array.isArray(raw.activities));
+
+  section("Global activity log");
+  PMS.store.setData(PMS.schema.defaultData());
+  ok("activity log starts empty", PMS.activity.entries().length === 0);
+  const rootP = PMS.repos.projects.add({ name: "Act Root" });
+  const at = PMS.repos.tasks.add({ title: "Act Task", projectId: rootP.id, status: "todo", progress: 0, estimatedHours: 2 });
+  ok("activity records creation (newest first)", PMS.activity.entries()[0].action === "created" && PMS.activity.entries()[0].entity === "task" && PMS.activity.entries()[0].entityName === "Act Task");
+  ok("activity entries carry id + actor + timestamp", PMS.activity.entries().every(e => e.id && e.at && typeof e.actor === "string" && e.entityId));
+  PMS.repos.tasks.update(at.id, { progress: 40 });
+  ok("activity records progress change", PMS.activity.entries()[0].action === "progress");
+  PMS.repos.tasks.update(at.id, { status: "inprogress" });
+  ok("activity records status change", PMS.activity.entries()[0].action === "status");
+  PMS.repos.tasks.update(at.id, { notes: "hi", dueDate: "2099-01-01" });
+  ok("activity records generic edit", PMS.activity.entries()[0].action === "updated");
+  const beforeNoise = PMS.activity.entries();
+  PMS.repos.tasks.update(at.id, { activity: [{ x: 1 }], updatedAt: new Date().toISOString() });
+  ok("noise-only updates are not logged", PMS.activity.entries().length === beforeNoise.length);
+  const q = PMS.repos.people.add({ name: "Q Person" });
+  PMS.repos.people.archive(q.id);
+  ok("activity records person archive", PMS.activity.entries()[0].action === "archived" && PMS.activity.entries()[0].entity === "person");
+  PMS.repos.tasks.remove(at.id);
+  ok("activity records task deletion", PMS.activity.entries()[0].action === "deleted");
+  PMS.activity.clear();
+  ok("activity.clear empties log", PMS.activity.entries().length === 0);
 
   // persistence roundtrip through fallback storage
   PMS.store.setData(PMS.seed.build());
@@ -188,7 +213,7 @@ const root = () => document.getElementById("view-root");
   const statuses = data.taskStatuses;
   const doneStatus = statuses.find(s => s.key === "done");
 
-  const routes = ["/", "/projects", "/projects/" + data.projects[0].id, "/tasks", "/tasks/kanban", "/tasks/gantt", "/tasks/calendar", "/people", "/reports", "/settings"];
+  const routes = ["/", "/projects", "/projects/" + data.projects[0].id, "/tasks", "/tasks/kanban", "/tasks/gantt", "/tasks/calendar", "/people", "/reports", "/settings", "/activity"];
   routes.forEach(r => {
     errors.length = 0;
     route(r);
@@ -211,6 +236,11 @@ const root = () => document.getElementById("view-root");
     sel.dispatchEvent(new window.Event("change", { bubbles: true }));
     ok("tasks table inline status persists when changed", PMS.store.data.tasks.some(t => t.status === target && beforeMap.get(t.id) !== target));
   } else ok("tasks table has inline status select", sel !== null);
+
+  // activity log (admin view) — the inline status change above logged an entry
+  errors.length = 0; route("/activity");
+  ok("activity view renders rows (admin)", root().querySelectorAll(".act-row").length > 0);
+  ok("activity view shows entity/action labels", root().querySelectorAll(".act-badge").length === root().querySelectorAll(".act-row").length);
 
   // kanban
   errors.length = 0; route("/tasks/kanban");
@@ -458,6 +488,10 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   PMS.router.navigate("/settings");
   PMS.router.handle();
   ok("non-admin bounced from /settings", PMS.router.current !== "/settings");
+  errors.length = 0;
+  PMS.router.navigate("/activity");
+  PMS.router.handle();
+  ok("non-admin bounced from /activity", PMS.router.current !== "/activity");
   PMS.router.navigate("/");
   PMS.router.handle();
 

@@ -37,6 +37,11 @@
   --prio-medium: #f59e0b;
   --prio-high: #f97316;
   --prio-urgent: #ef4444;
+
+  /* Zain brand identity (theme-independent) */
+  --zain-teal: #23AEB7;
+  --zain-purple: #344C98;
+  --brand-grad: linear-gradient(135deg, #23AEB7 0%, #344C98 100%);
 }
 
 /* ---------- Light theme ---------- */

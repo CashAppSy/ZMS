@@ -13,7 +13,8 @@
       tasks: "المهام",
       people: "الأشخاص والأقسام",
       reports: "التقارير",
-      settings: "الإعدادات"
+      settings: "الإعدادات",
+      activity: "النشاطات"
     },
     common: {
       add: "إضافة", edit: "تعديل", delete: "حذف", save: "حفظ", cancel: "إلغاء",
@@ -55,6 +56,8 @@
       upcomingTasks: "القادم (7 أيام)", noLate: "لا توجد مهام متأخرة 🎉",
       noUpcoming: "لا شيء مستحق خلال 7 أيام",
       workload: "عبء عمل الفريق",
+      overallProgress: "التقدم الكلي",
+      overallSub: "متوسط تقدم {n} مشروع رئيسي",
       newTask: "مهمة جديدة", newProject: "مشروع جديد", nMembers: "{n} أعضاء",
       activeProjects: "مشاريع نشطة", tasksTotal: "إجمالي المهام",
       emptyHint: "لا توجد بيانات بعد. أنشئ مشروعًا أو مهمة أو حمّل البيانات التجريبية لترى لوحة المعلومات مليئة بالمعلومات المهمة.",
@@ -197,6 +200,21 @@
       importFrom: "استيراد من ملف"
     },
     sync: { synced: "مزامنة تلقائية: تم تحديث البيانات من الملف" },
+    activity: {
+      title: "سجل النشاطات",
+      empty: "لا توجد نشاطات بعد — ستظهر هنا التعديلات على المهام والمشاريع والأشخاص والأقسام.",
+      export: "تصدير CSV",
+      clear: "مسح السجل",
+      clearConfirm: "مسح سجل النشاطات بالكامل؟ لا يمكن التراجع.",
+      cleared: "تم مسح سجل النشاطات",
+      at: "متى", user: "المستخدم", entity: "الجهة", entityName: "العنصر",
+      action: "الإجراء", detail: "التفاصيل",
+      entities: { task: "مهمة", project: "مشروع", person: "شخص", department: "قسم" },
+      actions: {
+        created: "أنشأ", updated: "عدّل", status: "غيّر الحالة",
+        progress: "غيّر الإنجاز", deleted: "حذف", archived: "أرشفة"
+      }
+    },
     auth: {
       loginTitle: "تسجيل الدخول",
       login: "دخول",

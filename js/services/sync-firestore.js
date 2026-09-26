@@ -18,6 +18,11 @@
          updatedAt — the exact fields the status UI writes);
        * everything else on projects/tasks stays admin-only, and deleting a
          project/task record is ALWAYS admin-only.
+   - The global ACTIVITY LOG (round 6) is a per-record append-only collection
+     (zms_activities/<id>): any ACTIVE user may create an entry (recording
+     their own action), everyone reads it, only admins delete (e.g. clearing
+     the log). The push uploads entries the local mirror has not seen yet and
+     never re-writes existing ones.
    - A "state" doc (zms_meta/state) is a last-writer-wins clock. Members'
      status changes may bump ONLY the clock (updatedAt) so other devices
      notice; they cannot touch schemaVersion/hasData/writer.
@@ -57,7 +62,12 @@
     "priorities", "customFieldDefs", "savedFilters"];
   // Per-record collections (round-4 layout): one document PER project/task.
   var RECORD_COLS = ["projects", "tasks"];
-  var COLLECTIONS = WHOLE_COLS.concat(RECORD_COLS);
+  // Append-only per-record collections (round-6 layout): the global activity
+  // log. Entries are only ever created (any active user) and deleted (admin,
+  // e.g. clearing the log) — a push uploads new local entries the mirror has
+  // not seen yet and never re-writes an existing entry.
+  var APPEND_COLS = ["activities"];
+  var COLLECTIONS = WHOLE_COLS.concat(RECORD_COLS).concat(APPEND_COLS);
   // Only user-authored collections count as "real data": built-in statuses etc.
   // are present on every fresh device and must never be mistaken for content
   // to share (that is how a new empty browser used to wipe the shared cloud).
@@ -440,6 +450,12 @@
     saveMirror(m);
   }
 
+  // Per-record models (create/update per document) cover both the mutable
+  // projects/tasks and the append-only activities collection.
+  function isRecordCol(cname) {
+    return RECORD_COLS.indexOf(cname) !== -1 || APPEND_COLS.indexOf(cname) !== -1;
+  }
+
   function statusTrack(rec) {
     return {
       updatedAt: rec.updatedAt || null,
@@ -552,6 +568,38 @@
     return { ops: ops, mirror: mirrorUpdates };
   }
 
+  // Builds the ops to push an append-only collection (the global activity
+  // log): create every local entry the mirror has not seen yet, and (admin
+  // only) delete mirrored entries no longer present locally — e.g. when an
+  // admin clears the log. Entries are immutable once created, so an update
+  // is never emitted. Returns { ops, mirror } where mirror maps id -> true
+  // (present in cloud) or null (dropped).
+  function buildAppendOps(cname, d, idn, t) {
+    var ops = [];
+    var mirrorUpdates = {};
+    var mirror = mirrorFor(cname);
+    var local = Array.isArray(d && d[cname]) ? d[cname] : [];
+    var have = {};
+    local.forEach(function (rec) { if (rec && rec.id) have[rec.id] = true; });
+
+    // deletions: admin only (rules forbid members from deleting entries)
+    Object.keys(mirror).forEach(function (id) {
+      if (have[id]) return;
+      if (!idn.isAdmin) return;
+      ops.push(recordRef(cname, id).delete());
+      mirrorUpdates[id] = null;
+    });
+
+    local.forEach(function (rec) {
+      if (!rec || !rec.id) return;
+      if (mirror[rec.id]) return;
+      ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+      mirrorUpdates[rec.id] = true;
+    });
+
+    return { ops: ops, mirror: mirrorUpdates };
+  }
+
   // Round-3 clouds stored projects/tasks as whole-doc items inside
   // zms_projects/data / zms_tasks/data. The pull already re-expands those
   // items into per-record rows. Here an ADMIN removes the legacy wrapper doc
@@ -603,6 +651,12 @@
           var mirrorPatches = {};
           RECORD_COLS.forEach(function (cname) {
             var built = buildRecordOps(cname, d, idn, t);
+            ops = ops.concat(built.ops);
+            if (built.mirror) mirrorPatches[cname] = built.mirror;
+          });
+          // append-only per-record collections (activity log)
+          APPEND_COLS.forEach(function (cname) {
+            var built = buildAppendOps(cname, d, idn, t);
             ops = ops.concat(built.ops);
             if (built.mirror) mirrorPatches[cname] = built.mirror;
           });
@@ -678,7 +732,7 @@
         if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
-        if (RECORD_COLS.indexOf(cname) !== -1) {
+        if (isRecordCol(cname)) {
           // per-record collection: read every doc. A legacy whole-doc
           // zms_<c>/data (round-3) is re-expanded into its items so existing
           // clouds stay readable until the admin's push migrates them.
@@ -732,10 +786,14 @@
       applying = true;
       PMS.store.setData(obj);
       // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
-      // cloud as its baseline; a local edit made before/after still differs)
-      RECORD_COLS.forEach(function (cname) {
+      // cloud as its baseline; a local edit made before/after still differs).
+      // Projects/tasks track status fields; append-only collections (activity
+      // log) just track which entry ids the cloud already holds.
+      COLLECTIONS.forEach(function (cname) {
         var map = {};
-        (rawRemote[cname] || []).forEach(function (rec) { if (rec && rec.id) map[rec.id] = statusTrack(rec); });
+        (rawRemote[cname] || []).forEach(function (rec) {
+          if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? statusTrack(rec) : true;
+        });
         setMirrorFor(cname, map);
       });
       applying = false;

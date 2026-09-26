@@ -137,7 +137,7 @@
 
   function ensureShape(d) {
     var keys = ["departments", "people", "projects", "tasks", "users", "customFieldDefs",
-      "taskStatuses", "projectStatuses", "priorities", "savedFilters"];
+      "taskStatuses", "projectStatuses", "priorities", "savedFilters", "activities"];
     keys.forEach(function (k) {
       if (!Array.isArray(d[k])) d[k] = [];
     });

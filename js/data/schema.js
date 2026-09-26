@@ -26,6 +26,7 @@
       tasks: [],
       users: [],
       customFieldDefs: [],
+      activities: [],
       taskStatuses: [
         { id: "status-task-todo", key: "todo", name: { en: "To do", ar: "قيد الانتظار" }, color: "#6b7280", order: 1 },
         { id: "status-task-inprogress", key: "inprogress", name: { en: "In progress", ar: "قيد التنفيذ" }, color: "#3b82f6", order: 2 },
