@@ -125,6 +125,7 @@
         submit.disabled = false;
         submit.textContent = t("auth.cloudCreate");
         setError(form, (err && err.userCode) || "generic");
+        console.error("[zms] cloud sign-up failed:", err && err.code || err, err);
       });
     });
 
@@ -202,6 +203,7 @@
           submit.disabled = false;
           submit.textContent = t("auth.cloudSignIn");
           setError(form, (err && err.userCode) || "generic");
+          console.error("[zms] cloud sign-in failed:", err && err.code || err, err);
         });
     });
 
@@ -249,6 +251,9 @@
       case "notfound": return t("auth.notFound");
       case "weak": return t("auth.weak");
       case "network": return t("auth.network");
+      case "authNotEnabled": return t("auth.authNotEnabled");
+      case "domainNotAllowed": return t("auth.domainNotAllowed");
+      case "apiNotActivated": return t("auth.apiNotActivated");
       default: return t("errors.generic");
     }
   }
