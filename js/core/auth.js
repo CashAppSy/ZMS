@@ -329,6 +329,7 @@
       passwordHash: "cloud::" + (opts.cloudUid || rec.id),
       salt: "",
       linkedToCloud: !!opts.cloudUid,
+      personId: opts.personId || null,
       active: opts.active !== false,
       createdAt: now
     };
