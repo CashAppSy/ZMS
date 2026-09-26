@@ -103,9 +103,16 @@
   }
 
   function randomSalt() {
-    var out = "";
+    // ZMS-RT-10: prefer a CSPRNG when available instead of Math.random()
     var alphabet = "abcdef0123456789";
-    for (var i = 0; i < 16; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    var out = "", i;
+    if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+      var bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      for (i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % 16];
+      return out;
+    }
+    for (i = 0; i < 16; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
     return out;
   }
 
@@ -406,6 +413,11 @@
   // local record (identity + role only) so existing role gates and person
   // linking keep working. The authoritative password lives in Firebase only.
   // These helpers are fully local (no network), safe for browser + tests.
+  //
+  // ZMS-RT-03: these helpers are NOT exposed on PMS.auth. They live on a
+  // separate PMS.cloudBridge namespace and are only ever called by the cloud
+  // login flow (js/views/auth.js, js/services/sync-firestore.js) which passes
+  // them values that already came from a real Firebase Auth result.
   function registerCloudUser(opts) {
     var now = new Date().toISOString();
     var rec = {
@@ -456,7 +468,7 @@
     return currentUser();
   }
 
-  PMS.auth = {
+PMS.auth = {
     roles: ROLES,
     rolePermissions: ROLE_PERMS,
     configured: configured,
@@ -477,17 +489,26 @@
     role: role,
     can: can,
     isAdmin: isAdmin,
-    reauthenticateAdmin: reauthenticateAdmin,
     canDelete: canDelete,
     requireDelete: requireDelete,
-    registerCloudUser: registerCloudUser,
-    userByCloudUid: userByCloudUid,
-    // INTERNAL: never expose this as a public, id-only session miter
-    // (ZMS-R01). Only the cloud layer calls it, and only after a real
-    // Firebase Auth result verified the same uid on this page.
-    _adoptBridge: adoptUser,
-    _markCloudVerified: markCloudVerified,
-    _setSessionTTLForTest: function (ms) { SESSION_TTL_MS = (ms === undefined || ms === null) ? SESSION_TTL_DEFAULT : ms; },
-    _resetSessionForTest: function () { SESSION = null; try { window.localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+    reauthenticateAdmin: reauthenticateAdmin
   };
+  // ZMS-RT-03: no auth-bridge helpers here. The cloud bridge lives on
+  // PMS.cloudBridge (below) and only the cloud login flow calls it.
+
+  // Bridge surface for the cloud login flow ONLY. Kept separate from PMS.auth
+  // so nothing security-sensitive is discoverable on the main API object.
+  PMS.cloudBridge = {
+    markVerified: markCloudVerified,
+    register: registerCloudUser,
+    userByCloudUid: userByCloudUid,
+    adopt: adoptUser
+  };
+  // ZMS-RT-03 / test-only: session-twiddling hooks are reachable only under
+  // the test harness (window.__ZMS_TEST__ is set by tests/, never by a real
+  // browser), so PMS.auth carries no session-bypass surface in the app.
+  if (typeof window !== "undefined" && window.__ZMS_TEST__) {
+    PMS.auth._setSessionTTLForTest = function (ms) { SESSION_TTL_MS = (ms === undefined || ms === null) ? SESSION_TTL_DEFAULT : ms; };
+    PMS.auth._resetSessionForTest = function () { SESSION = null; try { window.localStorage.removeItem(SESSION_KEY); } catch (e) {} };
+  }
 })(window.PMS);

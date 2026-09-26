@@ -13,14 +13,14 @@
    - The Firebase SDK is loaded dynamically from the Google CDN only when
      the feature is enabled, so the app keeps working fully offline and the
      test harness never touches the network.
-   - Connection settings come from PMS.cloudConfig (js/cloud-config.js,
-     committed with the site). That makes sync automatic: every device that
-     opens the deployed site connects to the same cloud with no per-device
-     setup. A per-device localStorage override is optional for power users.
+- Connection settings come from PMS.cloudConfig (js/cloud-config.js,
+      committed with the site). That makes sync automatic: every device that
+      opens the deployed site connects to the same cloud with no per-device
+      setup. A per-device localStorage override is optional for power users.
 
-   NOTICE: Firestore rules must allow public read/write (or the equivalent)
-   for this to work with the local-accounts model. That is UI-level sharing,
-   not server security — anyone who finds the project can read the data.
+   SECURITY: shared data requires an ACTIVE cloud profile (see firestore.rules).
+   Members are read-only on shared data; only managers/admins — or the bootstrap
+   first account — may push (canWriteShared() mirrors this client-side).
    ========================================================================== */
 (function (PMS) {
   "use strict";
@@ -172,6 +172,34 @@
     }).then(function (snap) { return !!(snap && snap.exists); });
   }
 
+  // The account recorded in zms_auth/bootstrap.firstUid may still WRITE shared
+  // data even when its stored role predates the elevated roles (migration
+  // guard). Read once and cache it so push() does not re-read per keystroke.
+  var cachedBootstrapOwner = null;
+  var bootstrapOwnerLoaded = false;
+  function bootstrapOwnerUid() {
+    if (bootstrapOwnerLoaded) return Promise.resolve(cachedBootstrapOwner);
+    return ensureReady().then(function () {
+      return bootRef().get();
+    }).then(function (snap) {
+      cachedBootstrapOwner = (snap && snap.exists && snap.data().firstUid) || null;
+      bootstrapOwnerLoaded = true;
+      return cachedBootstrapOwner;
+    }).catch(function () { bootstrapOwnerLoaded = true; return null; });
+  }
+
+  // True when THIS signed-in cloud user may push shared datasets. Mirrors the
+  // Firestore rules (ZMS-RT-01/06): only admin/manager — or the bootstrap
+  // owner (firstUid migration) — may write; plain members are read-only on
+  // shared data, so their devices must not attempt whole-dataset writes.
+  function canWriteShared() {
+    var u = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
+    if (!u || !u.cloudUid) return Promise.resolve(false);
+    if (u.role === "admin" || u.role === "manager") return Promise.resolve(true);
+    if (u.role !== "member") return Promise.resolve(false);
+    return bootstrapOwnerUid().then(function (first) { return !!first && u.cloudUid === first; });
+  }
+
   function authErrorMessage(e) {
     var code = e && e.code || "";
     switch (code) {
@@ -199,18 +227,16 @@
   }
 
   // Decides which role may be written for a NEW cloud account.
-  //  - a normal signup is ALWAYS "member"
   //  - while the bootstrap admin record does not exist yet, the very first
-  //    account becomes the admin
-  //  - when the bootstrap exists, elevated roles are only allowed for an
-  //    already-admin caller; anything else is forced back to "member"
-  // This mirrors what the Firestore rules enforce; the browser cannot decide
-  // by itself that a random account is admin.
-  function resolveSignupRole(role, bootstrapExists, callerIsAdmin) {
-    var wanted = ["admin", "manager", "member"].indexOf(role) !== -1 ? role : "member";
-    if (wanted === "member") return "member";
-    if (!bootstrapExists) return wanted;
-    return callerIsAdmin ? wanted : "member";
+  //    account becomes the ADMIN (the client cannot choose this; the resolver
+  //    decides strictly from server-visible state),
+  //  - once the bootstrap exists every further signup is ALWAYS "member" —
+  //    no client input, not even an admin caller, may mint an elevated role
+  //    for a later account (promotion is an admin update / adminSetRole).
+  // This mirrors what the Firestore rules enforce.
+  function resolveSignupRole(role, bootstrapExists) {
+    if (!bootstrapExists) return "admin";
+    return "member";
   }
 
   // ZMS-R06: signup no longer accepts a role from the client at all. Whatever
@@ -223,9 +249,8 @@
     }).then(function (cred) {
       var uid = cred.user.uid;
       return bootRef().get().then(function (b) {
-        var caller = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
-        var callerIsAdmin = !!(caller && caller.role === "admin");
-        var role = resolveSignupRole("member", b.exists, callerIsAdmin);
+        var role = resolveSignupRole("member", b.exists);
+        if (role === "admin") cachedBootstrapOwner = uid;
         var rec = {
           email: opts.email, role: role,
           displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
@@ -234,7 +259,7 @@
           if (!b.exists) return bootRef().set({ firstUid: uid, updatedAt: now() });
           return undefined;
         }).then(function () {
-          if (PMS.auth && PMS.auth._markCloudVerified) PMS.auth._markCloudVerified(uid);
+          if (PMS.cloudBridge && PMS.cloudBridge.markVerified) PMS.cloudBridge.markVerified(uid);
           return { uid: uid, email: opts.email, role: role, displayName: opts.name || "", isAdmin: role === "admin" };
         });
       });
@@ -247,7 +272,7 @@
       return a.signInWithEmailAndPassword(opts.email, opts.password);
     }).then(function (cred) {
       var uid = cred.user.uid;
-      if (PMS.auth && PMS.auth._markCloudVerified) PMS.auth._markCloudVerified(uid);
+      if (PMS.cloudBridge && PMS.cloudBridge.markVerified) PMS.cloudBridge.markVerified(uid);
       return cloudUserRef(uid).get().then(function (s) {
         var d = s.exists && s.data() ? s.data() : {};
         return {
@@ -319,33 +344,38 @@
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
     if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
-    return ensureReady().then(function () {
-      var t = now();
-      var ops = [];
-      COLLECTIONS.forEach(function (cname) {
-        if (Array.isArray(d[cname])) {
-          ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
+    // ZMS-RT-01/06: members are read-only on the shared datasets at the server;
+    // do not even attempt whole-dataset writes from a member's device.
+    return canWriteShared().then(function (ok) {
+      if (!ok) return false;
+      return ensureReady().then(function () {
+        var t = now();
+        var ops = [];
+        COLLECTIONS.forEach(function (cname) {
+          if (Array.isArray(d[cname])) {
+            ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
+          }
+        });
+        ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
+        return Promise.all(ops);
+      }).then(function () {
+        // align the in-memory clock with what we uploaded (and persist it) so
+        // the next poll/reboot does not re-import our own data back onto this
+        // device. flush() does not emit "store:changed", so this cannot loop.
+        var d = PMS.store.data;
+        if (d && d.meta) {
+          d.meta.updatedAt = new Date().toISOString();
+          PMS.store.flush();
         }
+        lastPushed = Date.now();
+        PMS.bus.emit("cloud:state", { pushed: true });
+        console.info("[cloudsync] push ok", COLLECTIONS.filter(function (c) { return Array.isArray(d && d[c]); }).reduce(function (o, c) { o[c] = (d[c] || []).length; return o; }, {}));
+        return true;
+      }).catch(function (e) {
+        console.error("[cloudsync] push failed:", e);
+        PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
+        return false;
       });
-      ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
-      return Promise.all(ops);
-    }).then(function () {
-      // align the in-memory clock with what we uploaded (and persist it) so
-      // the next poll/reboot does not re-import our own data back onto this
-      // device. flush() does not emit "store:changed", so this cannot loop.
-      var d = PMS.store.data;
-      if (d && d.meta) {
-        d.meta.updatedAt = new Date().toISOString();
-        PMS.store.flush();
-      }
-      lastPushed = Date.now();
-      PMS.bus.emit("cloud:state", { pushed: true });
-      console.info("[cloudsync] push ok", COLLECTIONS.filter(function (c) { return Array.isArray(d && d[c]); }).reduce(function (o, c) { o[c] = (d[c] || []).length; return o; }, {}));
-      return true;
-    }).catch(function (e) {
-      console.error("[cloudsync] push failed:", e);
-      PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
-      return false;
     });
   }
 
@@ -499,17 +529,20 @@
   function pushIfLocalIsAhead() {
     var local = PMS.store.data;
     var hasLocal = USER_COLS.some(function (c) { return Array.isArray(local[c]) && local[c].length > 0; });
-    return stateRef().get().then(function (s) {
-      if (!s.exists) return hasLocal ? push() : false;
-      var d = s.data() || {};
-      // a cloud whose last push carried no real data (hasData:false) is hollow —
-      // repopulate it from this device when it actually has content
-      if (d.hasData === false) return hasLocal ? push() : false;
-      var remote = d.updatedAt;
-      if (!remote) return hasLocal ? push() : false;
-      var localAt = local.meta && local.meta.updatedAt;
-      if (localAt && remote < localAt) return hasLocal ? push() : false;
-      return false;
+    return canWriteShared().then(function (ok) {
+      if (!ok) return false;
+      return stateRef().get().then(function (s) {
+        if (!s.exists) return hasLocal ? push() : false;
+        var d = s.data() || {};
+        // a cloud whose last push carried no real data (hasData:false) is hollow —
+        // repopulate it from this device when it actually has content
+        if (d.hasData === false) return hasLocal ? push() : false;
+        var remote = d.updatedAt;
+        if (!remote) return hasLocal ? push() : false;
+        var localAt = local.meta && local.meta.updatedAt;
+        if (localAt && remote < localAt) return hasLocal ? push() : false;
+        return false;
+      });
     });
   }
 
@@ -596,17 +629,21 @@
     isConfigured: isConfigured,
     isEnabled: isEnabled,
     auth: authx,
-    bootRef: bootRef,
     hasCloudAdmin: hasCloudAdmin,
+    canWriteShared: canWriteShared,
     signUpWithPassword: signUpWithPassword,
     signInWithPassword: signInWithPassword,
     signOut: signOut,
     resetPassword: resetPassword,
     setCloudRole: setCloudRole,
     deleteCloudAccount: deleteCloudAccount,
-    authErrorMessage: authErrorMessage,
-    // internal helpers exported for the offline test suite
-    _mergeForTest: mergeWithLocal,
-    _resolveSignupRoleForTest: resolveSignupRole
+    authErrorMessage: authErrorMessage
   };
+  // ZMS-RT-03: test-only helpers are reachable only under the test harness
+  // (window.__ZMS_TEST__ is set by tests/, never by a real browser) so
+  // window.PMS.cloudsync carries no internal bridge/test surface in the app.
+  if (typeof window !== "undefined" && window.__ZMS_TEST__) {
+    PMS.cloudsync._mergeForTest = mergeWithLocal;
+    PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
+  }
 })(window.PMS);

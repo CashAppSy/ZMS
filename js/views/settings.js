@@ -849,7 +849,7 @@
             PMS.cloudsync.signUpWithPassword({
               email: v.email, password: v.password, name: v.name || "", personId: v.personId || null
             }).then(function (res) {
-              PMS.auth.registerCloudUser({ username: res.email, cloudUid: res.uid, role: res.role, name: res.displayName || v.name || "", personId: v.personId || null });
+              PMS.cloudBridge.register({ username: res.email, cloudUid: res.uid, role: res.role, name: res.displayName || v.name || "", personId: v.personId || null });
               PMS.modal.close();
               PMS.store.flush();
               PMS.toast.show(t("auth.cloudAccountCreated"), "success");

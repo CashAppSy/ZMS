@@ -209,25 +209,46 @@ Implemented hardening (`js/`):
   first (bootstrap) account. Role changes are admin-only via `updateUser`
   (local) or the `adminSetRole` cloud function (cloud); `setCloudRole` is
   admin-gated, role-validated and routes through the trusted backend first.
-- **No public session minting**: the bridge helper (`_adoptBridge`) is internal
-  and requires a `cloudUid` matching both the account record and a uid verified
-  by a real Firebase Auth result — an id alone can never create a session.
+- **No public session minting** (`ZMS-RT-03`): the auth bridge is internal only —
+  `PMS.auth` exposes no `adopt*/register*` helpers. The bridge lives on a separate
+  `PMS.cloudBridge` namespace (called only by the cloud login flow) and requires a
+  `cloudUid` matching both the account record and a uid verified by a real Firebase
+  Auth result — an id alone can never create a session. Test-only hooks are gated by
+  a `window.__ZMS_TEST__` flag that only the local test suite sets.
 - **Cloud account removal is backend-only**: deleting a shared cloud account runs
-  through the `adminDeleteUser` callable; there is no direct browser fallback.
+  through the `adminDeleteUser` callable; there is no direct browser fallback. The
+  callable also deletes/disables the Firebase Authentication identity (`ZMS-RT-02`).
 - **Credentials stay local**: password hashes/salts are stripped from JSON exports,
   JSON imports and backup snapshots (existing accounts keep their password; new
   imported accounts need a password reset).
 - **Session lifetime**: local sessions expire after 7 days regardless of browser state.
 - **CSP**: a Content-Security-Policy meta tag restricts script/frame/object origins.
+- **Local-only passwords** (`ZMS-RT-07/-10`): cloud passwords live in Firebase
+  Authentication (strong). The offline mode uses a salted SHA-256 hash — a convenience,
+  not a strong KDF; salts come from `crypto.getRandomValues` when available.
 
 ### Firestore rules — required before shared use
 
-`firestore.rules` (repo root) removes anonymous public access:
+`firestore.rules` (repo root) removes anonymous public access and adds the
+role/membership boundary that the browser cannot override:
 
-- `zms_*` shared dataset + `zms_meta` → read/write require a signed-in user.
-- `zms_auth_users/{uid}` → signup writes role `member` only (except the first,
-  bootstrap account); role changes and account deletion require an admin.
-- `zms_auth/bootstrap` → created once; updates admin-only.
+- **Team-membership gate**: the `zms_*` shared datasets are readable only by
+  *active* users whose uid exists in `zms_auth_users` (accounts created through the
+  app). A random Firebase account that never joined ZMS gets nothing. Deleting or
+  deactivating the account record therefore **revokes access immediately**
+  (`ZMS-RT-02`, even without the cloud functions).
+- **Role-gated writes** (`ZMS-RT-01/-06`): shared datasets and `zms_meta` can be
+  created/updated only by an active manager/admin (members are read-only on shared
+  data), and dataset documents can only be deleted by an admin. The client mirrors
+  this with `canWriteShared()` so member devices do not attempt whole-dataset writes.
+- **Profile privacy** (`ZMS-RT-04`): a user may read their *own* cloud profile; only
+  an admin may read the directory.
+- **Bootstrap admin**: the very first cloud account (while `zms_auth/bootstrap` does
+  not exist yet) is minted `admin`; every later signup is forced to `member` — no
+  client input can choose an elevated role. `zms_auth/bootstrap.firstUid` also keeps
+  write access for pre-role deployments (migration guard, never account management).
+- `zms_meta` sync metadata is read-only for normal users; only managers/admins write it
+  (`ZMS-RT-08`).
 
 Deploy in the Firebase console (Firestore → Rules → Publish) or with:
 
@@ -245,7 +266,8 @@ deployed**:
   `zms_auth_users/{callerUid}`), validates the target + role, preserves the
   last active admin, then writes the role.
 - `adminDeleteUser({ uid })` — same admin check, then deletes the account
-  document so it can no longer be adopted on any device.
+  document **and revokes the Firebase Authentication identity** so the person
+  cannot authenticate again (`ZMS-RT-02`).
 
 **Without the functions (free tier — the default here):**
 
@@ -253,8 +275,11 @@ deployed**:
   write, blocked for non-admins by the Firestore rules. The client remembers the
   functions are unavailable, so there is no per-click delay.
 - Cloud-account deletion is **refused from the browser**. The free alternative:
-  Firebase console → Firestore → `zms_auth_users/<uid>` → delete the document
-  (same effect: the account can no longer be adopted on any device).
+  Firebase console → Firestore → `zms_auth_users/<uid>` → delete the document.
+  Because shared data access requires a profile record, deleting it revokes data
+  access immediately. To also revoke Firebase Authentication (so login itself is
+  refused), delete/disable the account under Authentication → Users, or deploy
+  the functions.
 
 Deploying the functions requires a **Blaze plan** (Cloud Functions are paid):
 
@@ -265,10 +290,29 @@ firebase deploy --only functions,firestore:rules
 
 Notes:
 
-- The current data model keeps each collection in one document, so the rules grant
-  data access to every *signed-in* user (the app's shared-account design). True
-  per-project/per-task isolation needs the per-record data-model redesign
-  (organizations → projects → tasks documents) before this app should host unrelated
-  tenants.
+- The current data model keeps each collection in one document, so per-project/
+  per-task authorization is not expressible in rules (`ZMS-RT-05/-06`). The rules
+  therefore enforce the strongest boundary the model allows: only active team
+  members may read, only managers/admins may write, and members are read-only on
+  shared data. True per-project/per-task isolation needs the per-record data-model
+  redesign (organizations → projects → tasks documents) before this app should host
+  unrelated tenants.
 - Web Firebase config keys are public: they are not a secret. Restrict real access
   with the rules above + Firebase App Check for production use.
+- Router/UI permission checks are UI affordances, not security controls
+  (`ZMS-RT-09`); the rules above are the authorization boundary.
+
+### Deployment-time hardening (`ZMS-RT-11/12/13`)
+
+- **CSP / headers**: the app ships a `Content-Security-Policy` meta tag
+  (`default-src 'self'`, `frame-ancestors 'none'`, `object-src 'none'`, plus the
+  Firebase/Analytics hosts used by the SDK; `'unsafe-inline'`/`'unsafe-eval'` are
+  required for the SDK and the no-build setup). GitHub Pages does not emit
+  `X-Content-Type-Options`/`Referrer-Policy`/`Permissions-Policy` headers — verify
+  them on whatever host you deploy to (a `.well-known/security.txt` + proper
+  headers are recommended for production).
+- **XSS**: all user-controlled values are rendered through `textContent` (via the
+  `text:` prop or `dom.h`); every `innerHTML` sink uses `escapeHtml`/an allow-list.
+  If imported data is ever rendered as HTML, keep it escaped (see `js/ui/dom.js`).
+- **Environments** (`ZMS-RT-13`): keep dev and production Firebase projects
+  separate; `js/cloud-config.js` is the single per-environment config point.

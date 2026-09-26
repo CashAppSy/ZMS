@@ -53,6 +53,7 @@ global.document = {
 };
 
 global.window = global;
+global.__ZMS_TEST__ = true; // allow modules to expose test-only hooks
 global.addEventListener = () => {};
 global.removeEventListener = () => {};
 global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };

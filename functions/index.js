@@ -83,7 +83,9 @@ exports.adminSetRole = functions.https.onCall(async (data, context) => {
 /** adminDeleteUser({ uid }) -> { ok: true }
  *  Verifies the caller is an admin and the last active admin is preserved,
  *  then deletes the account record so it can no longer be adopted on any
- *  device. (The Firebase Auth identity itself is left in place — see README.) */
+ *  device AND revokes the Firebase Authentication identity (ZMS-RT-02), so
+ *  the deleted person cannot sign in again and cannot reach any shared data.
+ *  An admin never deletes themselves. */
 exports.adminDeleteUser = functions.https.onCall(async (data, context) => {
   const callerUid = await requireAdmin(context);
   if (!callerUid) {
@@ -102,6 +104,18 @@ exports.adminDeleteUser = functions.https.onCall(async (data, context) => {
   if (!target.exists) {
     throw new functions.https.HttpsError("not-found", "NO_SUCH_CLOUD_ACCOUNT");
   }
+  // ZMS-RT-02: delete the Firestore profile first, then disable + delete the
+  // Firebase Auth identity so the account cannot authenticate ever again.
   await cloudUserRef(uid).delete();
+  try {
+    await admin.auth().deleteUser(uid);
+  } catch (e) {
+    if (e && e.code === "auth/user-not-found") {
+      // the Auth identity already gone — nothing to do
+    } else {
+      // last-resort safety: disable the account instead of leaving it usable
+      try { await admin.auth().updateUser(uid, { disabled: true }); } catch (err) { /* ignore */ }
+    }
+  }
   return { ok: true };
 });

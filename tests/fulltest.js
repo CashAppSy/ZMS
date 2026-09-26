@@ -30,6 +30,8 @@ const dom = new JSDOM(`<!DOCTYPE html><html><body>
 const { window } = dom;
 global.window = window;
 global.document = window.document;
+// allow the modules to expose test-only hooks (never set by a real browser)
+window.__ZMS_TEST__ = true;
 Object.defineProperty(window, "localStorage", {
   value: { _s: {}, getItem(k){ return this._s[k] ?? null; }, setItem(k,v){ this._s[k]=String(v); }, removeItem(k){ delete this._s[k]; } },
   configurable: true
@@ -516,22 +518,22 @@ section("Cloud sync (offline-safe API)");
 
   // local bridge for cloud identities — fully offline
   {
-    const cu = PMS.auth.registerCloudUser({ username: "Team@Example.com", cloudUid: "uid-bridge-1", role: "admin", name: "Team Lead" });
+    const cu = PMS.cloudBridge.register({ username: "Team@Example.com", cloudUid: "uid-bridge-1", role: "admin", name: "Team Lead" });
     ok("registerCloudUser creates a local cloud record",
       cu && cu.username === "team@example.com" && cu.role === "admin" && cu.cloudUid === "uid-bridge-1" && !!cu.id && cu.passwordHash.indexOf("cloud::") === 0);
-    ok("userByCloudUid finds it", PMS.auth.userByCloudUid("uid-bridge-1") && PMS.auth.userByCloudUid("uid-bridge-1").id === cu.id);
+    ok("userByCloudUid finds it", PMS.cloudBridge.userByCloudUid("uid-bridge-1") && PMS.cloudBridge.userByCloudUid("uid-bridge-1").id === cu.id);
     // ZMS-01 regression: an id alone (even a matching cloudUid) must NOT mint a
     // session — only a uid that a Firebase Auth result on this page just
     // verified may be adopted.
     ok("adoptUser refuses without a verified cloud sign-in",
-      PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid }) === null);
-    PMS.auth._markCloudVerified("uid-bridge-1");
-    const adopted = PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid });
+      PMS.cloudBridge.adopt({ id: cu.id, cloudUid: cu.cloudUid }) === null);
+    PMS.cloudBridge.markVerified("uid-bridge-1");
+    const adopted = PMS.cloudBridge.adopt({ id: cu.id, cloudUid: cu.cloudUid });
     ok("adoptUser creates an active session after verification",
       adopted && PMS.auth.currentUser().username === "team@example.com" && PMS.auth.currentUser().role === "admin");
-    PMS.auth._markCloudVerified("uid-other-device");
+    PMS.cloudBridge.markVerified("uid-other-device");
     ok("adoptUser refuses a mismatched verified uid",
-      PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid }) === null);
+      PMS.cloudBridge.adopt({ id: cu.id, cloudUid: cu.cloudUid }) === null);
     PMS.auth.logout();
     ok("logout clears the cloud session", PMS.auth.currentUser() === null);
   }
@@ -588,12 +590,12 @@ section("Cloud sync (offline-safe API)");
   // ZMS-03/-05: role decisions never come from the browser for cloud accounts
   {
     const R = PMS.cloudsync._resolveSignupRoleForTest;
-    ok("signup: first account may pick admin (bootstrap)", R("admin", false, false) === "admin");
-    ok("signup: bootstrap manager allowed", R("manager", false, false) === "manager");
-    ok("signup: later accounts are forced to member", R("admin", true, false) === "member");
-    ok("signup: admin caller keeps the elevated role", R("manager", true, true) === "manager");
-    ok("signup: member stays member", R("member", true, false) === "member");
-    ok("signup: bogus role falls back to member", R("owner", true, false) === "member");
+    ok("signup: first account becomes admin (bootstrap)", R("admin", false) === "admin");
+    ok("signup: first bootstrap account admin even when role not requested", R("member", false) === "admin");
+    ok("signup: later accounts are always member", R("admin", true) === "member");
+    ok("signup: later accounts member even for an admin caller (no client minting)", R("manager", true) === "member");
+    ok("signup: member stays member", R("member", true) === "member");
+    ok("signup: bogus role falls back to member", R("owner", true) === "member");
   }
   // ZMS-02/-12: user-management functions enforce admin inside, not just in UI
   PMS.auth.login("lina", "newpass1");
@@ -614,8 +616,8 @@ section("Cloud sync (offline-safe API)");
   ok("reauthenticateAdmin rejects a wrong password", PMS.auth.reauthenticateAdmin("nope") === false);
   // the verified cloud bridge may sync the role, and nothing else
   PMS.auth.logout();
-  const bridgeRec = PMS.auth.userByCloudUid("uid-bridge-1");
-  PMS.auth._markCloudVerified("uid-bridge-1");
+  const bridgeRec = PMS.cloudBridge.userByCloudUid("uid-bridge-1");
+  PMS.cloudBridge.markVerified("uid-bridge-1");
   ok("cloud bridge may adopt the verified role", PMS.auth.updateUser(bridgeRec.id, { role: "member" }).ok === true);
   ok("cloud bridge cannot touch other fields", PMS.auth.updateUser(bridgeRec.id, { role: "admin", name: "X" }).error === "forbidden");
   PMS.auth.updateUser(bridgeRec.id, { role: "admin" });
@@ -648,6 +650,48 @@ section("Cloud sync (offline-safe API)");
   PMS.auth.login("boss", "pw1234");
   const denyBad = await PMS.cloudsync.setCloudRole("uid-x", "owner");
   ok("setCloudRole rejects an invalid role", denyBad === false);
+
+  section("ZMS-RT hardening (offline)");
+  // ZMS-RT-03: the auth bridge must not be discoverable on PMS.auth
+  ok("bridge helpers are NOT exposed on PMS.auth",
+    !("_adoptBridge" in PMS.auth) && !("_markCloudVerified" in PMS.auth)
+    && !("registerCloudUser" in PMS.auth) && !("userByCloudUid" in PMS.auth));
+  ok("bridge helpers live on PMS.cloudBridge",
+    typeof PMS.cloudBridge.adopt === "function" && typeof PMS.cloudBridge.register === "function"
+    && typeof PMS.cloudBridge.userByCloudUid === "function" && typeof PMS.cloudBridge.markVerified === "function");
+  // ZMS-RT-03: test-only cloudsync hooks exist under Node (the test suite)
+  ok("cloudsync test hooks present under Node",
+    typeof PMS.cloudsync._mergeForTest === "function" && typeof PMS.cloudsync._resolveSignupRoleForTest === "function");
+  // ZMS-RT-01/-06: member devices must not push shared datasets
+  {
+    PMS.auth.logout();
+    const cb = PMS.cloudBridge.userByCloudUid("uid-bridge-1");
+    PMS.cloudBridge.markVerified("uid-bridge-1");
+    PMS.cloudBridge.adopt({ id: cb.id, cloudUid: cb.cloudUid }); // role admin
+    const asAdmin = await PMS.cloudsync.canWriteShared();
+    ok("canWriteShared allows an admin", asAdmin === true);
+    await PMS.auth.updateUser(cb.id, { role: "member" });
+    PMS.cloudBridge.markVerified("uid-bridge-1");
+    PMS.cloudBridge.adopt({ id: cb.id, cloudUid: cb.cloudUid });
+    const asMember = await PMS.cloudsync.canWriteShared();
+    ok("canWriteShared blocks a plain member", asMember === false);
+    await PMS.auth.updateUser(cb.id, { role: "admin" });
+    PMS.auth.login("boss", "pw1234");
+  }
+  // ZMS-RT-10: salts are high-entropy (CSPRNG-backed when available)
+  {
+    let saltA = "", saltB = "";
+    if (PMS.auth.createUser && PMS.auth.currentUser() && PMS.auth.currentUser().role === "admin") {
+      const ua = PMS.auth.createUser({ username: "rt10-a", password: "pw1234" });
+      saltA = ua.error ? "" : ua.user.salt;
+      const ub = PMS.auth.createUser({ username: "rt10-b", password: "pw1234" });
+      saltB = ub.error ? "" : ub.user.salt;
+      if (ua.user) PMS.auth.removeUser(ua.user.id);
+      if (ub.user) PMS.auth.removeUser(ub.user.id);
+    }
+    ok("local salts are 16 hex chars each", /^[0-9a-f]{16}$/.test(saltA) && /^[0-9a-f]{16}$/.test(saltB));
+    ok("local salts differ across users", saltA !== saltB);
+  }
 
 section("Bilingual / RTL");
   PMS.i18n.setLang("ar");

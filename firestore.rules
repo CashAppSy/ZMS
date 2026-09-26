@@ -1,89 +1,188 @@
 rules_version = '2';
 // ============================================================================
-// ZMS Firestore Security Rules (hardened).
+// ZMS Firestore Security Rules (hardened) — round 3.
 //
-// WHAT CHANGED vs "allow read, write: if true":
-//   1. Anonymous unauthenticated access is denied everywhere.
-//   2. Account records (zms_auth_users) are readable by any signed-in user
-//      (needed to mirror roles on every device) but:
-//        - a new account is created as role "member" (unless it is the very
-//          first/bootstrap account),
-//        - a user may update their OWN record but NEVER their own role,
-//        - role changes and account deletion require an admin.
-//   3. The shared dataset docs still use the whole-dataset model, so access is
-//      "any signed-in user" (the app's shared-account design). Granular
-//      per-project/per-task authorization requires the per-record data model
-//      redesign (see README "Security"); the rules below are the correct
-//      boundary for the CURRENT model and a prerequisite for the redesign.
+// WHAT CHANGED vs the previous round (see ZMS Detailed Remaining
+// Vulnerabilities Report — ZMS-RT-01/02/04/06/08):
+//   1. Anonymous access denied (unchanged).
+//   2. NEW: "team membership" gate — the shared datasets are only readable by
+//      ACTIVE users whose uid exists in zms_auth_users (accounts created
+//      through the app). An arbitrary Firebase account that never joined ZMS
+//      gets nothing, even with a valid token. Because the account record is
+//      the join token, DELETING/DEACTIVATING the record immediately revokes
+//      access (ZMS-RT-02). ("team of one" is the default deployment: the
+//      published site uses ONE shared account whose record IS the admin.)
+//   3. NEW: role-gated WRITES — the shared datasets (zms_*_/data) and the sync
+//      metadata (zms_meta/*) can only be CREATED/UPDATED by an active
+//      manager/admin. Members are read-only on shared data because a
+//      whole-dataset document cannot be authorized per task with the current
+//      single-document model (ZMS-RT-05/06); per-task authorization requires
+//      the documented per-record redesign. Deleting a dataset document is
+//      admin-only.
+//   4. NEW: user directory privacy — a cloud profile is readable only by its
+//      owner or by an admin (no broad authenticated read of the directory,
+//      ZMS-RT-04).
+//   5. Roles are immutable from the browser for everyone but an admin, and the
+//      client can NEVER choose an elevated role for a new account: the roles a
+//      signup write may carry are "member" OR, only while the bootstrap marker
+//      is missing (the very first account), "admin". Promotion afterwards goes
+//      through the admin update path / the adminSetRole callable.
+//   6. Deactivated accounts (active == false) are excluded everywhere:
+//      isActiveUser() gates reads AND writes.
+//   7. isBootstrapOwner() migration guard: the uid recorded in
+//      zms_auth/bootstrap.firstUid (the account that created the very first
+//      cloud login) may still WRITE the datasets even if their record predates
+//      the elevated roles. This keeps previously-published versions functional
+//      after the rules tighten (their first account was minted "member"), and
+//      it cannot be used to mint an admin: it grants data-write only, never
+//      account management.
 //
-// DEPLOY: push these from the Firebase CLI or paste them in the console:
+// DEPLOY: paste in Console -> Firestore Database -> Rules -> Publish, or:
 //   firebase deploy --only firestore:rules
-// (or Console -> Firestore Database -> Rules -> publish.)
 // ============================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
+    function cloudUser(uid) {
+      return get(/databases/$(database)/documents/zms_auth_users/$(uid));
+    }
+
+    function isActiveUser(uid) {
+      let d = cloudUser(uid);
+      // a missing `active` field is treated as active (legacy records)
+      return d.exists && d.data.active != false;
+    }
+
+    function isTeamMember(uid) {
+      return exists(/databases/$(database)/documents/zms_auth_users/$(uid));
+    }
+
+    function roleOf(uid) {
+      let d = cloudUser(uid);
+      return d.exists && d.data.role ? d.data.role : '';
     }
 
     function isAdmin(uid) {
-      let doc = get(/databases/$(database)/documents/zms_auth_users/$(uid));
-      return doc.exists && doc.data.role == 'admin' && doc.data.active != false;
+      return roleOf(uid) == 'admin' && isActiveUser(uid);
     }
 
-    // ---- shared dataset (whole-document model) ----
-    // NOTE: `match /zms_{collection}/data` would require a wildcard inside a
-    // literal segment, which Firestore rules do not allow — so each collection
-    // document is listed explicitly.
-    match /zms_departments/data { allow read, write: if signedIn(); }
-    match /zms_people/data { allow read, write: if signedIn(); }
-    match /zms_projects/data { allow read, write: if signedIn(); }
-    match /zms_tasks/data { allow read, write: if signedIn(); }
-    match /zms_taskStatuses/data { allow read, write: if signedIn(); }
-    match /zms_projectStatuses/data { allow read, write: if signedIn(); }
-    match /zms_priorities/data { allow read, write: if signedIn(); }
-    match /zms_customFieldDefs/data { allow read, write: if signedIn(); }
-    match /zms_savedFilters/data { allow read, write: if signedIn(); }
+    function isManagerOrAdmin(uid) {
+      return isActiveUser(uid) && (roleOf(uid) == 'manager' || roleOf(uid) == 'admin');
+    }
 
-    // ---- sync metadata (state + probe) ----
+    // True when this uid is the account recorded as the very first cloud
+    // account (zms_auth/bootstrap.firstUid). Grants dataset WRITE access to
+    // pre-role deployments; never grants account management.
+    function isBootstrapOwner(uid) {
+      let d = get(/databases/$(database)/documents/zms_auth/bootstrap);
+      return d.exists && d.data.firstUid == uid && isActiveUser(uid);
+    }
+
+    // The bootstrap marker has to be readable during signup, BEFORE the new
+    // account's own zms_auth_users record exists, so it must not be gated on
+    // isActiveUser(). It is not sensitive (records no secrets).
+    function signupCanRead(uid) {
+      return request.auth != null;
+    }
+
+    // dataset write: active manager/admin, or the bootstrap-owner migration
+    // guard (pre-role first account)
+    function canWriteDataset(uid) {
+      return isManagerOrAdmin(uid) || isBootstrapOwner(uid);
+    }
+
+    // ---- shared datasets (whole-document model) ----
+    // read  : any ACTIVE team member (accounts created through the app)
+    // create/update : ACTIVE manager or admin only (a member is read-only:
+    //                 a whole-dataset write cannot be authorized per task)
+    // delete : admin only
+    match /zms_departments/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_people/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_projects/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_tasks/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_taskStatuses/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_projectStatuses/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_priorities/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_customFieldDefs/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+    match /zms_savedFilters/data {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- sync metadata (state + probe): readable by members, writable only
+    //      by managers/admins so a normal user cannot fake clocks/state ----
     match /zms_meta/{doc} {
-      allow read, write: if signedIn();
+      allow read: if isActiveUser(request.auth.uid);
+      allow create, update: if canWriteDataset(request.auth.uid);
+      allow delete: if false;
     }
 
     // ---- bootstrap marker: records the first admin ----
     match /zms_auth/bootstrap {
-      allow read: if signedIn();
+      // must be readable during signup, before the new account's own record
+      // exists (that is what the signup flow reads to detect no-admin mode)
+      allow read: if signupCanRead(request.auth.uid);
       // created once, only while it does not exist yet
-      allow create: if signedIn()
+      allow create: if request.auth != null
         && !exists(/databases/$(database)/documents/zms_auth/bootstrap);
-      allow update: if signedIn() && isAdmin(request.auth.uid);
+      allow update: if isAdmin(request.auth.uid);
       allow delete: if false;
     }
 
-    // ---- cloud account records ----
+    // ---- cloud account directory ----
     match /zms_auth_users/{uid} {
-      allow read: if signedIn();
+      // privacy: a user may read their OWN profile; only admins may read the
+      // directory (ZMS-RT-04). Signup reads bootstrap, not other profiles.
+      allow read: if request.auth.uid == uid || isAdmin(request.auth.uid);
 
-      // Signup always writes role "member", EXCEPT while the bootstrap marker
-      // is missing (i.e. the very first account may pick its role). Elevated
-      // roles for later accounts must come from a trusted path (an admin using
-      // a server SDK/Cloud Function sets them; then the role guard below lets
-      // them through via update).
-      allow create: if signedIn()
-        && request.auth.uid == uid
+      // A signup write may carry role "member" — OR "admin" only while the
+      // bootstrap marker is missing (the very first account). No client input
+      // can mint an elevated role for a later account; promotion afterwards
+      // is an admin update / the adminSetRole callable.
+      allow create: if request.auth.uid == uid
         && (request.resource.data.role == 'member'
-            || !exists(/databases/$(database)/documents/zms_auth/bootstrap)
-            || isAdmin(request.auth.uid));
+            || !exists(/databases/$(database)/documents/zms_auth/bootstrap));
 
       // role is immutable from the browser for everyone but an admin
-      allow update: if signedIn()
-        && (isAdmin(request.auth.uid)
-            || (request.auth.uid == uid
-                && request.resource.data.role == resource.data.role));
+      allow update: if isAdmin(request.auth.uid)
+        || (request.auth.uid == uid
+            && request.resource.data.role == resource.data.role);
 
       // deleting an account is reserved for an admin
-      allow delete: if signedIn() && isAdmin(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
     }
   }
 }

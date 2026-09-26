@@ -71,14 +71,14 @@
   function bridgeAndEnter(root, res) {
     // keep the cloud identity + role, creating a slim local record when this
     // device has never seen that uid before
-    var local = PMS.auth.userByCloudUid(res.uid);
+    var local = PMS.cloudBridge.userByCloudUid(res.uid);
     if (local) {
       if (local.role !== res.role && PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled()) {
         PMS.auth.updateUser(local.id, { role: res.role });
         local = PMS.auth.userById(local.id);
       }
     } else {
-      local = PMS.auth.registerCloudUser({
+      local = PMS.cloudBridge.register({
         username: res.email, cloudUid: res.uid, role: res.role,
         name: res.displayName || res.email
       });
@@ -88,7 +88,7 @@
       renderCloudLogin(root);
       return;
     }
-    PMS.auth._adoptBridge({ id: local.id, cloudUid: local.cloudUid });
+    PMS.cloudBridge.adopt({ id: local.id, cloudUid: local.cloudUid });
     root.innerHTML = "";
     done();
   }
