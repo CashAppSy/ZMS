@@ -49,8 +49,12 @@ service cloud.firestore {
 
     function isActiveUser(uid) {
       // a missing `active` field is treated as active (legacy records).
+      // NOTE: do NOT write got(...).data.active != false — a runtime comparison
+      // of a missing (null) field with `!= false` DENIES in production even
+      // though the simulator tolerates it. The negation of `== false` is the
+      // safe form: it only matches an EXPLICIT active == false.
       return hasCloudProfile(uid)
-        && get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active != false;
+        && !(get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active == false);
     }
 
     function isTeamMember(uid) {
@@ -156,6 +160,9 @@ service cloud.firestore {
     }
     match /zms_diag/active {
       allow read: if get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.active != false;
+    }
+    match /zms_diag/activeNeg {
+      allow read: if !(get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.active == false);
     }
     match /zms_diag/hasrole {
       allow read: if hasRole(request.auth.uid, 'admin');
