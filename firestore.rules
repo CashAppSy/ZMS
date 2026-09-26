@@ -29,7 +29,7 @@ service cloud.firestore {
 
     function isAdmin(uid) {
       let doc = get(/databases/$(database)/documents/zms_auth_users/$(uid));
-      return doc.exists && doc.data.role == 'admin';
+      return doc.exists && doc.data.role == 'admin' && doc.data.active != false;
     }
 
     // ---- shared dataset (whole-document model) ----
