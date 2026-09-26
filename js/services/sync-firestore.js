@@ -483,6 +483,7 @@
     config: config,
     saveConfig: saveConfig,
     clearConfig: clearConfig,
+    embedded: embedded,
     isConfigured: isConfigured,
     isEnabled: isEnabled,
     auth: authx,
