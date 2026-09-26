@@ -191,3 +191,53 @@ sample-data/seed.json      Full schema-valid sample dataset compatible with Sett
 | New entity | `js/data/schema.js` + `js/data/repositories.js` | add collection to schema + repos |
 | New migration | `js/data/migrations.js` | `PMS.migrations.register(from, to, fn)` |
 | New translation | `js/i18n/*.js` | add keys to both dictionaries |
+
+## Security
+
+This app ships with client-side hardening, but the **real security boundary for shared
+cloud data is the Firestore security rules** — client-side checks only protect the UI.
+
+Implemented hardening (`js/`):
+
+- **Admin-gated management**: `createUser`, `updateUser`, `resetPassword`, `removeUser`
+  return `forbidden` unless the current session is the admin (or the very first
+  bootstrap account is being created). The cloud-account bridge may only sync the
+  role of a uid that Firebase Auth just verified.
+- **No role self-promotion**: `signUpWithPassword` always writes role `member` unless
+  the bootstrap admin record is missing or an admin caller requests the elevation;
+  `setCloudRole` is admin-only and role-validated. Firestore rules must mirror this.
+- **No session minting from an id alone**: `adoptUser` requires a `cloudUid` matching
+  both the account record and a uid verified by a real Firebase Auth result.
+- **Credentials stay local**: password hashes/salts are stripped from JSON exports,
+  JSON imports and backup snapshots (existing accounts keep their password; new
+  imported accounts need a password reset).
+- **Session lifetime**: local sessions expire after 7 days regardless of browser state.
+- **CSP**: a Content-Security-Policy meta tag restricts script/frame/object origins.
+
+### Firestore rules — required before shared use
+
+`firestore.rules` (repo root) removes anonymous public access:
+
+- `zms_*` shared dataset + `zms_meta` → read/write require a signed-in user.
+- `zms_auth_users/{uid}` → signup writes role `member` only (except the first,
+  bootstrap account); role changes and account deletion require an admin.
+- `zms_auth/bootstrap` → created once; updates admin-only.
+
+Deploy in the Firebase console (Firestore → Rules → Publish) or with:
+
+```
+firebase deploy --only firestore:rules
+```
+
+Notes:
+
+- The current data model keeps each collection in one document, so the rules grant
+  data access to every *signed-in* user (the app's shared-account design). True
+  per-project/per-task isolation needs the per-record data-model redesign
+  (organizations → projects → tasks documents) before this app should host unrelated
+  tenants.
+- Elevated roles can never be granted from the browser by design. To make someone an
+  admin/manager today, either create the account first (member) and promote them from
+  the Firebase console, or grant roles via a backend/Cloud Function.
+- Web Firebase config keys are public: they are not a secret. Restrict real access
+  with the rules above + Firebase App Check for production use.

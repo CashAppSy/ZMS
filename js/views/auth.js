@@ -88,7 +88,7 @@
       renderCloudLogin(root);
       return;
     }
-    PMS.auth.adoptUser(local.id);
+    PMS.auth.adoptUser({ id: local.id, cloudUid: local.cloudUid });
     root.innerHTML = "";
     done();
   }

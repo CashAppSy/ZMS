@@ -470,6 +470,7 @@
   }
 
   function importControls() {
+    if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return h("div");
     var row = h("div.u-flex", { style: { gap: "10px" } });
     var fileInput = h("input", { type: "file", accept: ".json,.pms" });
     row.appendChild(h("button.btn.btn-sm", { text: t("settings.importJson"), on: { click: function () { fileInput.click(); } } }));
@@ -503,6 +504,7 @@
   }
 
   function restoreBackup(bk) {
+    if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
     PMS.modal.open({
       title: t("confirm.title"),
       content: h("p", { text: t("confirm.restoreBackup", { date: PMS.utils.formatDate(bk.createdAt, PMS.i18n) }) }),

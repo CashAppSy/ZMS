@@ -190,6 +190,21 @@
     }
   }
 
+  // Decides which role may be written for a NEW cloud account (ZMS-04).
+  //  - a normal signup is ALWAYS "member"
+  //  - while the bootstrap admin record does not exist yet, the very first
+  //    account may pick its role (it is the bootstrap admin)
+  //  - when the bootstrap exists, elevated roles are only allowed for an
+  //    already-admin caller; anything else is forced back to "member"
+  // This mirrors what the Firestore rules enforce; the browser cannot decide
+  // by itself that a random account is admin.
+  function resolveSignupRole(role, bootstrapExists, callerIsAdmin) {
+    var wanted = ["admin", "manager", "member"].indexOf(role) !== -1 ? role : "member";
+    if (wanted === "member") return "member";
+    if (!bootstrapExists) return wanted;
+    return callerIsAdmin ? wanted : "member";
+  }
+
   function signUpWithPassword(opts) {
     if (!opts || !opts.email || !opts.password) return Promise.reject(new Error("bad-input"));
     return authx().then(function (a) {
@@ -197,9 +212,9 @@
     }).then(function (cred) {
       var uid = cred.user.uid;
       return bootRef().get().then(function (b) {
-        var role = opts.role === "admin" || opts.role === "manager" || opts.role === "member"
-          ? opts.role
-          : (b.exists ? "member" : "admin");
+        var caller = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
+        var callerIsAdmin = !!(caller && caller.role === "admin");
+        var role = resolveSignupRole(opts.role, b.exists, callerIsAdmin);
         var rec = {
           email: opts.email, role: role,
           displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
@@ -208,6 +223,7 @@
           if (!b.exists) return bootRef().set({ firstUid: uid, updatedAt: now() });
           return undefined;
         }).then(function () {
+          if (PMS.auth && PMS.auth._markCloudVerified) PMS.auth._markCloudVerified(uid);
           return { uid: uid, email: opts.email, role: role, displayName: opts.name || "", isAdmin: role === "admin" };
         });
       });
@@ -220,6 +236,7 @@
       return a.signInWithEmailAndPassword(opts.email, opts.password);
     }).then(function (cred) {
       var uid = cred.user.uid;
+      if (PMS.auth && PMS.auth._markCloudVerified) PMS.auth._markCloudVerified(uid);
       return cloudUserRef(uid).get().then(function (s) {
         var d = s.exists && s.data() ? s.data() : {};
         return {
@@ -242,8 +259,12 @@
 
   // Keep role changes made in Settings mirrored to the cloud so the next
   // device sign-in sees the same role. Fire-and-forget.
+  // SECURITY (ZMS-05): only the local admin may request a cloud role write,
+  // and only valid roles are accepted. The Firestore rules remain the real
+  // boundary — a member must not be able to promote themselves.
   function setCloudRole(uid, role) {
-    if (!uid || !role) return Promise.resolve(false);
+    if (!uid || ["admin", "manager", "member"].indexOf(role) === -1) return Promise.resolve(false);
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
     return ensureReady().then(function () {
       return cloudUserRef(uid).set({ role: role }, { merge: true });
     }).catch(function () { return false; });
@@ -541,7 +562,8 @@
     resetPassword: resetPassword,
     setCloudRole: setCloudRole,
     authErrorMessage: authErrorMessage,
-    // internal helper exported for the offline test suite
-    _mergeForTest: mergeWithLocal
+    // internal helpers exported for the offline test suite
+    _mergeForTest: mergeWithLocal,
+    _resolveSignupRoleForTest: resolveSignupRole
   };
 })(window.PMS);

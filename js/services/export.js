@@ -32,8 +32,26 @@
     PMS.toast.show(PMS.i18n.t("export.jsonExported"), "success");
   }
 
+  // SECURITY (ZMS-09): authentication material must never ride along in
+  // business exports/imports. Strip passwordHash + salt from any user records
+  // wherever the dataset leaves the app.
+  function sanitizeUserForExport(u) {
+    var c = U.deepClone(u || {});
+    if (c && typeof c === "object") {
+      delete c.passwordHash;
+      delete c.salt;
+    }
+    return c;
+  }
+
+  function sanitizeDataForExport(data) {
+    var d = U.deepClone(data || {});
+    if (Array.isArray(d.users)) d.users = d.users.map(sanitizeUserForExport);
+    return d;
+  }
+
   function exportAllJSON() {
-    downloadJSON("pms-data-" + U.todayISO() + ".json", PMS.store.data);
+    downloadJSON("pms-data-" + U.todayISO() + ".json", sanitizeDataForExport(PMS.store.data));
   }
 
   function validateImport(obj) {
@@ -58,6 +76,18 @@
       var migrated = PMS.migrations.migrate(obj);
       // Never wipe accounts with a file that lacks users.
       if (!migrated.users || !migrated.users.length) migrated.users = U.deepClone(PMS.store.data.users || []);
+      // A file may carry a stolen password hash — never import authentication
+      // material for records; accounts that already exist locally keep their
+      // current password, brand-new imported accounts need a password reset.
+      if (Array.isArray(migrated.users)) {
+        var liveUsers = (PMS.store.data && PMS.store.data.users) || [];
+        migrated.users = migrated.users.map(function (u) {
+          var clean = sanitizeUserForExport(u);
+          var live = liveUsers.find(function (x) { return x && x.id === u.id; });
+          if (live && live.passwordHash) { clean.passwordHash = live.passwordHash; clean.salt = live.salt; }
+          return clean;
+        });
+      }
       PMS.store.setData(migrated);
       PMS.toast.show(PMS.i18n.t("export.importOk", { n: migrated.tasks.length }), "success");
       return { ok: true, records: migrated.tasks.length };
@@ -97,6 +127,7 @@
     exportAllJSON: exportAllJSON,
     validateImport: validateImport,
     importJSON: importJSON,
+    sanitize: sanitizeDataForExport,
     print: print
   };
 

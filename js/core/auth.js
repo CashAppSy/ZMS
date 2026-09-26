@@ -14,6 +14,19 @@
   var SESSION_KEY = "pms-auth-session";
   var SESSION = null;
 
+  // Absolute session lifetime: a saved session expires this long after it was
+  // created, even when the browser keeps browsing. Cloud identity itself comes
+  // from Firebase Auth; this only bounds the local mirror session.
+  var SESSION_TTL_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
+  var SESSION_TTL_MS = SESSION_TTL_DEFAULT;
+
+  // Set ONLY by the cloud sync layer after a real Firebase Auth result on this
+  // page. adoptUser() refuses to mint a session for a uid that was not just
+  // verified, so an id alone is no longer enough to adopt an account.
+  var verifiedCloudUid = null;
+
+  function markCloudVerified(uid) { verifiedCloudUid = uid || null; }
+
   /* ---------------- pure-JS SHA-256 (returns hex) ---------------- */
   function sha256(str) {
     function ROTR(n, x) { return (x >>> n) | (x << (32 - n)); }
@@ -145,12 +158,23 @@
   }
 
   /* ---------------- session ---------------- */
+  function sessionExpired(s) {
+    if (!s || !s.at) return true;
+    var start = new Date(s.at).getTime();
+    if (isNaN(start)) return true;
+    return (Date.now() - start) > SESSION_TTL_MS;
+  }
+
   function readSession() {
-    if (SESSION) return SESSION;
+    if (SESSION) {
+      if (sessionExpired(SESSION)) { logout(); return null; }
+      return SESSION;
+    }
     try {
       var raw = window.localStorage.getItem(SESSION_KEY);
       if (!raw) return null;
       SESSION = JSON.parse(raw);
+      if (sessionExpired(SESSION)) { logout(); return null; }
     } catch (e) { SESSION = null; }
     return SESSION;
   }
@@ -201,8 +225,35 @@
   }
 
   /* ---------------- account management (admin) ---------------- */
+  // Authorizes a management operation. The UI already hides these screens from
+  // non-admins; these guards add defense-in-depth so a direct call from the
+  // console cannot mutate accounts, change roles or reset passwords. The only
+  // non-admin exemption is the bootstrap: while NO admin exists at all, the
+  // first account may be created (it becomes the admin).
+  function adminSession() {
+    var u = currentUser();
+    return !!(u && u.role === "admin");
+  }
+
+  function manageAllowed() {
+    if (adminSession()) return true;
+    return !users().some(function (u) { return u.role === "admin" && u.active !== false; });
+  }
+
+  // Cloud bridge exception: right after a verified Firebase sign-in the local
+  // mirror must be able to adopt the verified role via updateUser({role}). No
+  // id alone is trusted; the cloudUid must match the just-verified sign-in and
+  // the patch must touch ONLY the role.
+  function cloudBridgeAllowed(u, patch) {
+    if (!verifiedCloudUid || !u || !u.cloudUid) return false;
+    if (u.cloudUid !== verifiedCloudUid) return false;
+    var keys = patch ? Object.keys(patch) : [];
+    return keys.length === 1 && keys[0] === "role";
+  }
+
   function createUser(opts) {
     opts = opts || {};
+    if (!manageAllowed()) return { error: "forbidden" };
     var username = normalizeUsername(opts.username);
     var role = ROLES.indexOf(opts.role) !== -1 ? opts.role : "member";
     if (!configured()) role = "admin"; // first account is always the admin
@@ -231,6 +282,7 @@
   function updateUser(id, patch) {
     var u = userById(id);
     if (!u) return { error: "notfound" };
+    if (!adminSession() && !cloudBridgeAllowed(u, patch)) return { error: "forbidden" };
     patch = patch || {};
     var changes = {};
     if (patch.username !== undefined) {
@@ -270,6 +322,7 @@
   function resetPassword(id, newPassword) {
     var u = userById(id);
     if (!u) return { error: "notfound" };
+    if (!adminSession()) return { error: "forbidden" };
     if (!newPassword || String(newPassword).length < 4) return { error: "password" };
     var salt = randomSalt();
     persist(function (us) {
@@ -286,6 +339,7 @@
   function removeUser(id) {
     var u = userById(id);
     if (!u) return { error: "notfound" };
+    if (!adminSession()) return { error: "forbidden" };
     if (SESSION && SESSION.userId === id) return { error: "self" };
     if (u.role === "admin" && u.active !== false) {
       var otherAdmins = users().filter(function (x) { return x.role === "admin" && x.active !== false && x.id !== id; });
@@ -358,9 +412,16 @@
     return users().find(function (u) { return u.cloudUid === uid; }) || null;
   }
 
-  function adoptUser(id) {
-    var u = userById(id);
-    if (!u || u.active === false) return null;
+  function adoptUser(opts) {
+    // SECURITY: creating a session from an id alone was a bypass (reported as
+    // ZMS-01). Adopting now requires { id, cloudUid } where the cloudUid has to
+    // match BOTH the target record AND a uid that a real Firebase Auth result
+    // on this page just verified (markCloudVerified).
+    if (!opts || !opts.id || !opts.cloudUid) return null;
+    var u = userById(opts.id);
+    if (!u || u.active === false || !u.cloudUid) return null;
+    if (u.cloudUid !== opts.cloudUid) return null;
+    if (!verifiedCloudUid || verifiedCloudUid !== opts.cloudUid) return null;
     SESSION = {
       userId: u.id,
       username: u.username,
@@ -403,6 +464,8 @@
     registerCloudUser: registerCloudUser,
     userByCloudUid: userByCloudUid,
     adoptUser: adoptUser,
+    _markCloudVerified: markCloudVerified,
+    _setSessionTTLForTest: function (ms) { SESSION_TTL_MS = (ms === undefined || ms === null) ? SESSION_TTL_DEFAULT : ms; },
     _resetSessionForTest: function () { SESSION = null; try { window.localStorage.removeItem(SESSION_KEY); } catch (e) {} }
   };
 })(window.PMS);

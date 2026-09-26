@@ -517,9 +517,18 @@ section("Cloud sync (offline-safe API)");
     ok("registerCloudUser creates a local cloud record",
       cu && cu.username === "team@example.com" && cu.role === "admin" && cu.cloudUid === "uid-bridge-1" && !!cu.id && cu.passwordHash.indexOf("cloud::") === 0);
     ok("userByCloudUid finds it", PMS.auth.userByCloudUid("uid-bridge-1") && PMS.auth.userByCloudUid("uid-bridge-1").id === cu.id);
-    const adopted = PMS.auth.adoptUser(cu.id);
-    ok("adoptUser creates an active session",
+    // ZMS-01 regression: an id alone (even a matching cloudUid) must NOT mint a
+    // session — only a uid that a Firebase Auth result on this page just
+    // verified may be adopted.
+    ok("adoptUser refuses without a verified cloud sign-in",
+      PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid }) === null);
+    PMS.auth._markCloudVerified("uid-bridge-1");
+    const adopted = PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid });
+    ok("adoptUser creates an active session after verification",
       adopted && PMS.auth.currentUser().username === "team@example.com" && PMS.auth.currentUser().role === "admin");
+    PMS.auth._markCloudVerified("uid-other-device");
+    ok("adoptUser refuses a mismatched verified uid",
+      PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid }) === null);
     PMS.auth.logout();
     ok("logout clears the cloud session", PMS.auth.currentUser() === null);
   }
@@ -571,6 +580,64 @@ section("Cloud sync (offline-safe API)");
   PMS.auth.login("boss", "pw1234");
   ok("admin canDelete/requireDelete returns true",
     PMS.auth.currentUser().role === "admin" && PMS.auth.canDelete() === true && PMS.auth.requireDelete() === true);
+
+  section("Security hardening (offline)");
+  // ZMS-03/-05: role decisions never come from the browser for cloud accounts
+  {
+    const R = PMS.cloudsync._resolveSignupRoleForTest;
+    ok("signup: first account may pick admin (bootstrap)", R("admin", false, false) === "admin");
+    ok("signup: bootstrap manager allowed", R("manager", false, false) === "manager");
+    ok("signup: later accounts are forced to member", R("admin", true, false) === "member");
+    ok("signup: admin caller keeps the elevated role", R("manager", true, true) === "manager");
+    ok("signup: member stays member", R("member", true, false) === "member");
+    ok("signup: bogus role falls back to member", R("owner", true, false) === "member");
+  }
+  // ZMS-02/-12: user-management functions enforce admin inside, not just in UI
+  PMS.auth.login("lina", "newpass1");
+  const target = PMS.auth.users().find(u => u.username === "omar");
+  ok("member cannot createUser", PMS.auth.createUser({ username: "x", password: "xxxxx", role: "member" }).error === "forbidden");
+  ok("member cannot updateUser role", PMS.auth.updateUser(target.id, { role: "admin" }).error === "forbidden");
+  ok("member cannot updateUser active", PMS.auth.updateUser(target.id, { active: false }).error === "forbidden");
+  ok("member cannot resetPassword", PMS.auth.resetPassword(target.id, "xxxxx").error === "forbidden");
+  ok("member cannot removeUser", PMS.auth.removeUser(target.id).error === "forbidden");
+  PMS.auth.login("boss", "pw1234");
+  ok("admin updateUser works after guards", PMS.auth.updateUser(target.id, { role: "manager" }).ok === true);
+  // the verified cloud bridge may sync the role, and nothing else
+  PMS.auth.logout();
+  const bridgeRec = PMS.auth.userByCloudUid("uid-bridge-1");
+  PMS.auth._markCloudVerified("uid-bridge-1");
+  ok("cloud bridge may adopt the verified role", PMS.auth.updateUser(bridgeRec.id, { role: "member" }).ok === true);
+  ok("cloud bridge cannot touch other fields", PMS.auth.updateUser(bridgeRec.id, { role: "admin", name: "X" }).error === "forbidden");
+  PMS.auth.updateUser(bridgeRec.id, { role: "admin" });
+  PMS.auth.login("boss", "pw1234");
+  // ZMS-09: authentication material never leaves with exports or backups
+  const fakeData = PMS.utils.deepClone(PMS.store.data);
+  fakeData.users.forEach(u => { u.passwordHash = "stub"; u.salt = "stub"; });
+  const clean = PMS.exportService.sanitize(fakeData);
+  ok("export sanitize strips passwordHash+salt", clean.users.every(u => !("passwordHash" in u) && !("salt" in u)) && clean.users.length === fakeData.users.length);
+  ok("export sanitize keeps identity", typeof clean.users[0].username === "string" && !!clean.users[0].role);
+  PMS.backup.load();
+  const bksnap = PMS.backup.create();
+  ok("backup snapshots never contain password hashes", (bksnap.data.users || []).every(u => !("passwordHash" in u) && !("salt" in u)));
+  PMS.backup.remove(bksnap.id);
+  // ZMS-11: absolute session lifetime
+  PMS.auth.login("boss", "pw1234");
+  const sessRaw = JSON.parse(window.localStorage.getItem("pms-auth-session"));
+  sessRaw.at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  window.localStorage.setItem("pms-auth-session", JSON.stringify(sessRaw));
+  PMS.auth._setSessionTTLForTest(60000);
+  PMS.auth._resetSessionForTest();
+  ok("expired session is rejected", PMS.auth.currentUser() === null);
+  PMS.auth._setSessionTTLForTest(null);
+  PMS.auth.login("boss", "pw1234");
+  ok("admin re-login after TTL test", PMS.auth.currentUser().role === "admin");
+  // ZMS-05: setCloudRole is admin-gated and role-validated
+  PMS.auth.login("lina", "newpass1");
+  const denyRole = await PMS.cloudsync.setCloudRole("uid-x", "admin");
+  ok("setCloudRole denied for a member", denyRole === false);
+  PMS.auth.login("boss", "pw1234");
+  const denyBad = await PMS.cloudsync.setCloudRole("uid-x", "owner");
+  ok("setCloudRole rejects an invalid role", denyBad === false);
 
 section("Bilingual / RTL");
   PMS.i18n.setLang("ar");
