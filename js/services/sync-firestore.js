@@ -164,6 +164,12 @@
         return "weak";
       case "auth/network-request-failed":
         return "network";
+      case "auth/operation-not-allowed":
+        return "authNotEnabled";
+      case "auth/unauthorized-domain":
+        return "domainNotAllowed";
+      case "auth/api-not-activated":
+        return "apiNotActivated";
       default:
         return "generic";
     }
