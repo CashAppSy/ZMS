@@ -152,6 +152,14 @@
   function bootRef() { return docRef("zms_auth/bootstrap"); }
   function cloudUserRef(uid) { return docRef("zms_auth_users/" + uid); }
 
+  function hasCloudAdmin() {
+    return loadSDK().then(function () {
+      return ensureReady().then(function () {
+        return bootRef().get();
+      });
+    }).then(function (snap) { return !!(snap && snap.exists); });
+  }
+
   function authErrorMessage(e) {
     var code = e && e.code || "";
     switch (code) {
@@ -475,6 +483,8 @@
     isConfigured: isConfigured,
     isEnabled: isEnabled,
     auth: authx,
+    bootRef: bootRef,
+    hasCloudAdmin: hasCloudAdmin,
     signUpWithPassword: signUpWithPassword,
     signInWithPassword: signInWithPassword,
     signOut: signOut,
