@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Management System</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/views.css">
+<link rel="stylesheet" href="css/auth.css">
+<link rel="stylesheet" href="css/rtl.css">
+<link rel="stylesheet" href="css/print.css">
+</head>
+<body>
+<div id="auth-root" role="dialog" aria-label="Sign in"></div>
+<div id="app-shell">
+  <aside id="sidebar" aria-label="Main navigation"></aside>
+  <div id="main-col">
+    <header id="topbar"></header>
+    <main id="view-root" tabindex="-1"></main>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+
+<!-- Core -->
+<script src="js/core/namespace.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/utils.js"></script>
+<script src="js/core/event-bus.js"></script>
+<!-- i18n resources first -->
+<script src="js/i18n/en.js"></script>
+<script src="js/i18n/ar.js"></script>
+<script src="js/core/i18n.js"></script>
+<!-- Data layer -->
+<script src="js/data/schema.js"></script>
+<script src="js/data/migrations.js"></script>
+<script src="js/data/storage-idb.js"></script>
+<script src="js/data/storage-file.js"></script>
+<script src="js/data/backup.js"></script>
+<script src="js/data/seed.js"></script>
+<script src="js/core/store.js"></script>
+<script src="js/data/repositories.js"></script>
+<!-- Services -->
+<script src="js/services/validation.js"></script>
+<script src="js/services/progress.js"></script>
+<script src="js/services/filter-engine.js"></script>
+<script src="js/services/report-engine.js"></script>
+<script src="js/services/export.js"></script>
+<script src="js/services/sync.js"></script>
+<script src="js/cloud-config.js"></script>
+<script src="js/services/sync-firestore.js"></script>
+<!-- Infrastructure -->
+<script src="js/core/registry.js"></script>
+<script src="js/core/router.js"></script>
+<!-- UI toolkit -->
+<script src="js/ui/dom.js"></script>
+<script src="js/ui/modal.js"></script>
+<script src="js/ui/toast.js"></script>
+<script src="js/ui/dropdown.js"></script>
+<script src="js/ui/form-builder.js"></script>
+<script src="js/ui/table.js"></script>
+<script src="js/ui/tree.js"></script>
+<script src="js/ui/charts.js"></script>
+<script src="js/ui/format.js"></script>
+<script src="js/ui/entity-editors.js"></script>
+<script src="js/ui/field-types.js"></script>
+<script src="js/ui/task-detail.js"></script>
+<script src="js/ui/task-filter.js"></script>
+<!-- Auth -->
+<script src="js/core/auth.js"></script>
+<script src="js/views/auth.js"></script>
+<!-- Views -->
+<script src="js/views/dashboard.js"></script>
+<script src="js/views/projects.js"></script>
+<script src="js/views/tasks-table.js"></script>
+<script src="js/views/tasks-kanban.js"></script>
+<script src="js/views/tasks-gantt.js"></script>
+<script src="js/views/tasks-calendar.js"></script>
+<script src="js/views/people.js"></script>
+<script src="js/views/reports.js"></script>
+<script src="js/views/settings.js"></script>
+<!-- App bootstrap -->
+<script src="js/core/app.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
