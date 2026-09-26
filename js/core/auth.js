@@ -248,14 +248,15 @@
   }
 
   // Cloud bridge exception: right after a verified Firebase sign-in the local
-  // mirror must be able to adopt the verified role via updateUser({role}). No
-  // id alone is trusted; the cloudUid must match the just-verified sign-in and
-  // the patch must touch ONLY the role.
+  // mirror must be able to adopt the verified role and the linked person via
+  // updateUser({role, personId}). No id alone is trusted; the cloudUid must
+  // match the just-verified sign-in and the patch may touch ONLY role and
+  // personId (the fields Firebase carries per account).
   function cloudBridgeAllowed(u, patch) {
     if (!verifiedCloudUid || !u || !u.cloudUid) return false;
     if (u.cloudUid !== verifiedCloudUid) return false;
     var keys = patch ? Object.keys(patch) : [];
-    return keys.length === 1 && keys[0] === "role";
+    return keys.length <= 2 && keys.every(function (k) { return k === "role" || k === "personId"; });
   }
 
   function createUser(opts) {

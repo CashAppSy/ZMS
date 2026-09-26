@@ -509,7 +509,8 @@ section("Cloud sync (offline-safe API)");
     typeof PMS.cloudsync.signInWithPassword === "function" &&
     typeof PMS.cloudsync.signOut === "function" &&
     typeof PMS.cloudsync.resetPassword === "function" &&
-    typeof PMS.cloudsync.setCloudRole === "function");
+    typeof PMS.cloudsync.setCloudRole === "function" &&
+    typeof PMS.cloudsync.setCloudPersonId === "function");
   ok("authErrorMessage maps common codes",
     PMS.cloudsync.authErrorMessage({ code: "auth/wrong-password" }) === "invalid" &&
     PMS.cloudsync.authErrorMessage({ code: "auth/email-already-in-use" }) === "duplicate" &&
@@ -614,13 +615,19 @@ section("Cloud sync (offline-safe API)");
   // ZMS-R15: admin re-authentication helpers
   ok("reauthenticateAdmin accepts the admin password", PMS.auth.reauthenticateAdmin("pw1234") === true);
   ok("reauthenticateAdmin rejects a wrong password", PMS.auth.reauthenticateAdmin("nope") === false);
-  // the verified cloud bridge may sync the role, and nothing else
+  // the verified cloud bridge may sync the role and the linked person, and
+  // nothing else — personId is what the per-record rules authorize by
   PMS.auth.logout();
   const bridgeRec = PMS.cloudBridge.userByCloudUid("uid-bridge-1");
   PMS.cloudBridge.markVerified("uid-bridge-1");
   ok("cloud bridge may adopt the verified role", PMS.auth.updateUser(bridgeRec.id, { role: "member" }).ok === true);
+  ok("cloud bridge may adopt the linked personId", PMS.auth.updateUser(bridgeRec.id, { personId: "person-9" }).ok === true);
+  ok("cloud bridge may adopt role + personId together", PMS.auth.updateUser(bridgeRec.id, { role: "admin", personId: "person-9" }).ok === true);
   ok("cloud bridge cannot touch other fields", PMS.auth.updateUser(bridgeRec.id, { role: "admin", name: "X" }).error === "forbidden");
-  PMS.auth.updateUser(bridgeRec.id, { role: "admin" });
+  PMS.cloudBridge.markVerified("uid-other-device");
+  ok("cloud bridge refuses without a verified uid", PMS.auth.updateUser(bridgeRec.id, { role: "admin" }).error === "forbidden");
+  PMS.cloudBridge.markVerified("uid-bridge-1");
+  PMS.auth.updateUser(bridgeRec.id, { personId: null, role: "admin" });
   PMS.auth.login("boss", "pw1234");
   // ZMS-09: authentication material never leaves with exports or backups
   const fakeData = PMS.utils.deepClone(PMS.store.data);

@@ -1,44 +1,35 @@
 rules_version = '2';
 // ============================================================
-// ZMS Firestore Security Rules (hardened) — round 3.
+// ZMS Firestore Security Rules (hardened) — round 4, per-record.
 //
-// WHAT CHANGED vs the previous round (see ZMS Detailed Remaining
-// Vulnerabilities Report — ZMS-RT-01/02/04/06/08):
-//   1. Anonymous access denied (unchanged).
-//   2. NEW: "team membership" gate — the shared datasets are only readable by
-//      ACTIVE users whose uid exists in zms_auth_users (accounts created
-//      through the app). An arbitrary Firebase account that never joined ZMS
-//      gets nothing, even with a valid token. Because the account record is
-//      the join token, DELETING/DEACTIVATING the record immediately revokes
-//      access (ZMS-RT-02). ("team of one" is the default deployment: the
-//      published site uses ONE shared account whose record IS the admin.)
-//   3. NEW: role-gated WRITES — the shared datasets (zms_*_/data) and the sync
-//      metadata (zms_meta/*) can only be CREATED/UPDATED by an active
-//      manager/admin. Members are read-only on shared data because a
-//      whole-dataset document cannot be authorized per task with the current
-//      single-document model (ZMS-RT-05/06); per-task authorization requires
-//      the documented per-record redesign. Deleting a dataset document is
-//      admin-only.
-//   4. NEW: user directory privacy — a cloud profile is readable only by its
-//      owner or by an admin (no broad authenticated read of the directory,
-//      ZMS-RT-04).
-//   5. Roles are immutable from the browser for everyone but an admin, and the
-//      client can NEVER choose an elevated role for a new account: the roles a
-//      signup write may carry are "member" OR, only while the bootstrap marker
-//      is missing (the very first account), "admin". Promotion afterwards goes
-//      through the admin update path / the adminSetRole callable.
-//   6. Deactivated accounts (active == false) are excluded everywhere:
-//      isActiveUser() gates reads AND writes.
-//   7. isBootstrapOwner() migration guard: the uid recorded in
-//      zms_auth/bootstrap.firstUid (the account that created the very first
-//      cloud login) may still WRITE the datasets even if their record predates
-//      the elevated roles. This keeps previously-published versions functional
-//      after the rules tighten (their first account was minted "member"), and
-//      it cannot be used to mint an admin: it grants data-write only, never
-//      account management.
+// WHAT CHANGED vs round 3 (the single-document model):
+//   Projects and tasks no longer live in ONE whole-dataset doc
+//   per collection (zms_projects/data, zms_tasks/data) which could
+//   only be authorized as "manager/admin or nothing". They are now
+//   stored PER RECORD (zms_projects/{projId}, zms_tasks/{taskId})
+//   so authorization can be checked per document (ZMS-RT-05/06):
+//     - the manager of a project (project.managerId == caller's
+//       personId) may create/update THAT project and ANY task that
+//       belongs to it;
+//     - the assignees of a task (caller's personId in assignees)
+//       may change ONLY the status of THAT task (status, progress,
+//       activity, updatedAt — the exact fields the status UI writes);
+//     - everything else on tasks/projects stays admin-only, and
+//       deleting a project/task record is ALWAYS admin-only.
+//   The other collections (departments, people, statuses,
+//   priorities, custom field defs, saved filters) stay in the
+//   whole-document model where members are read-only and managers
+//   (or the bootstrap-owner migration guard) may push.
 //
-// DEPLOY: paste in Console -> Firestore Database -> Rules -> Publish, or:
-//   firebase deploy --only firestore:rules
+//   personId is the join key: it must equal the person record id
+//   (people.id) that the manager/assignee selection stores. The
+//   client writes it into zms_auth_users/{uid}.personId from
+//   Settings -> Accounts -> Link to a person (setCloudPersonId) or
+//   at sign-up. Rules treat a missing personId as null, so a
+//   profile without a linked person can never act as a manager or
+//   assignee (only admins get blanket access).
+//
+// DEPLOY: firebase deploy --only firestore:rules
 // ============================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -50,10 +41,8 @@ service cloud.firestore {
     function isActiveUser(uid) {
       // a missing `active` field is treated as active (legacy records).
       // Rules are NOT null-safe: `get(...).data.active` on a doc WITHOUT that
-      // field throws "Property active is undefined on object" at runtime and
-      // the rule evaluates to false (DENIED) in production even though the
-      // simulator tolerates it. Guard every field read with the `in` operator
-      // so a missing field is never dereferenced.
+      // field throws at runtime and the rule evaluates to DENIED. Guard every
+      // field read with the `in` operator.
       return hasCloudProfile(uid)
         && ('active' in get(/databases/$(database)/documents/zms_auth_users/$(uid)).data
             ? get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active == true
@@ -93,16 +82,100 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // dataset write: active manager/admin, or the bootstrap-owner migration
-    // guard (pre-role first account)
+    // whole-dataset write: active manager/admin, or the bootstrap-owner
+    // migration guard (pre-role first account)
     function canWriteDataset(uid) {
       return isManagerOrAdmin(uid) || isBootstrapOwner(uid);
     }
 
-    // ---- shared datasets (whole-document model) ----
-    // read  : any ACTIVE team member (accounts created through the app)
-    // create/update : ACTIVE manager or admin only (a member is read-only:
-    //                 a whole-dataset write cannot be authorized per task)
+    // ---------------- per-record helpers (round 4) ----------------
+
+    // The personId of the CURRENT caller, read from their own cloud profile
+    // (reading your own profile is always allowed). Missing => null, and a
+    // null personId can never match managerId/assignees.
+    function myPersonId() {
+      return 'personId' in get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data
+        ? get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.personId
+        : null;
+    }
+
+    // Is `uid` the active manager of project `projId` (by person match)?
+    function isProjectManagerOf(uid, projId) {
+      return projId != null
+        && isActiveUser(uid)
+        && exists(/databases/$(database)/documents/zms_projects/$(projId))
+        && 'managerId' in get(/databases/$(database)/documents/zms_projects/$(projId)).data
+        && get(/databases/$(database)/documents/zms_projects/$(projId)).data.managerId == myPersonId();
+    }
+
+    // A task can be fully managed when its project is managed by `uid`.
+    function isTaskProjectManaged(uid, taskData) {
+      return isActiveUser(uid)
+        && 'projectId' in taskData
+        && isProjectManagerOf(uid, taskData.projectId);
+    }
+
+    // Is the caller one of the ASSIGNEES of task `taskId`?
+    function isTaskAssigneeOf(uid, taskId) {
+      return isActiveUser(uid)
+        && myPersonId() != null
+        && exists(/databases/$(database)/documents/zms_tasks/$(taskId))
+        && 'assignees' in get(/databases/$(database)/documents/zms_tasks/$(taskId)).data
+        && myPersonId() in get(/databases/$(database)/documents/zms_tasks/$(taskId)).data.assignees;
+    }
+
+    // An assignee may change the STATUS of a task, which the status UI writes
+    // as exactly: status, progress, activity(log) and updatedAt. Everything
+    // else is off-limits for assignees (no title/dates/assignees edits).
+    function isStatusOnlyUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+        ['status', 'progress', 'activity', 'updatedAt']);
+    }
+
+    // An active user may bump ONLY the shared clock (zms_meta/*.updatedAt) so
+    // their status change reaches other devices, without faking
+    // schemaVersion/hasData/writer fields.
+    function isClockOnlyUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt']);
+    }
+
+    // ---- per-record: projects ----
+    // read        : any ACTIVE team member
+    // create      : admin, or a manager creating a project they manage
+    //               (managerId == their own personId)
+    // update      : admin, or the CURRENT project manager (existing managerId
+    //               == their personId)
+    // delete      : admin only
+    match /zms_projects/{projId} {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create: if isAdmin(request.auth.uid)
+        || (isManagerOrAdmin(request.auth.uid)
+            && 'managerId' in request.resource.data
+            && request.resource.data.managerId == myPersonId());
+      allow update: if isAdmin(request.auth.uid)
+        || isProjectManagerOf(request.auth.uid, projId);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- per-record: tasks ----
+    // read        : any ACTIVE team member
+    // create      : admin, or the manager of the task's project
+    // update      : admin, or the manager of the task's project (full edit),
+    //               or an ASSIGNEE changing ONLY the status of that task
+    // delete      : admin only
+    match /zms_tasks/{taskId} {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create: if isAdmin(request.auth.uid)
+        || isTaskProjectManaged(request.auth.uid, request.resource.data);
+      allow update: if isAdmin(request.auth.uid)
+        || isTaskProjectManaged(request.auth.uid, resource.data)
+        || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- shared datasets (whole-document model, unchanged) ----
+    // read  : any ACTIVE team member
+    // create/update : ACTIVE manager or admin (or bootstrap owner)
     // delete : admin only
     match /zms_departments/data {
       allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
@@ -110,16 +183,6 @@ service cloud.firestore {
       allow delete: if isAdmin(request.auth.uid);
     }
     match /zms_people/data {
-      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create, update: if canWriteDataset(request.auth.uid);
-      allow delete: if isAdmin(request.auth.uid);
-    }
-    match /zms_projects/data {
-      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create, update: if canWriteDataset(request.auth.uid);
-      allow delete: if isAdmin(request.auth.uid);
-    }
-    match /zms_tasks/data {
       allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
       allow create, update: if canWriteDataset(request.auth.uid);
       allow delete: if isAdmin(request.auth.uid);
@@ -150,8 +213,7 @@ service cloud.firestore {
       allow delete: if isAdmin(request.auth.uid);
     }
 
-    // ---- TEMP diagnostic (remove before shipping): proves which constructs
-    //      are actually live/working in the published rules ----
+    // ---- TEMP diagnostic (kept for live rule verification) ----
     match /zms_diag/auth {
       allow read: if request.auth != null;
     }
@@ -176,11 +238,14 @@ service cloud.firestore {
       allow read: if hasRole(request.auth.uid, 'admin');
     }
 
-    // ---- sync metadata (state + probe): readable by members, writable only
-    //      by managers/admins so a normal user cannot fake clocks/state ----
+    // ---- sync metadata (state + probe): readable by every active user;
+    //      writable by managers/admins, but an active user may update only
+    //      the clock (updatedAt) so their status change propagates ----
     match /zms_meta/{doc} {
       allow read: if isActiveUser(request.auth.uid);
-      allow create, update: if canWriteDataset(request.auth.uid);
+      allow create: if canWriteDataset(request.auth.uid);
+      allow update: if canWriteDataset(request.auth.uid)
+        || (isActiveUser(request.auth.uid) && isClockOnlyUpdate());
       allow delete: if false;
     }
 
@@ -210,7 +275,8 @@ service cloud.firestore {
         && (request.resource.data.role == 'member'
             || !exists(/databases/$(database)/documents/zms_auth/bootstrap));
 
-      // role is immutable from the browser for everyone but an admin
+      // role is immutable from the browser for everyone but an admin; a user
+      // may update their OWN non-role fields (e.g. link/unlink personId)
       allow update: if isAdmin(request.auth.uid)
         || (request.auth.uid == uid
             && request.resource.data.role == resource.data.role);

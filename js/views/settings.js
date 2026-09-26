@@ -810,9 +810,11 @@
             if (isEdit) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
             else res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
             if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
-            // keep the shared cloud role in sync so other devices see it
+            // keep the shared cloud role + linked person in sync so other
+            // devices see them (personId is what authorizes per-record writes)
             if (isEdit && user.cloudUid && PMS.cloudsync && PMS.cloudsync.setCloudRole) {
               PMS.cloudsync.setCloudRole(user.cloudUid, v.role);
+              PMS.cloudsync.setCloudPersonId(user.cloudUid, v.personId || null);
             }
             PMS.modal.close();
             PMS.store.flush();

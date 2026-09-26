@@ -4,36 +4,60 @@
    Keeps the whole dataset shared across every device that enables the same
    Firebase project, so the team works on one copy with no export/import.
 
-   - Data lives in one Firestore doc per collection (avoids the 1MiB
-     single-doc limit) plus a "state" doc used as a last-writer-wins clock.
+   DATA MODEL (ZMS-RT-05/06, round-4 per-record layout):
+   - departments, people, taskStatuses, projectStatuses, priorities,
+     customFieldDefs, savedFilters still live as ONE whole-dataset doc per
+     collection (zms_<name>/data) because they are small, shared-by-everyone
+     reference data that changes rarely (the 1MiB single-doc limit applies).
+   - projects and tasks live PER RECORD (zms_projects/<id>, zms_tasks/<id>)
+     so authorization can be checked per document at the server:
+       * the project's manager (project.managerId == the caller's personId)
+         may create/update that project and ANY task inside it;
+       * the assignees of a task (the caller's personId inside assignees) may
+         change only the STATUS of that task (status/progress/activity/
+         updatedAt — the exact fields the status UI writes);
+       * everything else on projects/tasks stays admin-only, and deleting a
+         project/task record is ALWAYS admin-only.
+   - A "state" doc (zms_meta/state) is a last-writer-wins clock. Members'
+     status changes may bump ONLY the clock (updatedAt) so other devices
+     notice; they cannot touch schemaVersion/hasData/writer.
+   - Round-3 clouds (zms_projects/data, zms_tasks/data whole-documents) are
+     still read: the pull re-expands their items into per-record rows, and an
+     admin's next push deletes the legacy wrapper once it is fully mirrored.
+
    - Accounts (users[]) and device preferences (settings) are NOT synced:
      each browser keeps its own local accounts, matching the local-access
-     design. Only project data (departments, people, projects, tasks,
-     statuses, priorities, custom field defs, saved filters) is shared.
+     design. Only project data is shared.
    - The Firebase SDK is loaded dynamically from the Google CDN only when
      the feature is enabled, so the app keeps working fully offline and the
      test harness never touches the network.
-- Connection settings come from PMS.cloudConfig (js/cloud-config.js,
-      committed with the site). That makes sync automatic: every device that
-      opens the deployed site connects to the same cloud with no per-device
-      setup. A per-device localStorage override is optional for power users.
+   - Connection settings come from PMS.cloudConfig (js/cloud-config.js,
+     committed with the site). That makes sync automatic: every device that
+     opens the deployed site connects to the same cloud with no per-device
+     setup. A per-device localStorage override is optional for power users.
 
    SECURITY: shared data requires an ACTIVE cloud profile (see firestore.rules).
-   Members are read-only on shared data; only managers/admins — or the bootstrap
-   first account — may push (canWriteShared() mirrors this client-side).
+   Members may change ONLY the status of tasks assigned to them (pushed as a
+   targeted status-only update); managers/admins — or the bootstrap first
+   account — may push the reference datasets and full per-record documents.
    ========================================================================== */
 (function (PMS) {
   "use strict";
 
   var CONFIG_KEY = "pms-cloud-config";
+  var MIRROR_KEY = "pms-cloud-mirror";
   var APP_NAME = "pms-cloud";
   var SDK_VERSION = "10.12.2";
   var INTERVAL = 15000;       // poll interval for remote changes
   var COOLDOWN = 3000;        // min gap between pulls
   var PUSH_DEBOUNCE = 500;    // debounce between a local edit and its upload
 
-  var COLLECTIONS = ["departments", "people", "projects", "tasks",
-    "taskStatuses", "projectStatuses", "priorities", "customFieldDefs", "savedFilters"];
+  // Reference datasets: one whole-document per collection (round-3 layout).
+  var WHOLE_COLS = ["departments", "people", "taskStatuses", "projectStatuses",
+    "priorities", "customFieldDefs", "savedFilters"];
+  // Per-record collections (round-4 layout): one document PER project/task.
+  var RECORD_COLS = ["projects", "tasks"];
+  var COLLECTIONS = WHOLE_COLS.concat(RECORD_COLS);
   // Only user-authored collections count as "real data": built-in statuses etc.
   // are present on every fresh device and must never be mistaken for content
   // to share (that is how a new empty browser used to wipe the shared cloud).
@@ -144,7 +168,11 @@
   function docRef(path) {
     return firestore.doc(path);
   }
+  // standard whole-dataset document: zms_<name>/data
   function colRef(name) { return docRef("zms_" + name + "/data"); }
+  // per-record collection / document
+  function recordCol(name) { return firestore.collection("zms_" + name); }
+  function recordRef(name, id) { return firestore.collection("zms_" + name).doc(id); }
   function stateRef() { return docRef("zms_meta/state"); }
   function probeRef() { return docRef("zms_meta/probe"); }
 
@@ -211,16 +239,30 @@
     }).catch(function () { bootstrapOwnerLoaded = true; return null; });
   }
 
-  // True when THIS signed-in cloud user may push shared datasets. Mirrors the
-  // Firestore rules (ZMS-RT-01/06): only admin/manager — or the bootstrap
-  // owner (firstUid migration) — may write; plain members are read-only on
-  // shared data, so their devices must not attempt whole-dataset writes.
+  // True when THIS signed-in cloud user may push the shared datasets.
+  // Mirrors the Firestore rules (ZMS-RT-01/06): only a manager OR admin — or
+  // the bootstrap owner (firstUid migration) — may write the whole-dataset
+  // reference collections; plain members can only ever touch the STATUS of
+  // tasks assigned to them (handled separately in buildRecordOps).
   function canWriteShared() {
     var u = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
     if (!u || !u.cloudUid) return Promise.resolve(false);
     if (u.role === "admin" || u.role === "manager") return Promise.resolve(true);
     if (u.role !== "member") return Promise.resolve(false);
     return bootstrapOwnerUid().then(function (first) { return !!first && u.cloudUid === first; });
+  }
+
+  // Identity + personId of the current local user (mirror of the cloud
+  // profile; personId is propagated by Settings -> Accounts).
+  function identity() {
+    var u = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
+    return {
+      user: u,
+      cloudUid: u ? (u.cloudUid || null) : null,
+      role: u ? (u.role || "member") : "member",
+      personId: u ? (u.personId || null) : null,
+      isAdmin: !!(u && u.role === "admin")
+    };
   }
 
   function authErrorMessage(e) {
@@ -301,7 +343,9 @@
         return {
           uid: uid, email: cred.user.email || opts.email,
           role: d.role === "admin" || d.role === "manager" || d.role === "member" ? d.role : "member",
-          displayName: d.displayName || "" 
+          displayName: d.displayName || "",
+          personId: d.personId || null,
+          active: d.active !== false
         };
       });
     }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
@@ -345,6 +389,19 @@
     });
   }
 
+  // Mirror a linked PERSON (personId) to the cloud profile. The per-record
+  // authorization model (managerId/assignees comparison) requires the cloud
+  // profile to know which person the account is, so this must be written to
+  // zms_auth_users/<uid> whenever Settings links/unlinks a person. Rules keep
+  // it admin-only for other users, or the user's own profile (role unchanged).
+  function setCloudPersonId(uid, personId) {
+    if (!uid) return Promise.resolve(false);
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
+    return ensureReady().then(function () {
+      return cloudUserRef(uid).set({ personId: personId || null }, { merge: true });
+    }).then(function () { return true; }).catch(function () { return false; });
+  }
+
   // ZMS-R05: removing a shared cloud account must NOT be a client-side write.
   // It is done by the trusted backend callable "adminDeleteUser" (it verifies
   // the caller is an admin from Firestore, then deletes the account record).
@@ -360,6 +417,165 @@
     }).then(function () { functionsReady = true; return true; });
   }
 
+  /* ---------------- per-record change tracking (local mirror) ---------------- */
+  // The per-record model writes individual documents, so we must know what we
+  // LAST wrote (or last pulled) per record to avoid re-uploading unchanged data
+  // and to detect local edits vs. deletions. The mirror is persisted per
+  // device in localStorage and refreshed from every successful push/pull.
+  // A record is considered CHANGED when its updatedAt differs from the mirror
+  // (repositories.update() bumps updatedAt on every edit). For assignee
+  // status-only updates we additionally compare status/progress/activity.
+
+  function loadMirror() {
+    try { return JSON.parse(window.localStorage.getItem(MIRROR_KEY) || "null") || {}; }
+    catch (e) { return {}; }
+  }
+  function saveMirror(m) {
+    try { window.localStorage.setItem(MIRROR_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  function mirrorFor(col) { return loadMirror()[col] || {}; }
+  function setMirrorFor(col, map) {
+    var m = loadMirror();
+    m[col] = map || {};
+    saveMirror(m);
+  }
+
+  function statusTrack(rec) {
+    return {
+      updatedAt: rec.updatedAt || null,
+      status: rec.status === undefined ? null : rec.status,
+      progress: rec.progress === undefined ? null : rec.progress,
+      activity: rec.activity === undefined ? null : PMS.utils.deepClone(rec.activity)
+    };
+  }
+
+  function statusEquals(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.updatedAt === b.updatedAt &&
+      a.status === b.status &&
+      a.progress === b.progress &&
+      JSON.stringify(a.activity || null) === JSON.stringify(b.activity || null);
+  }
+
+  // Serialized equality for a single status field (activity is an array).
+  function statusFieldEquals(key, localRec, snap) {
+    if (key === "activity") {
+      return JSON.stringify(localRec[key] || null) === JSON.stringify(snap[key] || null);
+    }
+    return (localRec[key] === undefined ? null : localRec[key]) === snap[key];
+  }
+
+  // The managerId of the project a task belongs to (personId match drives the
+  // task authorization model).
+  function projectManagerOf(d, projectId) {
+    if (!projectId) return null;
+    var list = Array.isArray(d && d.projects) ? d.projects : [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === projectId) return list[i].managerId || null;
+    }
+    return null;
+  }
+
+  // Builds every operation needed to push ONE record collection (projects or
+  // tasks) from local state to the cloud, honoring the per-record rules:
+  //  - admin: full set() for every changed record, delete for locally-deleted
+  //  - project manager (by personId): full set() for records of their projects
+  //  - task assignee (by personId): targeted update() with ONLY the status
+  //    fields, never create/delete
+  // Returns { ops, mirror } where mirror maps record id -> new mirror entry
+  // (or null to drop it) so the mirror is only persisted after the write set
+  // succeeded.
+  function buildRecordOps(cname, d, idn, t) {
+    var ops = [];
+    var mirrorUpdates = {};
+    var mirror = mirrorFor(cname);
+    var local = Array.isArray(d && d[cname]) ? d[cname] : [];
+    var have = {};
+    local.forEach(function (rec) { if (rec && rec.id) have[rec.id] = true; });
+
+    // deletions: admin only (rules forbid anyone else)
+    Object.keys(mirror).forEach(function (id) {
+      if (have[id]) return;
+      if (!idn.isAdmin) return;
+      ops.push(recordRef(cname, id).delete());
+      mirrorUpdates[id] = null;
+    });
+
+    local.forEach(function (rec) {
+      if (!rec || !rec.id) return;
+      var allow = false;
+      var statusOnly = false;
+      if (cname === "projects") {
+        // admin pushes any project; otherwise only the project whose managerId
+        // matches the caller's personId
+        allow = idn.isAdmin || (idn.personId && rec.managerId && rec.managerId === idn.personId);
+      } else {
+        // tasks: admin = all; manager-of-project = full; assignee = status only
+        if (idn.isAdmin) allow = true;
+        else if (!allow && idn.personId && projectManagerOf(d, rec.projectId) === idn.personId) allow = true;
+        else if (!allow && idn.personId && Array.isArray(rec.assignees) && rec.assignees.indexOf(idn.personId) !== -1) { allow = true; statusOnly = true; }
+      }
+      if (!allow) return;
+
+      var snap = mirror[rec.id];
+      if (!snap) {
+        // Never seen this record: full push. A brand-new task that the caller
+        // can only ASSIGNEE-update cannot be created by them (rules: member
+        // has no create right), so skip — it will arrive via a manager/admin.
+        if (statusOnly) return;
+        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+        mirrorUpdates[rec.id] = statusTrack(rec);
+        return;
+      }
+
+      if (statusOnly) {
+        if (statusEquals(statusTrack(rec), snap)) return;
+        // Send only the status fields that actually DIFFER from the last-known
+        // remote snapshot, so a concurrent manager/admin edit of another field
+        // (e.g. progress) is never clobbered by a stale local value. Every
+        // field sent stays inside the {status, progress, activity, updatedAt}
+        // allow-set the rules check via isStatusOnlyUpdate().
+        var payload = { updatedAt: rec.updatedAt || t };
+        ["status", "progress", "activity"].forEach(function (k) {
+          if (!statusFieldEquals(k, rec, snap)) payload[k] = rec[k];
+        });
+        ops.push(recordRef(cname, rec.id).update(payload));
+        mirrorUpdates[rec.id] = statusTrack(rec);
+      } else {
+        if (snap.updatedAt === rec.updatedAt) return;
+        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+        mirrorUpdates[rec.id] = statusTrack(rec);
+      }
+    });
+
+    return { ops: ops, mirror: mirrorUpdates };
+  }
+
+  // Round-3 clouds stored projects/tasks as whole-doc items inside
+  // zms_projects/data / zms_tasks/data. The pull already re-expands those
+  // items into per-record rows. Here an ADMIN removes the legacy wrapper doc
+  // once every item it holds is present locally (so nothing is lost), leaving
+  // per-record documents as the only source of truth.
+  function legacyCleanupOps(idn) {
+    if (!idn.isAdmin) return Promise.resolve([]);
+    return Promise.all(RECORD_COLS.map(function (cname) {
+      return colRef(cname).get().then(function (s) {
+        if (!s.exists || !s.data() || !Array.isArray(s.data().items)) return [];
+        var items = s.data().items || [];
+        var localIds = {};
+        var local = PMS.store.data && PMS.store.data[cname];
+        if (Array.isArray(local)) local.forEach(function (it) { if (it && it.id) localIds[it.id] = true; });
+        var mirrored = items.every(function (it) { return it && it.id && localIds[it.id]; });
+        return mirrored ? [colRef(cname).delete()] : [];
+      });
+    })).then(function (groups) {
+      var out = [];
+      groups.forEach(function (g) { out = out.concat(g); });
+      return out;
+    });
+  }
+
   /* ---------------- push (local -> cloud) ---------------- */
   function push() {
     if (!enabled || applying) return Promise.resolve(false);
@@ -367,41 +583,74 @@
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
     if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
-    // ZMS-RT-01/06: members are read-only on the shared datasets at the server;
-    // do not even attempt whole-dataset writes from a member's device.
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
-      return canWriteShared().then(function (allowed) {
-        if (!allowed) return false;
-        return ensureReady().then(function () {
+      return ensureReady().then(function () {
+        var idn = identity();
+        if (!idn.cloudUid) return false;
         var t = now();
-        var ops = [];
-        COLLECTIONS.forEach(function (cname) {
-          if (Array.isArray(d[cname])) {
-            ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
+        return canWriteShared().then(function (sharedWrite) {
+          var ops = [];
+          // whole-dataset reference collections: only manager/admin (+bootstrap)
+          if (sharedWrite) {
+            WHOLE_COLS.forEach(function (cname) {
+              if (Array.isArray(d[cname])) {
+                ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
+              }
+            });
           }
+          // per-record collections (projects/tasks)
+          var mirrorPatches = {};
+          RECORD_COLS.forEach(function (cname) {
+            var built = buildRecordOps(cname, d, idn, t);
+            ops = ops.concat(built.ops);
+            if (built.mirror) mirrorPatches[cname] = built.mirror;
+          });
+          // legacy round-3 wrapper cleanup (admin only)
+          return legacyCleanupOps(idn).then(function (legacyOps) {
+            ops = ops.concat(legacyOps);
+            // state clock: managers/admins write the full state doc; members
+            // only bump the clock (updatedAt) so other devices pull the change
+            if (sharedWrite) {
+              ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
+            } else if (ops.length) {
+              ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
+            }
+            if (!ops.length) return false;
+            return Promise.all(ops).then(function () {
+              // persist the mirror only after the writes succeeded
+              Object.keys(mirrorPatches).forEach(function (cname) {
+                var next = PMS.utils.deepClone(mirrorFor(cname));
+                Object.keys(mirrorPatches[cname]).forEach(function (id) {
+                  var v = mirrorPatches[cname][id];
+                  if (v === null) delete next[id];
+                  else next[id] = v;
+                });
+                setMirrorFor(cname, next);
+              });
+              // align the in-memory clock with what we uploaded (and persist
+              // it) so the next poll/reboot does not re-import our own data
+              // back onto this device. flush() does not emit "store:changed",
+              // so this cannot loop.
+              var dd = PMS.store.data;
+              if (dd && dd.meta) {
+                dd.meta.updatedAt = t;
+                PMS.store.flush();
+              }
+              lastPushed = Date.now();
+              PMS.bus.emit("cloud:state", { pushed: true });
+              var summarized = {};
+              COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
+              console.info("[cloudsync] push ok", summarized);
+              return true;
+            });
+          });
         });
-        ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
-        return Promise.all(ops);
-      }).then(function () {
-        // align the in-memory clock with what we uploaded (and persist it) so
-        // the next poll/reboot does not re-import our own data back onto this
-        // device. flush() does not emit "store:changed", so this cannot loop.
-        var d = PMS.store.data;
-        if (d && d.meta) {
-          d.meta.updatedAt = new Date().toISOString();
-          PMS.store.flush();
-        }
-        lastPushed = Date.now();
-        PMS.bus.emit("cloud:state", { pushed: true });
-        console.info("[cloudsync] push ok", COLLECTIONS.filter(function (c) { return Array.isArray(d && d[c]); }).reduce(function (o, c) { o[c] = (d[c] || []).length; return o; }, {}));
-        return true;
-      }).catch(function (e) {
-        console.error("[cloudsync] push failed:", e);
-        PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
-        return false;
       });
-      });
+    }).catch(function (e) {
+      console.error("[cloudsync] push failed:", e);
+      PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
+      return false;
     });
   }
 
@@ -429,7 +678,29 @@
         if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
-        return colRef(cname).get();
+        if (RECORD_COLS.indexOf(cname) !== -1) {
+          // per-record collection: read every doc. A legacy whole-doc
+          // zms_<c>/data (round-3) is re-expanded into its items so existing
+          // clouds stay readable until the admin's push migrates them.
+          return recordCol(cname).get().then(function (qs) {
+            var items = [];
+            qs.forEach(function (ds) {
+              if (!ds.exists) return;
+              var dd = ds.data() || {};
+              if (ds.id === "data" && Array.isArray(dd.items)) {
+                dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
+              } else if (ds.id === "data") {
+                // empty legacy wrapper: nothing to expand
+              } else {
+                items.push(dd);
+              }
+            });
+            return items;
+          });
+        }
+        return colRef(cname).get().then(function (s) {
+          return (s.exists && s.data() && Array.isArray(s.data().items)) ? s.data().items : [];
+        });
       })).then(function (snaps) {
         var obj = {
           schemaVersion: PMS.schema.VERSION,
@@ -438,13 +709,18 @@
           customFieldDefs: [], savedFilters: [],
           meta: { updatedAt: remoteUpdated }
         };
-        snaps.forEach(function (s, i) {
-          if (s.exists && s.data() && Array.isArray(s.data().items)) obj[COLLECTIONS[i]] = s.data().items;
+        snaps.forEach(function (items, i) {
+          obj[COLLECTIONS[i]] = items || [];
         });
         return obj;
       });
     }).then(function (obj) {
       if (!obj) return false;
+      // Capture the RAW remote rows (before merging) so the per-record mirror
+      // reflects what the CLOUD holds. Local edits kept by a merge must still
+      // look "ahead" on the next push; a mirror built from the merged dataset
+      // would swallow them as "unchanged" and they would never upload.
+      var rawRemote = PMS.utils.deepClone(obj);
       // Replace is destructive (whole dataset is overwritten by the remote
       // copy). Automatic / merge pulls UNION by id, so a slow device whose
       // pushes failed (e.g. editing before cloud rules were ready) keeps its
@@ -455,6 +731,13 @@
       obj.settings = PMS.utils.deepClone((PMS.store.data && PMS.store.data.settings) || PMS.schema.defaultData().settings);
       applying = true;
       PMS.store.setData(obj);
+      // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
+      // cloud as its baseline; a local edit made before/after still differs)
+      RECORD_COLS.forEach(function (cname) {
+        var map = {};
+        (rawRemote[cname] || []).forEach(function (rec) { if (rec && rec.id) map[rec.id] = statusTrack(rec); });
+        setMirrorFor(cname, map);
+      });
       applying = false;
       lastPulled = Date.now();
       PMS.bus.emit("cloud:state", { pulled: true });
@@ -651,8 +934,7 @@
     }).catch(function (e) {
       // Diagnostics for the "Missing or insufficient permissions" case: report
       // the signed-in Firebase uid so we can verify it matches a profile doc
-      // in zms_auth_users (the round-3 rules deny every read when it does not).
-      // Captured BEFORE teardown() which deletes the Firebase app.
+      // in zms_auth_users. Captured BEFORE teardown() which deletes the app.
       var diagUid = null, diagEmail = null;
       try {
         if (window.firebase && window.firebase.apps) {
@@ -663,10 +945,6 @@
           }
         }
       } catch (diagErr) { console.warn("[cloudsync] boot diagnostics unavailable", diagErr); }
-      // Decisive probe: try reading the user's OWN profile doc (allowed for the
-      // owner under round-3 regardless of role) and the sync state doc (needs
-      // isActiveUser). Comparing the two tells us whether the live rules are
-      // round-3-but-profile-missing vs. still-deny-everything.
       if (diagUid) {
         ensureReady().then(function () {
           return cloudUserRef(diagUid).get();
@@ -693,7 +971,7 @@
             ["zms_auth/bootstrap (signupCanRead)", bootRef],
             ["zms_meta/probe (isActiveUser)", probeRef],
             ["zms_meta/state (isActiveUser)", stateRef],
-            ["zms_tasks/data (isTeamMember && isActiveUser)", function () { return colRef("tasks"); }]
+            ["zms_tasks/<id> (record collection list)", function () { return recordCol("tasks").get(); }]
           ];
           ensureReady().then(function () {
             return probes.reduce(function (chain, p) {
@@ -745,6 +1023,7 @@
     signOut: signOut,
     resetPassword: resetPassword,
     setCloudRole: setCloudRole,
+    setCloudPersonId: setCloudPersonId,
     deleteCloudAccount: deleteCloudAccount,
     authErrorMessage: authErrorMessage
   };

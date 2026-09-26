@@ -69,18 +69,23 @@
 
   /* ------------- shared helpers for cloud auth flows ------------- */
   function bridgeAndEnter(root, res) {
-    // keep the cloud identity + role, creating a slim local record when this
-    // device has never seen that uid before
+    // keep the cloud identity + role + linked person, creating a slim local
+    // record when this device has never seen that uid before. The cloud rules
+    // authorize project/task writes by personId (managerId/assignees), so the
+    // local mirror must adopt the personId Firebase carries for the account.
     var local = PMS.cloudBridge.userByCloudUid(res.uid);
     if (local) {
-      if (local.role !== res.role && PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled()) {
-        PMS.auth.updateUser(local.id, { role: res.role });
+      var patch = {};
+      if (local.role !== res.role && PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled()) patch.role = res.role;
+      if ((local.personId || null) !== (res.personId || null)) patch.personId = res.personId || null;
+      if (Object.keys(patch).length) {
+        PMS.auth.updateUser(local.id, patch);
         local = PMS.auth.userById(local.id);
       }
     } else {
       local = PMS.cloudBridge.register({
         username: res.email, cloudUid: res.uid, role: res.role,
-        name: res.displayName || res.email
+        name: res.displayName || res.email, personId: res.personId || null
       });
     }
     if (!local || local.active === false) {
