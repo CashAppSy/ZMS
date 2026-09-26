@@ -283,6 +283,7 @@
       pushNow: "Upload now",
       pullNow: "Download now",
       pushDone: "Data uploaded to cloud",
+      pushFail: "Upload failed — check the Firestore rules (help box below) and your connection, then retry.",
       replaceDone: "Cloud data downloaded (replaced local)",
       mergeDone: "Cloud data downloaded (merged with local)",
       pullConfirm: "Download shared data",
@@ -303,7 +304,7 @@
       configInvalid: "Invalid configuration — make sure it is a JSON object with a projectId.",
       connectFail: "Could not connect to Firebase",
       synced: "Synced with cloud",
-      bootFailed: "Cloud sync unavailable (offline?)"
+      bootFailed: "Cloud sync unavailable — check your internet connection or turn off ad/privacy blockers for this site."
     },
     errors: { generic: "Something went wrong", notFound: "Not found" },
     lang: { ar: "العربية", en: "English" },
