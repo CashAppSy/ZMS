@@ -102,15 +102,16 @@
   }
 
   function loadSDK() {
-    if (window.firebase && window.firebase.firestore) return Promise.resolve();
+    if (window.firebase && window.firebase.firestore && window.firebase.auth) return Promise.resolve();
     var urls = [
       "https://www.gstatic.com/firebasejs/" + SDK_VERSION + "/firebase-app-compat.js",
-      "https://www.gstatic.com/firebasejs/" + SDK_VERSION + "/firebase-firestore-compat.js"
+      "https://www.gstatic.com/firebasejs/" + SDK_VERSION + "/firebase-firestore-compat.js",
+      "https://www.gstatic.com/firebasejs/" + SDK_VERSION + "/firebase-auth-compat.js"
     ];
     var chain = Promise.resolve();
     urls.forEach(function (url) {
       chain = chain.then(function () {
-        if (window.firebase && window.firebase.firestore) return undefined;
+        if (window.firebase && window.firebase.firestore && window.firebase.auth) return undefined;
         return injectScript(url);
       });
     });
@@ -134,6 +135,96 @@
   function colRef(name) { return docRef("zms_" + name + "/data"); }
   function stateRef() { return docRef("zms_meta/state"); }
   function probeRef() { return docRef("zms_meta/probe"); }
+
+  /* ---------------- shared cloud login (Firebase Auth) ---------------- */
+  // One email + password per person works on every device. Roles live in
+  // Firestore (zms_auth/users/<uid> + a zms_auth/bootstrap doc recording the
+  // first admin). The app still keeps a slim local record through the
+  // PMS.auth bridge so existing role gates and person linking keep working.
+  function authx() {
+    if (!window.firebase || !window.firebase.auth) return Promise.reject(new Error("missing-auth-sdk"));
+    return ensureReady().then(function () {
+      return window.firebase.auth(window.firebase.app(APP_NAME));
+    });
+  }
+  function bootRef() { return docRef("zms_auth/bootstrap"); }
+  function cloudUserRef(uid) { return docRef("zms_auth/users/" + uid); }
+
+  function authErrorMessage(e) {
+    var code = e && e.code || "";
+    switch (code) {
+      case "auth/wrong-password":
+      case "auth/user-not-found":
+      case "auth/invalid-email":
+      case "auth/invalid-login-credentials":
+        return "invalid";
+      case "auth/email-already-in-use":
+        return "duplicate";
+      case "auth/weak-password":
+        return "weak";
+      case "auth/network-request-failed":
+        return "network";
+      default:
+        return "generic";
+    }
+  }
+
+  function signUpWithPassword(opts) {
+    if (!opts || !opts.email || !opts.password) return Promise.reject(new Error("bad-input"));
+    return authx().then(function (a) {
+      return a.createUserWithEmailAndPassword(opts.email, opts.password);
+    }).then(function (cred) {
+      var uid = cred.user.uid;
+      return bootRef().get().then(function (b) {
+        var role = b.exists ? "member" : "admin";
+        var rec = {
+          email: opts.email, role: role,
+          displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
+        };
+        return cloudUserRef(uid).set(rec).then(function () {
+          if (!b.exists) return bootRef().set({ firstUid: uid, updatedAt: now() });
+          return undefined;
+        }).then(function () {
+          return { uid: uid, email: opts.email, role: role, displayName: opts.name || "", isAdmin: role === "admin" };
+        });
+      });
+    }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
+  }
+
+  function signInWithPassword(opts) {
+    if (!opts || !opts.email || !opts.password) return Promise.reject(new Error("bad-input"));
+    return authx().then(function (a) {
+      return a.signInWithEmailAndPassword(opts.email, opts.password);
+    }).then(function (cred) {
+      var uid = cred.user.uid;
+      return cloudUserRef(uid).get().then(function (s) {
+        var d = s.exists && s.data() ? s.data() : {};
+        return {
+          uid: uid, email: cred.user.email || opts.email,
+          role: d.role === "admin" || d.role === "manager" || d.role === "member" ? d.role : "member",
+          displayName: d.displayName || "" 
+        };
+      });
+    }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
+  }
+
+  function signOut() {
+    return authx().then(function (a) { return a.signOut(); }).catch(function () { return null; });
+  }
+
+  function resetPassword(email) {
+    if (!email) return Promise.reject(new Error("bad-input"));
+    return authx().then(function (a) { return a.sendPasswordResetEmail(email); }).then(function () { return true; });
+  }
+
+  // Keep role changes made in Settings mirrored to the cloud so the next
+  // device sign-in sees the same role. Fire-and-forget.
+  function setCloudRole(uid, role) {
+    if (!uid || !role) return Promise.resolve(false);
+    return ensureReady().then(function () {
+      return cloudUserRef(uid).set({ role: role }, { merge: true });
+    }).catch(function () { return false; });
+  }
 
   /* ---------------- push (local -> cloud) ---------------- */
   function push() {
@@ -374,6 +465,13 @@
     saveConfig: saveConfig,
     clearConfig: clearConfig,
     isConfigured: isConfigured,
-    isEnabled: isEnabled
+    isEnabled: isEnabled,
+    auth: authx,
+    signUpWithPassword: signUpWithPassword,
+    signInWithPassword: signInWithPassword,
+    signOut: signOut,
+    resetPassword: resetPassword,
+    setCloudRole: setCloudRole,
+    authErrorMessage: authErrorMessage
   };
 })(window.PMS);
