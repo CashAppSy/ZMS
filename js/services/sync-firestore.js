@@ -167,6 +167,7 @@
       case "auth/user-not-found":
       case "auth/invalid-email":
       case "auth/invalid-login-credentials":
+      case "auth/invalid-credential":
         return "invalid";
       case "auth/email-already-in-use":
         return "duplicate";
@@ -192,7 +193,9 @@
     }).then(function (cred) {
       var uid = cred.user.uid;
       return bootRef().get().then(function (b) {
-        var role = b.exists ? "member" : "admin";
+        var role = opts.role === "admin" || opts.role === "manager" || opts.role === "member"
+          ? opts.role
+          : (b.exists ? "member" : "admin");
         var rec = {
           email: opts.email, role: role,
           displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
