@@ -143,6 +143,15 @@ service cloud.firestore {
       allow delete: if isAdmin(request.auth.uid);
     }
 
+    // ---- TEMP diagnostic (remove before shipping): proves which constructs
+    //      are actually live/working in the published rules ----
+    match /zms_diag/auth {
+      allow read: if request.auth != null;
+    }
+    match /zms_diag/get {
+      allow read: if get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     // ---- sync metadata (state + probe): readable by members, writable only
     //      by managers/admins so a normal user cannot fake clocks/state ----
     match /zms_meta/{doc} {

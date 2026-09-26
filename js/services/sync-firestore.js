@@ -683,6 +683,8 @@
           // datasets use isTeamMember && isActiveUser. This separates a broken
           // isActiveUser/exists() from a broken signupCanRead.
           var probes = [
+            ["zms_diag/auth (request.auth != null)", function () { return docRef("zms_diag/auth"); }],
+            ["zms_diag/get (literal get() role==admin)", function () { return docRef("zms_diag/get"); }],
             ["zms_auth/bootstrap (signupCanRead)", bootRef],
             ["zms_meta/probe (isActiveUser)", probeRef],
             ["zms_meta/state (isActiveUser)", stateRef],
