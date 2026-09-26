@@ -265,6 +265,8 @@
       cloudResetSent: "Password-reset email sent",
       cloudResetConfirm: "Send a password-reset email to {email}?",
       cloudAccountsNote: "Cloud accounts (☁) are shared across every device. Password resets go by email; to fully remove one, use the Firebase console.",
+      addCloudAccount: "Add shared account",
+      cloudAccountCreated: "Shared account created — this email + password now work on every device.",
       password: "Password"
     },
     cloud: {
