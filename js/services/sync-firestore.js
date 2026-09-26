@@ -678,11 +678,33 @@
         }).catch(function (pe) {
           console.warn("[cloudsync] probe DENIED:", pe && pe.message ? pe.message : String(pe));
         }).then(function () {
-          enabled = false;
-          teardown();
-          if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
-          console.error("[cloudsync] boot failed", e);
-          return false;
+          // granular matrix: which rule-paths deny? bootstrap uses a trivial
+          // rule (request.auth != null); probe + meta use isActiveUser; the
+          // datasets use isTeamMember && isActiveUser. This separates a broken
+          // isActiveUser/exists() from a broken signupCanRead.
+          var probes = [
+            ["zms_auth/bootstrap (signupCanRead)", bootRef],
+            ["zms_meta/probe (isActiveUser)", probeRef],
+            ["zms_meta/state (isActiveUser)", stateRef],
+            ["zms_tasks/data (isTeamMember && isActiveUser)", function () { return colRef("tasks"); }]
+          ];
+          ensureReady().then(function () {
+            return probes.reduce(function (chain, p) {
+              return chain.then(function () {
+                return p[1]().get();
+              }).then(function () {
+                console.warn("[cloudsync] probe", p[0], "-> allowed");
+              }).catch(function (pe) {
+                console.warn("[cloudsync] probe", p[0], "-> DENIED:", pe && pe.message ? pe.message : String(pe));
+              });
+            }, Promise.resolve());
+          }).then(function () {
+            enabled = false;
+            teardown();
+            if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
+            console.error("[cloudsync] boot failed", e);
+            return false;
+          });
         });
         return; // handled async above
       }

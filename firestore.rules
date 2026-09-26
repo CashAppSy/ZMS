@@ -43,21 +43,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function cloudProfilePath(uid) {
-      return /databases/$(database)/documents/zms_auth_users/$(uid);
-    }
-
     function hasCloudProfile(uid) {
-      return exists(cloudProfilePath(uid));
+      return exists(/databases/$(database)/documents/zms_auth_users/$(uid));
     }
 
     function isActiveUser(uid) {
-      // a missing `active` field is treated as active (legacy records). Uses
-      // exists() -- NOT get().exists -- so the Rules Playground simulator and
-      // production behave identically (a missing doc yields false, never a
-      // "Property exists is undefined on object" simulator error).
+      // a missing `active` field is treated as active (legacy records).
       return hasCloudProfile(uid)
-        && get(cloudProfilePath(uid)).data.active != false;
+        && get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active != false;
     }
 
     function isTeamMember(uid) {
@@ -65,7 +58,8 @@ service cloud.firestore {
     }
 
     function hasRole(uid, role) {
-      return hasCloudProfile(uid) && get(cloudProfilePath(uid)).data.role == role;
+      return hasCloudProfile(uid)
+        && get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.role == role;
     }
 
     function isAdmin(uid) {
