@@ -663,6 +663,29 @@
           }
         }
       } catch (diagErr) { console.warn("[cloudsync] boot diagnostics unavailable", diagErr); }
+      // Decisive probe: try reading the user's OWN profile doc (allowed for the
+      // owner under round-3 regardless of role) and the sync state doc (needs
+      // isActiveUser). Comparing the two tells us whether the live rules are
+      // round-3-but-profile-missing vs. still-deny-everything.
+      if (diagUid) {
+        ensureReady().then(function () {
+          return cloudUserRef(diagUid).get();
+        }).then(function (s) {
+          console.warn("[cloudsync] probe OWN zms_auth_users ->", s.exists ? "DOC FOUND" : "DOC MISSING", s.exists ? s.data() : "(read allowed, but doc does not exist)");
+          return stateRef().get();
+        }).then(function () {
+          console.warn("[cloudsync] probe zms_meta/state -> allowed");
+        }).catch(function (pe) {
+          console.warn("[cloudsync] probe DENIED:", pe && pe.message ? pe.message : String(pe));
+        }).then(function () {
+          enabled = false;
+          teardown();
+          if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
+          console.error("[cloudsync] boot failed", e);
+          return false;
+        });
+        return; // handled async above
+      }
       enabled = false;
       teardown();
       if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");

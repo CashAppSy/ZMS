@@ -1,5 +1,5 @@
 rules_version = '2';
-// ============================================================================
+// ============================================================
 // ZMS Firestore Security Rules (hardened) — round 3.
 //
 // WHAT CHANGED vs the previous round (see ZMS Detailed Remaining
@@ -39,27 +39,35 @@ rules_version = '2';
 //
 // DEPLOY: paste in Console -> Firestore Database -> Rules -> Publish, or:
 //   firebase deploy --only firestore:rules
-// ============================================================================
+// ============================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function cloudUser(uid) {
-      return get(/databases/$(database)/documents/zms_auth_users/$(uid));
+    function cloudProfilePath(uid) {
+      return /databases/$(database)/documents/zms_auth_users/$(uid);
+    }
+
+    function hasCloudProfile(uid) {
+      return exists(cloudProfilePath(uid));
     }
 
     function isActiveUser(uid) {
-      let d = cloudUser(uid);
-      // a missing `active` field is treated as active (legacy records)
-      return d.exists && d.data.active != false;
+      // a missing `active` field is treated as active (legacy records). Uses
+      // exists() -- NOT get().exists -- so the Rules Playground simulator and
+      // production behave identically (a missing doc yields false, never a
+      // "Property exists is undefined on object" simulator error).
+      return hasCloudProfile(uid)
+        && get(cloudProfilePath(uid)).data.active != false;
     }
 
     function isTeamMember(uid) {
-      return exists(/databases/$(database)/documents/zms_auth_users/$(uid));
+      return hasCloudProfile(uid);
     }
 
     function roleOf(uid) {
-      let d = cloudUser(uid);
-      return d.exists && d.data.role ? d.data.role : '';
+      return hasCloudProfile(uid)
+        ? (get(cloudProfilePath(uid)).data.role || '')
+        : '';
     }
 
     function isAdmin(uid) {
@@ -74,8 +82,9 @@ service cloud.firestore {
     // account (zms_auth/bootstrap.firstUid). Grants dataset WRITE access to
     // pre-role deployments; never grants account management.
     function isBootstrapOwner(uid) {
-      let d = get(/databases/$(database)/documents/zms_auth/bootstrap);
-      return d.exists && d.data.firstUid == uid && isActiveUser(uid);
+      return hasCloudProfile(uid)
+        && exists(/databases/$(database)/documents/zms_auth/bootstrap)
+        && get(/databases/$(database)/documents/zms_auth/bootstrap).data.firstUid == uid;
     }
 
     // The bootstrap marker has to be readable during signup, BEFORE the new
