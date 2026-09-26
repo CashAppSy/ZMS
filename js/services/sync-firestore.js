@@ -34,6 +34,10 @@
 
   var COLLECTIONS = ["departments", "people", "projects", "tasks",
     "taskStatuses", "projectStatuses", "priorities", "customFieldDefs", "savedFilters"];
+  // Only user-authored collections count as "real data": built-in statuses etc.
+  // are present on every fresh device and must never be mistaken for content
+  // to share (that is how a new empty browser used to wipe the shared cloud).
+  var USER_COLS = ["departments", "people", "projects", "tasks"];
 
   var PAGE_ID = null;
 
@@ -248,9 +252,11 @@
   /* ---------------- push (local -> cloud) ---------------- */
   function push() {
     if (!enabled || applying) return Promise.resolve(false);
+    var d = PMS.store.data;
+    // Never share/clobber an empty device dataset — refuse to push when there
+    // is no real user content at all.
+    if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
     return ensureReady().then(function () {
-      var d = PMS.store.data;
-      if (!d) return false;
       var t = now();
       var ops = [];
       COLLECTIONS.forEach(function (cname) {
@@ -258,7 +264,7 @@
           ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
         }
       });
-      ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID }));
+      ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
       return Promise.all(ops);
     }).then(function () {
       // align the in-memory clock with what we uploaded (and persist it) so
@@ -289,9 +295,16 @@
     }).then(function (snap) {
       if (!snap.exists) return null;
       var remoteUpdated = snap.data().updatedAt;
-      var localUpdated = PMS.store.data.meta && PMS.store.data.meta.updatedAt;
+      var localData = PMS.store.data;
+      var localUpdated = localData.meta && localData.meta.updatedAt;
+      var localEmpty = USER_COLS.every(function (c) { return !Array.isArray(localData[c]) || localData[c].length === 0; });
       if (mode !== "replace" && mode !== "merge") {
-        if (!remoteUpdated || (localUpdated && remoteUpdated <= localUpdated)) return null;
+        // automatic pull: apply when the remote is newer, or whenever this
+        // device has no real content yet (fresh browser) so it adopts the
+        // shared dataset regardless of clocks. An empty local store must never
+        // be treated as "ahead" of a populated cloud.
+        if (!remoteUpdated) return null;
+        if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
         return colRef(cname).get();
@@ -397,11 +410,18 @@
   // enabling on a fresh device seeds the cloud, but never clobbers newer
   // changes another device already uploaded.
   function pushIfLocalIsAhead() {
+    var local = PMS.store.data;
+    var hasLocal = USER_COLS.some(function (c) { return Array.isArray(local[c]) && local[c].length > 0; });
     return stateRef().get().then(function (s) {
-      if (!s.exists) return push();
-      var remote = s.data().updatedAt;
-      var local = PMS.store.data.meta && PMS.store.data.meta.updatedAt;
-      if (!remote || !local || remote < local) return push();
+      if (!s.exists) return hasLocal ? push() : false;
+      var d = s.data() || {};
+      // a cloud whose last push carried no real data (hasData:false) is hollow —
+      // repopulate it from this device when it actually has content
+      if (d.hasData === false) return hasLocal ? push() : false;
+      var remote = d.updatedAt;
+      if (!remote) return hasLocal ? push() : false;
+      var localAt = local.meta && local.meta.updatedAt;
+      if (localAt && remote < localAt) return hasLocal ? push() : false;
       return false;
     });
   }
