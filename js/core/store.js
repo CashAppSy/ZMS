@@ -148,6 +148,13 @@
     if (!d.taskStatuses.length) d.taskStatuses = U.deepClone(defaults.taskStatuses);
     if (!d.projectStatuses.length) d.projectStatuses = U.deepClone(defaults.projectStatuses);
     if (!d.priorities.length) d.priorities = U.deepClone(defaults.priorities);
+    // pct-per-status drives derived task progress; backfill old saved statuses
+    (d.taskStatuses || []).forEach(function (s) {
+      if (typeof s.pct !== "number") {
+        var dft = defaults.taskStatuses.find(function (x) { return x.key === s.key; });
+        s.pct = dft && typeof dft.pct === "number" ? dft.pct : 0;
+      }
+    });
     if (!d.settings) d.settings = { lang: "en", theme: "light", weightByTime: false, autoBackupEnabled: true, autoBackupEveryMin: 30, maxBackups: 5, autoSync: true };
     else {
       d.settings.lang = d.settings.lang || "en";

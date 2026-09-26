@@ -57,7 +57,8 @@
     if (result.chart && result.chart.type === "donut") {
       var d = result.chart;
       var items = d.values.map(function (r) {
-        return { label: r[d.label], value: r[d.value], color: d.colorMap ? d.colorMap[r[d.label]] : PMS.utils.colorForSeed(r[d.label]) };
+        var key = r && r.key !== undefined ? r.key : r[d.label];
+        return { label: r[d.label], value: r[d.value], color: d.colorMap ? d.colorMap[key] : PMS.utils.colorForSeed(r[d.label]) };
       });
       var chartRow = h("div.u-flex", [PMS.charts.donut(items, { size: 130, thickness: 22 })]);
       body.appendChild(chartRow);

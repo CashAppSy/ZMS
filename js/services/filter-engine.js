@@ -100,7 +100,12 @@
     due: function (a, b) { return (a.dueDate || "").localeCompare(b.dueDate || ""); },
     estimated: function (a, b) { return (a.estimatedHours || 0) - (b.estimatedHours || 0); },
     actual: function (a, b) { return (a.actualHours || 0) - (b.actualHours || 0); },
-    progress: function (a, b) { return (a.progress || 0) - (b.progress || 0); },
+    progress: function (a, b, data) {
+      var d = data || PMS.store.data;
+      var wb = d.settings && d.settings.weightByTime;
+      var pa = PMS.progress.taskProgress(d, a.id, wb), pb = PMS.progress.taskProgress(d, b.id, wb);
+      return pa - pb;
+    },
     created: function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); }
   };
 

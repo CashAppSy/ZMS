@@ -154,6 +154,10 @@
         var ar = prompt("Arabic name:");
         var color = prompt("Color (hex):", PMS.utils.colorForSeed(key));
         var entry = { id: PMS.ids.uuid(), key: key, name: { en: en || key, ar: ar || key }, color: color || "#6b7280", order: list.length + 1 };
+        if (isStatus) {
+          var pct = Number(prompt("Progress % (0-100, derived from this status):", /done|complete/i.test(key) ? "100" : "0"));
+          entry.pct = isNaN(pct) ? 0 : Math.max(0, Math.min(100, pct));
+        }
         onSave(list.concat([entry]));
         render(document.getElementById("view-root"));
       } } })
@@ -176,7 +180,7 @@
       left.appendChild(h("span.u-muted", { text: " (" + item.key + ") · EN: " + (item.name.en || "") + " · AR: " + (item.name.ar || "") }));
       row.appendChild(left);
       var right = h("div.u-flex");
-      right.appendChild(h("button.btn.btn-sm.btn-icon", { text: "✎", on: { click: function () { editStatusItem(item, list, onSave); } } }));
+      right.appendChild(h("button.btn.btn-sm.btn-icon", { text: "✎", on: { click: function () { editStatusItem(item, list, onSave, isStatus); } } }));
       right.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", on: { click: function () {
         if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
         onSave(list.filter(function (x) { return x.id !== item.id; }));
@@ -189,24 +193,32 @@
     body.appendChild(card);
   }
 
-  function editStatusItem(item, list, onSave) {
+  function editStatusItem(item, list, onSave, isStatus) {
+    var fields = [
+      { key: "key", label: "Key", type: "text", required: true },
+      { key: "nameEn", label: "English name", type: "text", required: true },
+      { key: "nameAr", label: "Arabic name", type: "text" },
+      { key: "color", label: "Color", type: "input", placeholder: "#2563eb" }
+    ];
+    var vals = { key: item.key, nameEn: item.name.en, nameAr: item.name.ar || "", color: item.color };
+    if (isStatus) {
+      fields.push({ key: "pct", label: "Progress %", type: "number", min: 0, max: 100 });
+      vals.pct = typeof item.pct === "number" ? item.pct : (/done|complete/i.test(item.key) ? 100 : 0);
+    }
     PMS.modal.open({
       title: t("common.edit"),
       size: "sm",
       content: function () {
-        return PMS.forms.build([
-          { key: "key", label: "Key", type: "text", required: true },
-          { key: "nameEn", label: "English name", type: "text", required: true },
-          { key: "nameAr", label: "Arabic name", type: "text" },
-          { key: "color", label: "Color", type: "input", placeholder: "#2563eb" }
-        ], { key: item.key, nameEn: item.name.en, nameAr: item.name.ar || "", color: item.color });
+        return PMS.forms.build(fields, vals);
       },
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         { label: t("common.save"), class: "btn-primary", onClick: function (m, body) {
           var v = body.querySelector("form")._getValues();
           var updated = list.map(function (x) {
-            return x.id === item.id ? Object.assign({}, x, { key: v.key, name: { en: v.nameEn, ar: v.nameAr }, color: v.color || x.color }) : x;
+            var next = { key: v.key, name: { en: v.nameEn, ar: v.nameAr }, color: v.color || x.color };
+            if (isStatus) next.pct = Math.max(0, Math.min(100, Number(v.pct) || 0));
+            return x.id === item.id ? Object.assign({}, x, next) : x;
           });
           onSave(updated);
           PMS.modal.close();

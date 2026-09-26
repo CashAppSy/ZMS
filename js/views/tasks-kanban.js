@@ -26,7 +26,9 @@
     var actions = h("div.actions");
     actions.appendChild(PMS.taskModeSwitcher("kanban"));
     actions.appendChild(projectSelector());
-    actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    if (PMS.auth ? (PMS.auth.can("tasks.write") || PMS.auth.canCreateTask()) : true) {
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    }
     header.appendChild(actions);
     container.appendChild(header);
 
@@ -50,11 +52,9 @@
         if (!id) return;
         var tsk = PMS.repos.tasks.get(id);
         if (tsk && tsk.status !== st.key) {
-          PMS.repos.tasks.update(id, {
-            status: st.key,
-            progress: st.key === "done" ? 100 : tsk.progress,
-            activity: (tsk.activity || []).concat([{ id: PMS.ids.uuid(), action: t("tasks.statusChanged") + " → " + PMS.i18n.trilingual(st.name)(st.name), at: new Date().toISOString() }])
-          });
+          // members/managers may only re-status the tasks assigned to them
+          if (PMS.auth && !PMS.auth.canEditTask(tsk)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); return; }
+          PMS.repos.tasks.update(id, { status: st.key }); // repos.logUpdate records the change
         }
       });
 
@@ -67,8 +67,8 @@
   }
 
   function card(tsk, st) {
+    var canMove = PMS.auth ? PMS.auth.canEditTask(tsk) : true;
     var c = h("div.kanban-card", {
-      draggable: "true",
       attrs: { "data-id": tsk.id },
       on: {
         dragstart: function (e) {
@@ -81,6 +81,7 @@
         dblclick: function (e) { e.stopPropagation(); PMS.editors.openTaskEditor(tsk, {}); }
       }
     });
+    if (canMove) c.setAttribute("draggable", "true");
     c.appendChild(h("div.kc-title", { text: tsk.title }));
     var meta = h("div.kc-meta");
     meta.appendChild(PMS.vformat.priorityBadge(tsk.priority));
@@ -95,6 +96,10 @@
     meta.appendChild(avatars);
     c.appendChild(meta);
     if (tsk.tags && tsk.tags.length) c.appendChild(h("div.kc-meta", PMS.vformat.tagsChips(tsk.tags)));
+    // status-derived progress bar (reacts to the column/status the card sits in)
+    var pv = PMS.progress.taskProgress(PMS.store.data, tsk.id, PMS.store.data.settings.weightByTime);
+    var bar = h("div.progress-track", { style: { height: "6px", marginBlockStart: "8px" } }, [h("div.progress-fill", { style: { width: Math.round(pv) + "%" } })]);
+    c.appendChild(bar);
     return c;
   }
 

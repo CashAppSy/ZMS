@@ -28,12 +28,15 @@
     });
     zoomSel.value = String(zoom);
     actions.appendChild(zoomSel);
-    actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    if (PMS.auth ? (PMS.auth.can("tasks.write") || PMS.auth.canCreateTask()) : true) {
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    }
     header.appendChild(actions);
     container.appendChild(header);
 
     var tasks = tasksForGantt();
-    container.appendChild(h("div.u-muted", { text: (tasks.length ? (t("tasksTotal") + ": " + tasks.length + " · ") : "") + t("gantt.dragHint"), style: { marginBlockEnd: "12px", fontSize: "0.8rem" } }));
+    var canDrag = PMS.auth ? PMS.auth.can("tasks.write") : true;
+    container.appendChild(h("div.u-muted", { text: (tasks.length ? (t("tasksTotal") + ": " + tasks.length + " · ") : "") + (canDrag ? t("gantt.dragHint") : t("gantt.viewOnly")), style: { marginBlockEnd: "12px", fontSize: "0.8rem" } }));
 
     if (!tasks.length) {
       var emptyActions = [h("div", { text: t("tasks.noTasks") })];
@@ -176,6 +179,11 @@
   }
 
   function addDragBar(bar, tsk, start, min, end, render, container, zoom) {
+    // only admins may move/schedule tasks (members: status-only edits)
+    if (!(PMS.auth ? PMS.auth.can("tasks.write") : true)) {
+      bar.style.cursor = "pointer";
+      return;
+    }
     var isDragging = false;
     bar.addEventListener("pointerdown", function (e) {
       var startX = e.clientX;

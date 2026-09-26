@@ -84,6 +84,7 @@
       title: "Title", project: "Project", subTasks: "Sub-tasks",
       assignees: "Assignees", estimated: "Estimated hours", actual: "Actual hours",
       progress: "Progress", checklist: "Checklist", comments: "Comments",
+      progressFromStatus: "Progress is derived from status",
       activity: "Activity", dependencies: "Dependencies", parentTask: "Parent task",
       customFields: "Custom fields", startDate: "Start date", dueDate: "Due date",
       overdue: "Overdue", done: "Done", dueSoon: "Due soon",
@@ -101,6 +102,7 @@
     gantt: {
       title: "Gantt", zoom: "Zoom", days: "days", week: "week", month: "month",
       links: "Dependencies", dragHint: "Drag the bar to move; drag edges to resize",
+      viewOnly: "View only — admins can move or resize bars",
       from: "from", due: "due", noDate: "No dates"
     },
     calendar: {

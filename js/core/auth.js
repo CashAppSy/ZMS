@@ -377,6 +377,59 @@
 
   function isAdmin() { return role() === "admin"; }
 
+  function currentPersonId() {
+    var u = currentUser();
+    return u ? (u.personId || null) : null;
+  }
+
+  function isAssignee(task) {
+    if (!task) return false;
+    return (task.assignees || []).indexOf(currentPersonId()) !== -1;
+  }
+
+  // Is the signed-in user the manager of this project (via their linked person)?
+  function managesProject(project) {
+    return !!(project && project.managerId && currentPersonId() && project.managerId === currentPersonId());
+  }
+
+  // Full task CRUD (every field). Admin only; managers and members may only
+  // touch the status of the tasks assigned to them (enforced in the editors).
+  function canEditTask(task) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin") return true;
+    if (u.role === "manager" || u.role === "member") return isAssignee(task);
+    return false;
+  }
+
+  // May the current user create a task? Admins: any project. Managers: only the
+  // projects they manage (empty projectId is resolved by the caller).
+  function canCreateTask(projectId) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin") return true;
+    if (u.role === "manager") {
+      if (!projectId) return true;
+      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === projectId; });
+      return managesProject(p);
+    }
+    return false;
+  }
+
+  // May the current user open the FULL project editor? Admins: any project.
+  // Managers: only projects where they are the manager. Creating a new project
+  // is always allowed for a manager (they become its default manager).
+  function canEditProject(project) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin") return true;
+    if (u.role === "manager") {
+      if (!project) return true;
+      return managesProject(project);
+    }
+    return false;
+  }
+
   // Confirms the current admin session by re-entering the local password
   // (used before destructive operations like restore/import-replace).
   // Returns:
@@ -490,6 +543,11 @@ PMS.auth = {
     role: role,
     can: can,
     isAdmin: isAdmin,
+    currentPersonId: currentPersonId,
+    managesProject: managesProject,
+    canEditTask: canEditTask,
+    canCreateTask: canCreateTask,
+    canEditProject: canEditProject,
     canDelete: canDelete,
     requireDelete: requireDelete,
     reauthenticateAdmin: reauthenticateAdmin

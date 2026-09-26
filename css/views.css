@@ -5,11 +5,28 @@
 
 /* ---------- Dashboard ---------- */
 .dash-section { margin-block-start: var(--space-5); }
-.dash-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
+.dash-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); margin-block-start: var(--space-4); }
+.dash-lists { margin-block-start: var(--space-4); }
 .chart-card .card-body { display: flex; flex-direction: column; align-items: center; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-block-start: var(--space-3); font-size: 0.8rem; }
 .chart-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .chart-legend .lg-swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+/* Centerpiece overall-progress ring card */
+.overall-ring-card {
+  background: var(--brand-tint);
+  border-block-start: 3px solid transparent;
+  border-image: var(--brand-grad) 1;
+}
+.overall-ring-card .card-title { color: var(--primary); }
+.overall-ring-card .card-body { padding-block: var(--space-5); }
+
+.kpi-card {
+  border-block-start: 3px solid var(--border);
+}
+.kpi-card .kpi-value { color: var(--primary); }
+.kpi-card .kpi-value.danger { color: var(--danger); }
+.kpi-card .kpi-value.ok { color: var(--success); }
 
 .project-progress-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .project-progress-row { display: flex; align-items: center; gap: var(--space-3); }

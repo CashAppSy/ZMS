@@ -29,14 +29,19 @@
           var color = statusColorOf(n.raw.status);
           wrap.appendChild(h("span.badge", {
             text: t("projects.progress") + " " + PMS.utils.pct(prog),
-            style: { background: PMS.vformat.hexToSoft(color), color: color, marginLeft: "auto" }
+            style: { background: PMS.vformat.hexToSoft(color), color: color }
           }));
-          var editBtn = h("button.btn.btn-sm.btn-icon.btn-ghost", {
-            text: "✎",
-            attrs: { title: t("common.edit") },
-            on: { click: function (e) { e.stopPropagation(); PMS.editors.openProjectEditor(n.raw, { onSaved: function () {} }); } }
-          });
-          wrap.appendChild(editBtn);
+          var track = h("div.progress-track", { style: { width: "70px", height: "6px", marginInlineStart: "8px" } },
+            [h("div.progress-fill", { style: { width: Math.round(prog) + "%" } })]);
+          wrap.appendChild(track);
+          if (PMS.auth ? PMS.auth.canEditProject(n.raw) : true) {
+            var editBtn = h("button.btn.btn-sm.btn-icon.btn-ghost", {
+              text: "✎",
+              attrs: { title: t("common.edit") },
+              on: { click: function (e) { e.stopPropagation(); PMS.editors.openProjectEditor(n.raw, { onSaved: function () {} }); } }
+            });
+            wrap.appendChild(editBtn);
+          }
           return wrap;
         }
       };
@@ -51,7 +56,9 @@
     var actions = h("div.actions");
     actions.appendChild(h("button.btn", { text: t("projects.collapseAll"), on: { click: function () { toggleAll(true); } } }));
     actions.appendChild(h("button.btn", { text: t("projects.expandAll"), on: { click: function () { toggleAll(false); } } }));
-    actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("projects.newProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { onSaved: function () {} }); } } }));
+    if (PMS.auth ? PMS.auth.can("projects.write") : true) {
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("projects.newProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { onSaved: function () {} }); } } }));
+    }
     header.appendChild(actions);
     container.appendChild(header);
 
@@ -112,12 +119,21 @@
     header.appendChild(PMS.vformat.statusBadge(proj.status, "project"));
     header.appendChild(PMS.vformat.priorityBadge(proj.priority));
     var actions = h("div.actions");
-    actions.appendChild(h("button.btn", { text: t("common.edit"), on: { click: function () { PMS.editors.openProjectEditor(proj, { onSaved: function () {} }); } } }));
-    actions.appendChild(h("button.btn.btn-soft-danger", {
-      text: t("common.delete"),
-      on: { click: function () { deleteProject(proj); } }
-    }));
-    actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("projects.addSubProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { defaults: { parentId: proj.id }, onSaved: function () {} }); } } }));
+    var isAdminWrite = PMS.auth ? PMS.auth.can("projects.write") : true;
+    var canEdit = PMS.auth ? PMS.auth.canEditProject(proj) : true;
+    var canDetailWrite = canEdit || isAdminWrite;
+    if (canEdit) {
+      actions.appendChild(h("button.btn", { text: t("common.edit"), on: { click: function () { PMS.editors.openProjectEditor(proj, { onSaved: function () {} }); } } }));
+    }
+    if (isAdminWrite) {
+      actions.appendChild(h("button.btn.btn-soft-danger", {
+        text: t("common.delete"),
+        on: { click: function () { deleteProject(proj); } }
+      }));
+    }
+    if (canEdit) {
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("projects.addSubProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { defaults: { parentId: proj.id }, onSaved: function () {} }); } } }));
+    }
     header.appendChild(actions);
     container.appendChild(header);
 
@@ -162,9 +178,14 @@
     var taskBody = tasks.length
       ? taskRows(tasks)
       : [h("div.empty-state", [
-        h("div", { text: t("projects.noTasks") }),
-        h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, { defaults: { projectId: proj.id }, onSaved: function () {} }); } } })
+        h("div", { text: t("projects.noTasks") })
       ])];
+    if (tasks.length || PMS.auth ? (PMS.auth.can("tasks.write") || PMS.auth.canCreateTask(proj.id)) : true) {
+      taskBody.push(h("button.btn.btn-primary", {
+        text: "+ " + t("tasks.newTask"),
+        on: { click: function () { PMS.editors.openTaskEditor(null, { defaults: { projectId: proj.id }, onSaved: function () {} }); } }
+      }));
+    }
     taskWrap.appendChild(h("div.card-body", taskBody));
     container.appendChild(taskWrap);
 
@@ -200,7 +221,10 @@
       row.appendChild(h("span", { text: "🗀" }));
       row.appendChild(h("span.u-grow.u-ellipsis.u-bold", { text: p.name }));
       row.appendChild(PMS.vformat.statusBadge(p.status, "project"));
-      row.appendChild(h("span.caret", { text: PMS.utils.pct(prog) }));
+      var track = h("div.progress-track", { style: { width: "90px", height: "6px" } },
+        [h("div.progress-fill", { style: { width: Math.round(prog) + "%" } })]);
+      row.appendChild(track);
+      row.appendChild(h("span.progress-label", { text: PMS.utils.pct(prog) }));
       return row;
     });
   }

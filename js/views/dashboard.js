@@ -23,14 +23,16 @@
     var dueThisWeek = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate >= today && tsk.dueDate <= weekEnd; });
     var activeProjects = projects.filter(function (p) { return p.status === "active"; });
 
-    // avg progress of leaf tasks
+    // avg progress of leaf tasks (derived from status)
     var progSum = 0, progN = 0;
+    var weightByTime = data.settings.weightByTime;
     var progressMap = {};
     tasks.forEach(function (tsk) {
+      var p = PMS.progress.taskProgress(data, tsk.id, weightByTime);
       if (!PMS.progress.taskChildren(data, tsk.id).length) {
-        progSum += tsk.progress || 0; progN++;
+        progSum += p; progN++;
       }
-      progressMap[tsk.id] = PMS.progress.taskProgress(data, tsk.id, data.settings.weightByTime);
+      progressMap[tsk.id] = p;
     });
     var avg = progN ? progSum / progN : 0;
 
@@ -60,9 +62,10 @@
 
     if (!tasks.length && !projects.length) {
       var intro = h("div.card", { style: { marginBlockEnd: "16px" } });
-      var introActions = [
-        h("button.btn.btn-primary", { text: "+ " + t("dashboard.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } })
-      ];
+      var introActions = [];
+      if (PMS.auth ? (PMS.auth.can("tasks.write") || PMS.auth.canCreateTask()) : true) {
+        introActions.push(h("button.btn.btn-primary", { text: "+ " + t("dashboard.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+      }
       if (PMS.auth ? PMS.auth.can("projects.write") : true) {
         introActions.unshift(h("button.btn", { text: "+ " + t("dashboard.newProject"), on: { click: function () { PMS.editors.openProjectEditor(null, {}); } } }));
       }
@@ -131,7 +134,7 @@
   function overallCard(percent, rootCount) {
     var card = h("div.card.chart-card.overall-ring-card");
     var head = h("div.card-header", [h("div.card-title", { text: t("dashboard.overallProgress") })]);
-    var ring = PMS.charts.ring(percent, { size: 190, thick: 24, color: "#23AEB7" });
+    var ring = PMS.charts.ring(percent, { size: 210, thick: 26, color: "#23AEB7" });
     ring.style.display = "block";
     var body = h("div.card-body", [
       ring,

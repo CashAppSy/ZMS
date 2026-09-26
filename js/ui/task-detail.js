@@ -42,16 +42,13 @@
         meta.appendChild(metaItem(t("tasks.actual"), PMS.utils.hours(task.actualHours, PMS.i18n)));
         node.appendChild(meta);
 
-        // progress
+        // progress (derived from status — no manual value)
+        var canFull = !PMS.auth || PMS.auth.can("tasks.write");
+        var derived = PMS.progress.taskProgress(PMS.store.data, task.id, PMS.store.data.settings.weightByTime);
         var progressRow = h("div.field");
-        progressRow.appendChild(h("label", { text: t("tasks.progress") + " (" + PMS.utils.pct(task.progress) + ")" }));
-        var slider = h("input", {
-          type: "range", min: "0", max: "100", value: String(task.progress || 0),
-          on: { input: function () {
-            progressRow.querySelector("label").textContent = t("tasks.progress") + " (" + PMS.utils.pct(slider.value) + ")";
-          } }
-        });
-        progressRow.appendChild(slider);
+        progressRow.appendChild(h("label", { text: t("tasks.progress") + " (" + PMS.utils.pct(derived) + ")" }));
+        progressRow.appendChild(PMS.vformat.progressChip(derived));
+        if (!canFull) progressRow.appendChild(h("div.hint", { text: t("tasks.progressFromStatus") }));
         node.appendChild(progressRow);
 
         if (task.description) node.appendChild(h("div.card", [h("div.card-body", [h("p", { text: task.description })])]));
@@ -61,7 +58,8 @@
         node.appendChild(h("div.section-title", [txt(t("tasks.assignees"))]));
         var assignees = (task.assignees || []).map(function (pid) { return PMS.repos.people.get(pid); }).filter(Boolean);
         node.appendChild(h("div.u-flex", assignees.length ? assignees.map(function (p) { return PMS.vformat.personChip(p.id); }) : [h("span.u-muted", { text: "—" })]));
-        node.appendChild(h("button.btn.btn-sm", { text: "+ " + t("common.edit"), on: { click: function () { PMS.modal.close(); PMS.editors.openTaskEditor(task, { onSaved: function () {} }); } } }));
+        var canEdit = PMS.auth ? PMS.auth.canEditTask(task) : true;
+        if (canEdit) node.appendChild(h("button.btn.btn-sm", { text: "+ " + t("common.edit"), on: { click: function () { PMS.modal.close(); PMS.editors.openTaskEditor(task, { onSaved: function () {} }); } } }));
 
         // sub tasks
         var subs = PMS.repos.tasks.children(task.id);
@@ -74,20 +72,23 @@
 
         appendingSections(node, task);
 
-        // quick add comment
-        node.appendChild(h("div.section-title", [txt(t("tasks.comments"))]));
-        var commentArea = h("div.field");
-        var cInput = h("textarea.textarea", { placeholder: t("tasks.addComment"), rows: 2 });
-        commentArea.appendChild(cInput);
-        var cBtn = h("button.btn.btn-sm.btn-primary", { text: t("tasks.addComment"), on: { click: function () {
-          var text = cInput.value.trim();
-          if (!text) return;
-          var comments = task.comments || [];
-          comments.push({ id: PMS.ids.uuid(), authorId: null, text: text, createdAt: new Date().toISOString() });
-          PMS.repos.tasks.update(task.id, { comments: comments });
-        } } });
-        commentArea.appendChild(cBtn);
-        node.appendChild(commentArea);
+        // quick add comment (admin only — members may only change status)
+        var canComment = PMS.auth ? PMS.auth.can("tasks.write") : true;
+        if (canComment) {
+          node.appendChild(h("div.section-title", [txt(t("tasks.comments"))]));
+          var commentArea = h("div.field");
+          var cInput = h("textarea.textarea", { placeholder: t("tasks.addComment"), rows: 2 });
+          commentArea.appendChild(cInput);
+          var cBtn = h("button.btn.btn-sm.btn-primary", { text: t("tasks.addComment"), on: { click: function () {
+            var text = cInput.value.trim();
+            if (!text) return;
+            var comments = task.comments || [];
+            comments.push({ id: PMS.ids.uuid(), authorId: null, text: text, createdAt: new Date().toISOString() });
+            PMS.repos.tasks.update(task.id, { comments: comments });
+          } } });
+          commentArea.appendChild(cBtn);
+          node.appendChild(commentArea);
+        }
 
         return node;
       },
@@ -104,7 +105,8 @@
   }
 
   function appendingSections(node, task) {
-    // checklist
+    var canEdit = PMS.auth ? PMS.auth.can("tasks.write") : true;
+    // checklist (admin only — members may only change status)
     var items = task.checklist || [];
     node.appendChild(h("div.section-title", [txt(t("tasks.checklist"))]));
     var listWrap = h("div");
@@ -112,28 +114,31 @@
       PMS.dom.clear(listWrap);
       items.forEach(function (it) {
         var item = h("div.checklist-item" + (it.done ? ".done" : ""));
+        var done = !!it.done;
         var cb = h("input", {
-          type: "checkbox", checked: !!it.done,
+          type: "checkbox", checked: done, disabled: !canEdit,
           on: { change: function () { toggleCheck(task, it.id); } }
         });
         item.appendChild(cb);
         item.appendChild(h("label", { text: it.text, style: { flex: 1 } }));
-        item.appendChild(h("span.btn-icon.chip-x", { text: "✕", on: { click: function () { removeCheck(task, it.id); } } }));
+        if (canEdit) item.appendChild(h("span.btn-icon.chip-x", { text: "✕", on: { click: function () { removeCheck(task, it.id); } } }));
         listWrap.appendChild(item);
       });
     }
     drawChecklist();
     node.appendChild(listWrap);
-    var addCheck = h("div.u-flex");
-    var cItem = h("input.input", { placeholder: t("tasks.addCheckItem"), style: { flex: 1 } });
-    addCheck.appendChild(cItem);
-    addCheck.appendChild(h("button.btn.btn-sm", { text: "+", on: { click: function () {
-      var v = cItem.value.trim();
-      if (!v) return;
-      var nw = (task.checklist || []).concat([{ id: PMS.ids.uuid(), text: v, done: false }]);
-      PMS.repos.tasks.update(task.id, { checklist: nw });
-    } } }));
-    node.appendChild(addCheck);
+    if (canEdit) {
+      var addCheck = h("div.u-flex");
+      var cItem = h("input.input", { placeholder: t("tasks.addCheckItem"), style: { flex: 1 } });
+      addCheck.appendChild(cItem);
+      addCheck.appendChild(h("button.btn.btn-sm", { text: "+", on: { click: function () {
+        var v = cItem.value.trim();
+        if (!v) return;
+        var nw = (task.checklist || []).concat([{ id: PMS.ids.uuid(), text: v, done: false }]);
+        PMS.repos.tasks.update(task.id, { checklist: nw });
+      } } }));
+      node.appendChild(addCheck);
+    }
 
     // dependencies
     var deps = (task.dependencies || []).map(function (did) { return PMS.repos.tasks.get(did); }).filter(Boolean);

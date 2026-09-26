@@ -83,6 +83,7 @@
       title: "العنوان", project: "المشروع", subTasks: "مهام فرعية",
       assignees: "المُسنَد إليهم", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
       progress: "نسبة الإنجاز", checklist: "قائمة تحقق", comments: "تعليقات",
+      progressFromStatus: "نسبة الإنجاز تُشتق من الحالة",
       activity: "سجل النشاط", dependencies: "الاعتماديات", parentTask: "المهمة الأم",
       customFields: "حقول مخصصة", startDate: "تاريخ البداية", dueDate: "تاريخ الاستحقاق",
       overdue: "متأخرة", done: "منجزة", dueSoon: "مستحقة قريبًا",
@@ -98,6 +99,7 @@
     gantt: {
       title: "غانت", zoom: "تكبير", days: "أيام", week: "أسبوع", month: "شهر",
       links: "الاعتماديات", dragHint: "اسحب الشريط للتحريك، واسحب الأطراف لتغيير المدة",
+      viewOnly: "عرض فقط — المدير فقط يستطيع تحريك الأشرطة أو تغيير مددها",
       from: "من", due: "استحقاق", noDate: "بدون تواريخ"
     },
     calendar: { title: "التقويم", month: "شهري", week: "أسبوعي", dayEvents: "مهمة" },

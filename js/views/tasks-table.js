@@ -56,7 +56,9 @@
     header.appendChild(h("h1", { text: t("tasks.title") }));
     var actions = h("div.actions");
     actions.appendChild(viewModeSwitcher("table"));
-    actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    if (PMS.auth ? (PMS.auth.can("tasks.write") || PMS.auth.canCreateTask()) : true) {
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("tasks.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } }));
+    }
     header.appendChild(actions);
     container.appendChild(header);
 
@@ -187,12 +189,14 @@
     if (subCount) titleWrap.appendChild(h("span.badge", { text: "+" + subCount }));
     if (row.tags && row.tags.length) titleWrap.appendChild(h("span.chip", { text: row.tags[0] }));
     cell.appendChild(titleWrap);
-    var editBtn = h("button.btn.btn-sm.btn-icon.btn-ghost", {
-      text: "✎",
-      attrs: { title: t("tasks.editTask") },
-      on: { click: function (e) { e.stopPropagation(); PMS.editors.openTaskEditor(row, {}); } }
-    });
-    cell.appendChild(editBtn);
+    if (PMS.auth ? PMS.auth.canEditTask(row) : true) {
+      var editBtn = h("button.btn.btn-sm.btn-icon.btn-ghost", {
+        text: "✎",
+        attrs: { title: t("tasks.editTask") },
+        on: { click: function (e) { e.stopPropagation(); PMS.editors.openTaskEditor(row, {}); } }
+      });
+      cell.appendChild(editBtn);
+    }
     return cell;
   }
 
@@ -216,17 +220,13 @@
     sel.value = row.status;
     var cur = statuses.find(function (s) { return s.key === row.status; });
     if (cur) { sel.style.color = cur.color; sel.style.background = PMS.vformat.hexToSoft(cur.color); }
+    // members/managers may only re-status the tasks assigned to them
+    var mayStatus = PMS.auth ? PMS.auth.canEditTask(row) : true;
+    if (!mayStatus) sel.disabled = true;
     sel.addEventListener("change", function () {
       if (sel.value === row.status) return;
-      PMS.repos.tasks.update(row.id, {
-        status: sel.value,
-        progress: sel.value === "done" ? 100 : row.progress,
-        activity: (row.activity || []).concat([{
-          id: PMS.ids.uuid(),
-          action: t("tasks.statusChanged") + " → " + statusName(sel.value),
-          at: new Date().toISOString()
-        }])
-      });
+      if (PMS.auth && !PMS.auth.canEditTask(row)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); sel.value = row.status; return; }
+      PMS.repos.tasks.update(row.id, { status: sel.value }); // repos.logUpdate records the change
     });
     return sel;
   }
@@ -259,7 +259,11 @@
 
   function cellActual(row) { return h("span", { text: PMS.utils.hours(row.actualHours, PMS.i18n) }); }
 
-  function cellProgress(row) { return PMS.vformat.progressChip(row.progress || 0); }
+  function cellProgress(row) { return PMS.vformat.progressChip(derivedProgress(row)); }
+
+  function derivedProgress(row) {
+    return PMS.progress.taskProgress(PMS.store.data, row.id, PMS.store.data.settings.weightByTime);
+  }
 
   function groupKey(row) {
     if (state.group === "project") { var p = PMS.repos.projects.get(row.projectId); return p ? p.name : "—"; }
@@ -315,11 +319,13 @@
   function exportCsv() {
     var rows = filteredRows();
     var cols = ["title", "status", "priority", "dueDate", "estimatedHours", "actualHours", "progress"];
+    var w = PMS.store.data.settings.weightByTime;
     var data = rows.map(function (r) {
       var p = PMS.repos.projects.get(r.projectId);
       return {
         title: r.title, project: p ? p.name : "", status: r.status, priority: r.priority,
-        dueDate: r.dueDate, estimatedHours: r.estimatedHours, actualHours: r.actualHours, progress: r.progress
+        dueDate: r.dueDate, estimatedHours: r.estimatedHours, actualHours: r.actualHours,
+        progress: PMS.progress.taskProgress(PMS.store.data, r.id, w)
       };
     });
     PMS.exportService.downloadCSV("tasks.csv", data, ["title", "project", "status", "priority", "dueDate", "estimatedHours", "actualHours", "progress"]);

@@ -312,6 +312,15 @@ const root = () => document.getElementById("view-root");
   const pp = PMS.progress.projectProgress(data, topProjects[0].id, false);
   ok("progress.projectProgress range", pp === null || (pp >= 0 && pp <= 100));
   ok("progress.allProjectProgress", Object.keys(PMS.progress.allProjectProgress(data)).length >= 1);
+  // progress is now derived from the task status (no manual per-task value)
+  const inprogKey = (data.taskStatuses || []).find(s => s.key === "inprogress") || { pct: 45 };
+  const leafTask = tasks.find(t => t.status === "inprogress" && !PMS.progress.taskChildren(data, t.id).length);
+  if (leafTask) {
+    ok("progress leaf = status pct (inprogress ~45)", Math.round(PMS.progress.taskProgress(data, leafTask.id, false)) === Math.round(inprogKey.pct));
+  } else ok("progress leaf = status pct (inprogress ~45)", false);
+  ok("progress.statusPct falls back to 0", PMS.progress.statusPct(data, "no-such-key") === 0);
+  const doneKey = (data.taskStatuses || []).find(s => s.key === "done");
+  if (doneKey) ok("progress.statusPct done maps its pct", PMS.progress.statusPct(data, "done") === doneKey.pct);
 
   section("Validation");
   ok("task valid", PMS.validation.check("task", { title: "OK" }).valid);

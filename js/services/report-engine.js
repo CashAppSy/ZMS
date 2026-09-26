@@ -51,18 +51,23 @@
     titleKey: "reports.report_taskStatus",
     generate: function (data) {
       var counts = {};
-      var statusesMap = {};
-      (data.taskStatuses || []).forEach(function (s) { statusesMap[s.key] = s.name; });
+      var statusesMap = {}, statusColors = {};
+      (data.taskStatuses || []).forEach(function (s) {
+        statusesMap[s.key] = s.name;
+        if (s.color) statusColors[s.key] = s.color;
+      });
       (data.tasks || []).forEach(function (t) {
         counts[t.status] = (counts[t.status] || 0) + 1;
       });
       var rows = Object.keys(counts).map(function (k) {
-        return row((statusesMap[k] && statusesMap[k].en) || k, { count: counts[k] });
+        var r = row((statusesMap[k] && statusesMap[k].en) || k, { count: counts[k] });
+        r.key = k; // keep the status key so charts can pick the true status color
+        return r;
       });
       return {
         columns: ["name", "count"],
         rows: rows,
-        chart: { type: "donut", values: rows, label: "name", value: "count", colorMap: hueMap(Object.keys(counts)) }
+        chart: { type: "donut", values: rows, label: "name", value: "count", colorMap: statusColors }
       };
     }
   });
@@ -212,13 +217,6 @@
       var p = (data.people || []).find(function (x) { return x.id === pid; });
       return p ? p.name : "?";
     }).join(", ");
-  }
-
-  function hueMap(keys) {
-    var m = {};
-    var palette = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#16a34a", "#0891b2", "#ca8a04", "#9333ea"];
-    keys.forEach(function (k, i) { m[k] = palette[i % palette.length]; });
-    return m;
   }
 
   PMS.reports = { register: register, all: all, get: get, generate: generate };

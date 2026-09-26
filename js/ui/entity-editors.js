@@ -25,9 +25,9 @@
     return false;
   }
 
-  function canOpenProject() {
+  function canOpenProject(project) {
     if (!PMS.auth) return true;
-    return PMS.auth.can("projects.write") ? true : deny();
+    return PMS.auth.canEditProject(project) ? true : deny();
   }
 
   function canOpenPerson() {
@@ -40,15 +40,24 @@
     return PMS.auth.can("people.write") ? true : deny();
   }
 
-  function canOpenTask(task) {
+  function canOpenTask(task, opts) {
     if (!PMS.auth) return true;
-    if (PMS.auth.can("tasks.write")) return true;
-    if (PMS.auth.can("tasks.writeOwn")) {
-      var u = PMS.auth.currentUser();
-      var isOwner = u && u.personId && task && (task.assignees || []).indexOf(u.personId) !== -1;
-      if (isOwner) return true;
-    }
+    if (PMS.auth.canEditTask(task)) return true;
+    // creating a new task is a separate permission (admins: any project,
+    // managers: only their own projects)
+    if (!task && PMS.auth.canCreateTask(opts && opts.defaults && opts.defaults.projectId)) return true;
     return deny();
+  }
+
+  // When a member/manager edits an assigned task they may ONLY change its
+  // status (dates, estimates, assignees, ... stay locked).
+  function statusOnlyTaskEditor() {
+    var statuses = (PMS.store.data.taskStatuses || []).map(function (s) {
+      return { label: PMS.i18n.trilingual(s.name)(s.name), value: s.key };
+    });
+    return [
+      { key: "status", label: t("common.status"), type: "select", options: statuses }
+    ];
   }
 
   function departmentSchema() {
@@ -84,7 +93,9 @@
     ];
   }
 
-  function projectSchema() {
+  // For a manager the editor only lists the projects they manage (parents
+  // to attach under) and keeps the manager field locked to themselves.
+  function projectSchema(managedOnly, isEdit) {
     var people = PMS.repos.people.active();
     var projects = PMS.repos.projects.all();
     var statuses = (PMS.store.data.projectStatuses || []).map(function (s) {
@@ -93,16 +104,29 @@
     var prios = (PMS.store.data.priorities || []).map(function (p) {
       return { label: PMS.i18n.trilingual(p.name)(p.name), value: p.key };
     });
-    var parentOpts = projects.map(function (p) {
-      return { label: p.name, value: p.id };
-    });
+    var parentOpts;
+    var managerOpts;
+    if (managedOnly) {
+      var me = PMS.auth ? PMS.auth.currentUser() : null;
+      parentOpts = projects.filter(function (p) { return PMS.auth.managesProject(p); }).map(function (p) {
+        return { label: p.name, value: p.id };
+      });
+      managerOpts = people.filter(function (p) { return me && p.id === me.personId; }).map(function (p) {
+        return { label: p.name, value: p.id };
+      });
+    } else {
+      parentOpts = projects.map(function (p) {
+        return { label: p.name, value: p.id };
+      });
+      managerOpts = people.map(function (p) { return { label: p.name, value: p.id }; });
+    }
     return [
       { key: "name", label: t("projects.name"), type: "text", required: true },
       { key: "description", label: t("common.description"), type: "textarea", full: true },
       { key: "parentId", label: t("projects.parent"), type: "select", options: parentOpts },
       { key: "status", label: t("projects.status"), type: "select", options: statuses },
       { key: "priority", label: t("projects.priority"), type: "select", options: prios },
-      { key: "managerId", label: t("projects.manager"), type: "select", options: people.map(function (p) { return { label: p.name, value: p.id }; }) },
+      { key: "managerId", label: t("projects.manager"), type: "select", options: managerOpts },
       { key: "memberIds", label: t("projects.members"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }) },
       { key: "startDate", label: t("projects.startDate"), type: "date" },
       { key: "endDate", label: t("projects.endDate"), type: "date" },
@@ -113,8 +137,10 @@
     ];
   }
 
-  function taskSchema() {
-    var projects = PMS.repos.projects.all();
+  function taskSchema(projectFilter) {
+    var projects = PMS.repos.projects.all().filter(function (p) {
+      return !projectFilter || projectFilter.indexOf(p.id) !== -1;
+    });
     var people = PMS.repos.people.active();
     var tasks = PMS.repos.tasks.all();
     var statuses = (PMS.store.data.taskStatuses || []).map(function (s) {
@@ -135,7 +161,6 @@
       { key: "dueDate", label: t("tasks.dueDate"), type: "date" },
       { key: "estimatedHours", label: t("tasks.estimated"), type: "number" },
       { key: "actualHours", label: t("tasks.actual"), type: "number" },
-      { key: "progress", label: t("tasks.progress"), type: "number", min: 0, max: 100 },
       { key: "tags", label: t("common.tags"), type: "tags", full: true }
     ];
   }
@@ -213,21 +238,24 @@
   }
 
   function openProjectEditor(project, opts) {
-    if (!canOpenProject()) return;
+    if (!canOpenProject(project)) return;
     opts = opts || {};
     var isEdit = !!project;
+    var manager = PMS.auth && PMS.auth.currentUser() ? PMS.auth.currentUser() : null;
+    var isManager = manager && manager.role === "manager";
     PMS.modal.open({
       title: isEdit ? t("projects.editProject") : t("projects.newProject"),
       size: "lg",
       content: function () {
         return buildFormSafely(function () {
-          var sch = projectSchema();
+          var sch = projectSchema(isManager, isEdit);
           // merge custom fields into schema
           PMS.repos.fields.forEntity("project").forEach(function (f) {
             sch.push({ key: "cf_" + f.id, label: PMS.i18n.trilingual(f.label)(f.label), fieldType: f.type, options: f.options, full: true });
           });
           var vals = PMS.utils.deepClone(project || {});
-          // pull custom field values into prefixed keys
+          // managers become the manager of any new project they create
+          if (!isEdit && isManager && (!vals.managerId)) vals.managerId = manager.personId || "";
           if (project) Object.keys(project.customFields || {}).forEach(function (k) { vals["cf_" + k] = project.customFields[k]; });
           return PMS.forms.build(sch, vals);
         });
@@ -237,6 +265,7 @@
         {
           label: t("common.save"), class: "btn-primary",
           onClick: function (_, body) {
+            if (isEdit && PMS.auth && PMS.auth.canEditProject && !PMS.auth.canEditProject(project)) { deny(); return; }
             var form = body.querySelector("form");
             var v = form._getValues();
             // strip cf_ into customFields
@@ -262,15 +291,25 @@
   }
 
   function openTaskEditor(task, opts) {
-    if (!canOpenTask(task)) return;
+    if (!canOpenTask(task, opts)) return;
     opts = opts || {};
     var isEdit = !!task;
+    var canFull = PMS.auth ? PMS.auth.can("tasks.write") : true;
+    // members & managers editing their assigned task -> status-only editor
+    var restricted = isEdit && !canFull;
+    var allowedProjects = null;
+    if (!PMS.auth) { /* no auth: full access */ }
+    else if (PMS.auth.currentUser() && PMS.auth.currentUser().role === "manager" && !isEdit) {
+      allowedProjects = (PMS.store.data.projects || [])
+        .filter(function (p) { return PMS.auth.managesProject(p); })
+        .map(function (p) { return p.id; });
+    }
     PMS.modal.open({
       title: isEdit ? t("tasks.editTask") : t("tasks.newTask"),
       size: "lg",
       content: function () {
         return buildFormSafely(function () {
-          var sch = taskSchema();
+          var sch = restricted ? statusOnlyTaskEditor() : taskSchema(allowedProjects);
           PMS.repos.fields.forEntity("task").forEach(function (f) {
             sch.push({ key: "cf_" + f.id, label: PMS.i18n.trilingual(f.label)(f.label), fieldType: f.type, options: f.options, full: true });
           });
@@ -287,21 +326,30 @@
           onClick: function (_, body) {
             var form = body.querySelector("form");
             var v = form._getValues();
-            if (!v.title) { form.querySelectorAll(".field")[0].querySelector("input").classList.add("invalid"); return; }
-            var cf = {};
-            Object.keys(v).forEach(function (k) { if (k.indexOf("cf_") === 0) cf[k.slice(3)] = v[k]; });
-            var payload = {
-              title: v.title, description: v.description, projectId: v.projectId || null,
-              parentTaskId: v.parentTaskId || null, status: v.status || "todo",
-              priority: v.priority || "medium", assignees: v.assignees || [],
-              startDate: v.startDate, dueDate: v.dueDate,
-              estimatedHours: v.estimatedHours || 0, actualHours: v.actualHours || 0,
-              progress: v.progress !== undefined && v.progress !== null ? v.progress : 0,
-              tags: v.tags || [], customFields: cf
-            };
-            if (task && task.estimatedHours !== payload.estimatedHours && !task.activity) payload.activity = [];
-            if (isEdit) PMS.repos.tasks.update(task.id, payload);
-            else PMS.repos.tasks.add(payload);
+            if (!v.title && !restricted) { form.querySelectorAll(".field")[0].querySelector("input").classList.add("invalid"); return; }
+            var payload;
+            if (restricted) {
+              // status-only: never touch anything else
+              payload = { status: v.status || task.status || "todo" };
+            } else {
+              var cf = {};
+              Object.keys(v).forEach(function (k) { if (k.indexOf("cf_") === 0) cf[k.slice(3)] = v[k]; });
+              payload = {
+                title: v.title, description: v.description, projectId: v.projectId || null,
+                parentTaskId: v.parentTaskId || null, status: v.status || "todo",
+                priority: v.priority || "medium", assignees: v.assignees || [],
+                startDate: v.startDate, dueDate: v.dueDate,
+                estimatedHours: v.estimatedHours || 0, actualHours: v.actualHours || 0,
+                tags: v.tags || [], customFields: cf
+              };
+            }
+            if (isEdit) {
+              if (!PMS.auth || PMS.auth.canEditTask(task)) PMS.repos.tasks.update(task.id, payload);
+              else { deny(); return; }
+            } else {
+              if (!PMS.auth || PMS.auth.canCreateTask(payload.projectId)) PMS.repos.tasks.add(payload);
+              else { deny(); return; }
+            }
             PMS.modal.close();
             if (opts.onSaved) opts.onSaved(payload);
           }
