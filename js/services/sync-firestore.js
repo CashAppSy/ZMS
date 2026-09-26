@@ -142,9 +142,11 @@
   // first admin). The app still keeps a slim local record through the
   // PMS.auth bridge so existing role gates and person linking keep working.
   function authx() {
-    if (!window.firebase || !window.firebase.auth) return Promise.reject(new Error("missing-auth-sdk"));
-    return ensureReady().then(function () {
-      return window.firebase.auth(window.firebase.app(APP_NAME));
+    return loadSDK().then(function () {
+      if (!window.firebase || !window.firebase.auth) return Promise.reject(new Error("missing-auth-sdk"));
+      return ensureReady().then(function () {
+        return window.firebase.auth(window.firebase.app(APP_NAME));
+      });
     });
   }
   function bootRef() { return docRef("zms_auth/bootstrap"); }
