@@ -10,8 +10,8 @@ const fs = require("fs");
 const path = require("path");
 const { JSDOM } = require("jsdom");
 
-// the deployable site lives in the ZMS/ folder (one folder = one upload)
-const APP = path.resolve(__dirname, "..", "ZMS");
+// the site lives at the repo root (index.html + js + css)
+const APP = path.resolve(__dirname, "..");
 
 // ---------------- environment ----------------
 const dom = new JSDOM(`<!DOCTYPE html><html><body>

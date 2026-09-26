@@ -3,8 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-// the deployable site lives in the ZMS/ folder (one folder = one upload)
-const root = path.join(process.cwd(), "ZMS");
+// the site lives at the repo root (index.html + js + css)
+const root = process.cwd();
 
 // ---- minimal browser/environment stubs ----
 function makeEl() {
