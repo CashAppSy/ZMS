@@ -164,6 +164,29 @@
   function bootRef() { return docRef("zms_auth/bootstrap"); }
   function cloudUserRef(uid) { return docRef("zms_auth_users/" + uid); }
 
+  // The hardened rules require a SIGNED-IN Firebase user (with an active
+  // profile) for every read/write. Firebase Auth restores the session
+  // asynchronously after a reload, so any pull/push before that resolves
+  // arrives as request.auth == null and is rejected with "Missing or
+  // insufficient permissions". This waits for the auth state (with a timeout)
+  // and resolves true only when a user is actually signed in — pulling/pushing
+  // while signed out is skipped quietly instead of spamming rule denials.
+  var signedInKnown = false;
+  var signedInCache = false;
+  var authStateTimer = null;
+  function waitForSignedIn() {
+    return authx().then(function (a) {
+      if (a.currentUser) { signedInKnown = true; signedInCache = true; return true; }
+      if (signedInKnown) return signedInCache; // already resolved as signed-out
+      return new Promise(function (resolve) {
+        var done = false;
+        var finish = function (v) { if (done) return; done = true; clearTimeout(authStateTimer); authStateTimer = null; signedInKnown = true; signedInCache = v; resolve(v); };
+        authStateTimer = setTimeout(function () { finish(false); }, 6000);
+        var off = a.onAuthStateChanged(function (u) { if (u) { try { off(); } catch (e) {} finish(true); } });
+      });
+    }).catch(function () { signedInKnown = true; signedInCache = false; return false; });
+  }
+
   function hasCloudAdmin() {
     return loadSDK().then(function () {
       return ensureReady().then(function () {
@@ -346,9 +369,11 @@
     if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
     // ZMS-RT-01/06: members are read-only on the shared datasets at the server;
     // do not even attempt whole-dataset writes from a member's device.
-    return canWriteShared().then(function (ok) {
+    return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
-      return ensureReady().then(function () {
+      return canWriteShared().then(function (allowed) {
+        if (!allowed) return false;
+        return ensureReady().then(function () {
         var t = now();
         var ops = [];
         COLLECTIONS.forEach(function (cname) {
@@ -376,6 +401,7 @@
         PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
         return false;
       });
+      });
     });
   }
 
@@ -383,7 +409,10 @@
   // mode: undefined (only when remote is newer) | "replace" | "merge"
   function pull(mode) {
     if (!enabled) return Promise.resolve(false);
-    return ensureReady().then(function () {
+    return waitForSignedIn().then(function (ok) {
+      if (!ok) return false;
+      return ensureReady();
+    }).then(function () {
       return stateRef().get();
     }).then(function (snap) {
       if (!snap.exists) return null;
@@ -529,9 +558,12 @@
   function pushIfLocalIsAhead() {
     var local = PMS.store.data;
     var hasLocal = USER_COLS.some(function (c) { return Array.isArray(local[c]) && local[c].length > 0; });
-    return canWriteShared().then(function (ok) {
+    if (!hasLocal) return Promise.resolve(false);
+    return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
-      return stateRef().get().then(function (s) {
+      return canWriteShared().then(function (can) {
+        if (!can) return false;
+        return stateRef().get().then(function (s) {
         if (!s.exists) return hasLocal ? push() : false;
         var d = s.data() || {};
         // a cloud whose last push carried no real data (hasData:false) is hollow —
@@ -544,6 +576,7 @@
         return false;
       });
     });
+    });
   }
 
   /* ---------------- API ---------------- */
@@ -554,7 +587,10 @@
     if (PAGE_ID === null) PAGE_ID = PMS.ids.uuid();
     return loadSDK().then(function () {
       return ensureReady().then(function () {
-        return probeRef().get(); // connectivity check (doc may not exist)
+        return waitForSignedIn().then(function (ok) {
+          if (!ok) return null; // signed out: skip the connectivity probe
+          return probeRef().get(); // connectivity check (doc may not exist)
+        });
       });
     }).then(function () {
       enabled = true;
@@ -594,7 +630,13 @@
       enabled = true;
       attachAutosave();
       startPoller();
-      return pull();
+      // wait for the (possibly still-restoring) Firebase Auth session; when
+      // nobody is signed in yet the pull is skipped quietly instead of being
+      // rejected by the rules as "Missing or insufficient permissions".
+      return waitForSignedIn().then(function (ok) {
+        if (!ok) return false;
+        return pull();
+      });
     }).then(function (changed) {
       // seed the cloud with this device's data when it is empty or older, so
       // other devices can pull a real dataset from the very first load
