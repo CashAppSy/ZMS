@@ -249,6 +249,8 @@
       cloudCreate: "Create cloud admin account",
       cloudSignIn: "Sign in with the shared account",
       cloudWaiting: "Connecting…",
+      cloudChecking: "Checking for an existing shared account…",
+      duplicateEmail: "An account with this email already exists — sign in with it instead.",
       cloudSetupLink: "Set up a shared cloud account instead",
       cloudLoginLink: "Sign in with a shared cloud account",
       localSetupLink: "Use a local account instead",
