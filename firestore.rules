@@ -49,12 +49,15 @@ service cloud.firestore {
 
     function isActiveUser(uid) {
       // a missing `active` field is treated as active (legacy records).
-      // NOTE: do NOT write got(...).data.active != false — a runtime comparison
-      // of a missing (null) field with `!= false` DENIES in production even
-      // though the simulator tolerates it. The negation of `== false` is the
-      // safe form: it only matches an EXPLICIT active == false.
+      // Rules are NOT null-safe: `get(...).data.active` on a doc WITHOUT that
+      // field throws "Property active is undefined on object" at runtime and
+      // the rule evaluates to false (DENIED) in production even though the
+      // simulator tolerates it. Guard every field read with the `in` operator
+      // so a missing field is never dereferenced.
       return hasCloudProfile(uid)
-        && !(get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active == false);
+        && ('active' in get(/databases/$(database)/documents/zms_auth_users/$(uid)).data
+            ? get(/databases/$(database)/documents/zms_auth_users/$(uid)).data.active == true
+            : true);
     }
 
     function isTeamMember(uid) {
@@ -163,6 +166,11 @@ service cloud.firestore {
     }
     match /zms_diag/activeNeg {
       allow read: if !(get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.active == false);
+    }
+    match /zms_diag/activeIn {
+      allow read: if 'active' in get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data
+        ? get(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.active == true
+        : true;
     }
     match /zms_diag/hasrole {
       allow read: if hasRole(request.auth.uid, 'admin');
