@@ -93,67 +93,7 @@
     done();
   }
 
-  /* ---------------- first-run: cloud admin account ---------------- */
-  function renderCloudSetup(root, probe) {
-    var nameInput = h("input", { type: "text", name: "name", autocomplete: "name", placeholder: t("auth.namePlaceholder") });
-    var emailInput = h("input", { type: "email", name: "username", autocomplete: "email", placeholder: "name@domain.com", required: true });
-    var passInput = h("input", { type: "password", name: "password", autocomplete: "new-password", placeholder: "••••••••", required: true });
-    var pass2Input = h("input", { type: "password", name: "password2", autocomplete: "new-password", placeholder: "••••••••", required: true });
-
-    var form = h("form", { style: { marginTop: "4px" } });
-    form.appendChild(h("p.u-muted", { text: t("auth.cloudDesc"), style: { marginBlockEnd: "14px" } }));
-    form.appendChild(field(t("auth.cloudEmail"), emailInput));
-    form.appendChild(field(t("auth.password"), passInput));
-    form.appendChild(field(t("auth.confirmPassword"), pass2Input));
-    form.appendChild(field(t("auth.name"), nameInput));
-
-    var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.cloudCreate") });
-    var checking = h("p.u-muted", { text: t("auth.cloudChecking"), style: { marginBlockStart: "12px" } });
-    form.appendChild(submit);
-    form.appendChild(checking);
-    form.appendChild(linkSwitcher(t("auth.cloudLoginLink"), function () { kicked = true; renderCloudLogin(root); }));
-    form.appendChild(linkSwitcher(t("auth.localSetupLink"), function () { kicked = true; renderLocalSetup(root); }));
-
-    var kicked = false;
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      kicked = true;
-      if (passInput.value !== pass2Input.value) { setError(form, "mismatch"); return; }
-      submit.disabled = true;
-      submit.textContent = t("auth.cloudWaiting");
-      PMS.cloudsync.signUpWithPassword({
-        email: emailInput.value, password: passInput.value, name: nameInput.value
-      }).then(function (res) {
-        PMS.toast.show(t("auth.adminCreated"), "success");
-        bridgeAndEnter(root, res);
-      }).catch(function (err) {
-        submit.disabled = false;
-        submit.textContent = t("auth.cloudCreate");
-        setError(form, err && err.userCode === "duplicate" ? "duplicateEmail" : (err && err.userCode) || "generic");
-        console.error("[zms] cloud sign-up failed:", err && err.code || err, err);
-      });
-    });
-
-    var cardEl = card(t("auth.cloudSetupTitle"), form);
-    root.appendChild(cardEl);
-
-    // when a shared admin already exists in the cloud, send the visitor
-    // straight to the sign-in screen instead of the "create" screen
-    if (probe && PMS.cloudsync && PMS.cloudsync.hasCloudAdmin) {
-      PMS.cloudsync.hasCloudAdmin().then(function (exists) {
-        if (root.firstChild !== cardEl) return;
-        if (kicked && !exists) { checking.remove(); return; }
-        checking.remove();
-        if (exists) { root.innerHTML = ""; renderCloudLogin(root); }
-      }).catch(function () {
-        if (root.firstChild === cardEl) checking.remove();
-      });
-    } else {
-      checking.remove();
-    }
-  }
-
-  /* ---------------- first-run: classic local admin ---------------- */
+  /* ---------------- first-run: classic local admin (defensive, no cloud) ---------------- */
   function renderLocalSetup(root) {
     var userInput = h("input", { type: "text", name: "username", autocomplete: "username", placeholder: t("auth.usernamePlaceholder"), required: true });
     var passInput = h("input", { type: "password", name: "password", autocomplete: "new-password", placeholder: "••••••••", required: true });
@@ -211,7 +151,6 @@
 
     var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.cloudSignIn") });
     form.appendChild(submit);
-    form.appendChild(linkSwitcher(t("auth.localLoginLink"), function () { renderLocalLogin(root); }));
 
     form.addEventListener("submit", function (e) {
       e.preventDefault();
@@ -289,13 +228,12 @@
     if (PMS.app && PMS.app.applyTheme) PMS.app.applyTheme(PMS.store.data.settings.theme || "light");
     root.innerHTML = "";
     root.style.display = "flex";
-    if (!PMS.auth.configured()) {
-      if (cloudAvailable()) renderCloudSetup(root, true);
-      else renderLocalSetup(root);
-    } else {
-      if (cloudAvailable()) renderCloudLogin(root);
-      else renderLocalLogin(root);
-    }
+    // Cloud-first, always: every visitor signs in with the shared account
+    // (email + password created by the admin). Local screens are a defensive
+    // fallback only for sites that have no cloud configuration at all.
+    if (cloudAvailable()) renderCloudLogin(root);
+    else if (!PMS.auth.configured()) renderLocalSetup(root);
+    else renderLocalLogin(root);
     document.title = PMS.i18n.t("auth.loginTitle") + " — " + PMS.i18n.t("app.name");
   }
 

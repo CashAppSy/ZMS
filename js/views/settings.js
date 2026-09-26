@@ -667,8 +667,8 @@
     var card = h("div.card");
     card.appendChild(h("div.card-header", [
       h("div.u-grow.card-title", { text: t("auth.accounts") }),
-      h("button.btn.btn-primary.btn-sm", { text: "+ " + t("auth.addAccount"), on: { click: function () { editAccount(null); } } }),
-      cloudReady() ? h("button.btn.btn-ghost.btn-sm", { text: "+ " + t("auth.addCloudAccount"), on: { click: function () { addCloudAccount(); } } }) : null
+      cloudReady() ? h("button.btn.btn-primary.btn-sm", { text: "+ " + t("auth.addCloudAccount"), on: { click: function () { addCloudAccount(); } } })
+                   : h("button.btn.btn-primary.btn-sm", { text: "+ " + t("auth.addAccount"), on: { click: function () { editAccount(null); } } })
     ]));
     var b = h("div.card-body");
     b.appendChild(h("p.u-muted", { text: t("auth.accountsHint"), style: { marginBlockEnd: "8px" } }));
