@@ -94,7 +94,7 @@
   }
 
   /* ---------------- first-run: cloud admin account ---------------- */
-  function renderCloudSetup(root) {
+  function renderCloudSetup(root, probe) {
     var nameInput = h("input", { type: "text", name: "name", autocomplete: "name", placeholder: t("auth.namePlaceholder") });
     var emailInput = h("input", { type: "email", name: "username", autocomplete: "email", placeholder: "name@domain.com", required: true });
     var passInput = h("input", { type: "password", name: "password", autocomplete: "new-password", placeholder: "••••••••", required: true });
@@ -108,11 +108,16 @@
     form.appendChild(field(t("auth.name"), nameInput));
 
     var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.cloudCreate") });
+    var checking = h("p.u-muted", { text: t("auth.cloudChecking"), style: { marginBlockStart: "12px" } });
     form.appendChild(submit);
-    form.appendChild(linkSwitcher(t("auth.localSetupLink"), function () { renderLocalSetup(root); }));
+    form.appendChild(checking);
+    form.appendChild(linkSwitcher(t("auth.cloudLoginLink"), function () { kicked = true; renderCloudLogin(root); }));
+    form.appendChild(linkSwitcher(t("auth.localSetupLink"), function () { kicked = true; renderLocalSetup(root); }));
 
+    var kicked = false;
     form.addEventListener("submit", function (e) {
       e.preventDefault();
+      kicked = true;
       if (passInput.value !== pass2Input.value) { setError(form, "mismatch"); return; }
       submit.disabled = true;
       submit.textContent = t("auth.cloudWaiting");
@@ -124,12 +129,28 @@
       }).catch(function (err) {
         submit.disabled = false;
         submit.textContent = t("auth.cloudCreate");
-        setError(form, (err && err.userCode) || "generic");
+        setError(form, err && err.userCode === "duplicate" ? "duplicateEmail" : (err && err.userCode) || "generic");
         console.error("[zms] cloud sign-up failed:", err && err.code || err, err);
       });
     });
 
-    root.appendChild(card(t("auth.cloudSetupTitle"), form));
+    var cardEl = card(t("auth.cloudSetupTitle"), form);
+    root.appendChild(cardEl);
+
+    // when a shared admin already exists in the cloud, send the visitor
+    // straight to the sign-in screen instead of the "create" screen
+    if (probe && PMS.cloudsync && PMS.cloudsync.hasCloudAdmin) {
+      PMS.cloudsync.hasCloudAdmin().then(function (exists) {
+        if (root.firstChild !== cardEl) return;
+        if (kicked && !exists) { checking.remove(); return; }
+        checking.remove();
+        if (exists) { root.innerHTML = ""; renderCloudLogin(root); }
+      }).catch(function () {
+        if (root.firstChild === cardEl) checking.remove();
+      });
+    } else {
+      checking.remove();
+    }
   }
 
   /* ---------------- first-run: classic local admin ---------------- */
@@ -246,6 +267,7 @@
       case "inactive": return t("auth.inactive");
       case "username": return t("auth.usernameError");
       case "duplicate": return t("auth.duplicate");
+      case "duplicateEmail": return t("auth.duplicateEmail");
       case "lastAdmin": return t("auth.lastAdmin");
       case "self": return t("auth.selfDelete");
       case "notfound": return t("auth.notFound");
@@ -268,7 +290,7 @@
     root.innerHTML = "";
     root.style.display = "flex";
     if (!PMS.auth.configured()) {
-      if (cloudAvailable()) renderCloudSetup(root);
+      if (cloudAvailable()) renderCloudSetup(root, true);
       else renderLocalSetup(root);
     } else {
       if (cloudAvailable()) renderCloudLogin(root);
