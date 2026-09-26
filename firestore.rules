@@ -64,18 +64,16 @@ service cloud.firestore {
       return hasCloudProfile(uid);
     }
 
-    function roleOf(uid) {
-      return hasCloudProfile(uid)
-        ? (get(cloudProfilePath(uid)).data.role || '')
-        : '';
+    function hasRole(uid, role) {
+      return hasCloudProfile(uid) && get(cloudProfilePath(uid)).data.role == role;
     }
 
     function isAdmin(uid) {
-      return roleOf(uid) == 'admin' && isActiveUser(uid);
+      return isActiveUser(uid) && hasRole(uid, 'admin');
     }
 
     function isManagerOrAdmin(uid) {
-      return isActiveUser(uid) && (roleOf(uid) == 'manager' || roleOf(uid) == 'admin');
+      return isActiveUser(uid) && (hasRole(uid, 'manager') || hasRole(uid, 'admin'));
     }
 
     // True when this uid is the account recorded as the very first cloud
@@ -90,7 +88,7 @@ service cloud.firestore {
     // The bootstrap marker has to be readable during signup, BEFORE the new
     // account's own zms_auth_users record exists, so it must not be gated on
     // isActiveUser(). It is not sensitive (records no secrets).
-    function signupCanRead(uid) {
+    function signupCanRead() {
       return request.auth != null;
     }
 
@@ -163,7 +161,7 @@ service cloud.firestore {
     match /zms_auth/bootstrap {
       // must be readable during signup, before the new account's own record
       // exists (that is what the signup flow reads to detect no-admin mode)
-      allow read: if signupCanRead(request.auth.uid);
+      allow read: if signupCanRead();
       // created once, only while it does not exist yet
       allow create: if request.auth != null
         && !exists(/databases/$(database)/documents/zms_auth/bootstrap);
