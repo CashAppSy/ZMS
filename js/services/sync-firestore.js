@@ -685,6 +685,9 @@
           var probes = [
             ["zms_diag/auth (request.auth != null)", function () { return docRef("zms_diag/auth"); }],
             ["zms_diag/get (literal get() role==admin)", function () { return docRef("zms_diag/get"); }],
+            ["zms_diag/exists (literal exists())", function () { return docRef("zms_diag/exists"); }],
+            ["zms_diag/active (literal get().data.active != false)", function () { return docRef("zms_diag/active"); }],
+            ["zms_diag/hasrole (hasRole call)", function () { return docRef("zms_diag/hasrole"); }],
             ["zms_auth/bootstrap (signupCanRead)", bootRef],
             ["zms_meta/probe (isActiveUser)", probeRef],
             ["zms_meta/state (isActiveUser)", stateRef],
