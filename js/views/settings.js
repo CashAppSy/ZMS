@@ -339,7 +339,10 @@
     var actions = h("div.u-flex", { style: { gap: "8px", marginTop: "12px" } });
     actions.appendChild(h("button.btn.btn-sm", { text: t("cloud.configure"), on: { click: function () { configModal(); } } }));
     actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pushNow"), on: { click: function () {
-      PMS.cloudsync.push().then(function (ok) { if (ok) PMS.toast.show(t("cloud.pushDone"), "success"); });
+      PMS.cloudsync.push().then(function (ok) {
+        if (ok) PMS.toast.show(t("cloud.pushDone"), "success");
+        else PMS.toast.show(t("cloud.pushFail"), "error");
+      });
     } } }));
     actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pullNow"), on: { click: function () { pullModal(); } } }));
     b.appendChild(actions);
