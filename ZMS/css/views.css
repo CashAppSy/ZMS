@@ -1,0 +1,137 @@
+/* ==========================================================================
+   PMS - View-specific styles: dashboard, projects, tasks, people, reports,
+   settings.
+   ========================================================================== */
+
+/* ---------- Dashboard ---------- */
+.dash-section { margin-block-start: var(--space-5); }
+.dash-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
+.chart-card .card-body { display: flex; flex-direction: column; align-items: center; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-block-start: var(--space-3); font-size: 0.8rem; }
+.chart-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.chart-legend .lg-swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+.project-progress-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.project-progress-row { display: flex; align-items: center; gap: var(--space-3); }
+.project-progress-row .pp-name { min-width: 140px; font-weight: 600; }
+
+/* ---------- Projects tree ---------- */
+.project-tree-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.project-tree-row {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  margin-block-end: 3px;
+}
+.project-tree-row:hover { background: var(--bg-hover); border-color: var(--border); }
+
+/* ---------- Project detail header ---------- */
+.project-hero { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-start; }
+.project-hero .ph-main { flex: 1; min-width: 260px; }
+
+/* ---------- Task table cells ---------- */
+.tcell-prio { display: inline-flex; align-items: center; gap: 6px; }
+.tcell-id { font-family: Consolas, monospace; font-size: 0.75rem; color: var(--text-faint); }
+
+/* ---------- People ---------- */
+.person-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--space-4);
+  cursor: pointer;
+  transition: box-shadow var(--transition);
+}
+.person-card:hover { box-shadow: var(--shadow-md); }
+.person-card .pc-top { display: flex; gap: 12px; align-items: center; }
+.person-card .pc-name { font-weight: 700; }
+
+/* ---------- Reports ---------- */
+.report-card { margin-block-end: var(--space-5); }
+.report-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.report-row-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Settings ---------- */
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) 0; border-block-end: 1px solid var(--border); }
+.setting-row:last-child { border-block-end: none; }
+.help-box { margin-block-start: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius, 8px); background: color-mix(in srgb, var(--bg-soft, #f8fafc) 60%, transparent); }
+.help-box summary { cursor: pointer; font-weight: 600; }
+.help-box ol { margin: 6px 0; padding-inline-start: 18px; }
+.help-box pre.code { white-space: pre-wrap; direction: ltr; text-align: left; font-size: 12px; background: var(--bg-soft, #f1f5f9); padding: var(--space-3); border-radius: var(--radius, 8px); overflow-x: auto; }
+.switch { position: relative; width: 42px; height: 24px; flex: 0 0 42px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background var(--transition);
+  cursor: pointer;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  inset-block-start: 3px;
+  inset-inline-start: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform var(--transition);
+}
+.switch input:checked + .slider { background: var(--primary); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(-18px); }
+
+/* ---------- Print helpers: screen-only decorations hidden ---------- */
+
+/* ---------- Filter chips bar ---------- */
+.filter-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: var(--space-3); background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); margin-block-end: var(--space-4); }
+.filter-multi { min-width: 180px; }
+
+/* Virtual table container (CSS grid rows so columns stay aligned even when
+   rows are absolutely positioned for virtualization) */
+.vt-scroll { position: relative; overflow-y: auto; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.vt-head {
+  position: sticky; top: 0; z-index: 3;
+  display: grid; align-items: center;
+  background: var(--bg-subtle);
+  border-block-end: 1px solid var(--border);
+}
+.vt-th {
+  display: flex; align-items: center; gap: 4px;
+  padding: 10px 12px; white-space: nowrap; overflow: hidden;
+  font-size: 0.78rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--text-muted); text-align: start;
+}
+.vt-th { cursor: default; }
+.vt-th.sortable { cursor: pointer; }
+.vt-th.sortable:hover { color: var(--text); }
+.vt-th .sort-arrow { opacity: 0.4; }
+.vt-th.sort-asc .sort-arrow, .vt-th.sort-desc .sort-arrow { opacity: 1; }
+
+.vt-body { position: relative; min-height: 300px; }
+.vt-row {
+  position: absolute; inset-inline: 0;
+  display: grid; align-items: center;
+  border-block-end: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.vt-row:hover { background: var(--bg-hover); }
+.vt-row.selected { background: var(--primary-soft); }
+.vt-td { padding: 8px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vt-td, .vt-td > * { min-width: 0; }
+.vt-group {
+  position: absolute; inset-inline: 0;
+  display: flex; align-items: center;
+  height: 44px; padding: 0 12px; box-sizing: border-box;
+  background: var(--bg-subtle);
+  font-weight: 700; font-size: 0.85rem; color: var(--text-muted);
+  border-block-end: 1px solid var(--border);
+}
+
+/* Gantt dependency arrow marker */
+#gantt-arrowhead { fill: var(--text-faint); }

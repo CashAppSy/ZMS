@@ -1,0 +1,225 @@
+/* ==========================================================================
+   Dashboard view - KPIs, status/priority donuts, progress by project,
+   overdue tasks, upcoming tasks, team workload.
+   ========================================================================== */
+(function (PMS) {
+  "use strict";
+
+  var h = PMS.dom.h;
+  var t = function (k, v) { return PMS.i18n.t(k, v); };
+
+  function render(container) {
+    container.innerHTML = "";
+    var data = PMS.store.data;
+    var tasks = data.tasks || [];
+    var projects = data.projects || [];
+    var people = data.people || [];
+    var today = PMS.utils.todayISO();
+    var weekEnd = PMS.utils.toISODate(new Date(Date.now() + 7 * 86400000));
+    var doneKey = findDoneKey("task");
+
+    var totalTasks = tasks.length;
+    var overdue = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate < today && tsk.status !== doneKey; });
+    var dueThisWeek = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate >= today && tsk.dueDate <= weekEnd; });
+    var activeProjects = projects.filter(function (p) { return p.status === "active"; });
+
+    // avg progress of leaf tasks
+    var progSum = 0, progN = 0;
+    var progressMap = {};
+    tasks.forEach(function (tsk) {
+      if (!PMS.progress.taskChildren(data, tsk.id).length) {
+        progSum += tsk.progress || 0; progN++;
+      }
+      progressMap[tsk.id] = PMS.progress.taskProgress(data, tsk.id, data.settings.weightByTime);
+    });
+    var avg = progN ? progSum / progN : 0;
+
+    // by status/priority
+    var byStatus = {}, byPriority = {};
+    tasks.forEach(function (tsk) { byStatus[tsk.status] = (byStatus[tsk.status] || 0) + 1; byPriority[tsk.priority] = (byPriority[tsk.priority] || 0) + 1; });
+
+    var statusColors = {}, prioColors = {};
+    (data.taskStatuses || []).forEach(function (s) { statusColors[s.key] = s.color; });
+    (data.priorities || []).forEach(function (p) { prioColors[p.key] = p.color; });
+
+    // KPIs
+    var kpis = h("div.kpi-grid");
+    addKpi(kpis, t("dashboard.kpiProjects"), projects.length, t("dashboard.activeProjects") + " " + activeProjects.length);
+    addKpi(kpis, t("dashboard.kpiTasks"), totalTasks, t("dashboard.kpiAvgProgress") + ": " + PMS.utils.pct(avg));
+    addKpi(kpis, t("dashboard.kpiOverdue"), overdue.length, overdue.length ? t("projects.late") : t("dashboard.noLate"), overdue.length ? "danger" : "ok");
+    addKpi(kpis, t("dashboard.kpiDueThisWeek"), dueThisWeek.length, "");
+
+    var root = h("div");
+
+    if (!tasks.length && !projects.length) {
+      var intro = h("div.card", { style: { marginBlockEnd: "16px" } });
+      var introActions = [
+        h("button.btn.btn-primary", { text: "+ " + t("dashboard.newTask"), on: { click: function () { PMS.editors.openTaskEditor(null, {}); } } })
+      ];
+      if (PMS.auth ? PMS.auth.can("projects.write") : true) {
+        introActions.unshift(h("button.btn", { text: "+ " + t("dashboard.newProject"), on: { click: function () { PMS.editors.openProjectEditor(null, {}); } } }));
+      }
+      if (PMS.auth ? PMS.auth.can("data.manage") : true) {
+        introActions.push(h("button.btn.btn-ghost", { text: t("settings.seedData"), on: { click: function () { PMS.editors.loadSampleData(); } } }));
+      }
+      intro.appendChild(h("div.card-body", [
+        h("p.u-bold", { text: t("dashboard.title") }),
+        h("p.u-muted", { text: t("dashboard.emptyHint") }),
+        h("div.u-flex", { style: { gap: "10px" } }, introActions)
+      ]));
+      root.appendChild(intro);
+    }
+
+    root.appendChild(kpis);
+
+    // Charts row
+    var charts = h("div.dash-charts");
+    charts.appendChild(chartCard(t("dashboard.byStatus"), donutChart(byStatus, statusColors, totalTasks)));
+    charts.appendChild(chartCard(t("dashboard.byPriority"), donutChart(byPriority, prioColors, totalTasks)));
+    charts.appendChild(progressCard(t("dashboard.byProject"), topProjects(projects)));
+    root.appendChild(charts);
+
+    // Lists row
+    var lists = h("div.grid-2");
+    lists.appendChild(listCard(t("dashboard.lateTasks"), overdueRow(overdue.slice(0, 8)), overdue.length));
+    lists.appendChild(listCard(t("dashboard.upcomingTasks"), upcomingRow(dueThisWeek.slice(0, 8)), dueThisWeek.length));
+    root.appendChild(lists);
+
+    // workload
+    var workloadRows = (data.people || []).slice(0, 8).map(function (person) {
+      var cnt = tasks.filter(function (tsk) { return (tsk.assignees || []).indexOf(person.id) !== -1 && tsk.status !== doneKey; }).length;
+      var bar = h("div.progress-track", { style: { width: "80px", height: "6px" } },
+        [h("div.progress-fill", { style: { width: Math.min(100, cnt * 10) + "%" } })] );
+      var wrap = h("div.project-progress-row");
+      wrap.appendChild(PMS.vformat.avatar(person));
+      wrap.appendChild(h("span.pp-name.u-ellipsis", { text: person.name }));
+      wrap.appendChild(bar);
+      wrap.appendChild(h("span.progress-label", { text: cnt + " " + t("dashboard.tasksTotal") }));
+      return wrap;
+    });
+    root.appendChild(listCard(t("dashboard.workload"), workloadRows, (data.people || []).length, true));
+
+    container.appendChild(root);
+  }
+
+  function addKpi(grid, label, value, sub, cls) {
+    var card = h("div.card.kpi-card");
+    card.appendChild(h("div.kpi-label", { text: label }));
+    card.appendChild(h("div.kpi-value" + (cls ? "." + cls : ""), { text: String(value) }));
+    card.appendChild(h("div.kpi-sub", { text: sub || "" }));
+    grid.appendChild(card);
+  }
+
+  function chartCard(title, svgEl) {
+    var card = h("div.card.chart-card");
+    var head = h("div.card-header", [h("div.card-title", { text: title })]);
+    var body = h("div.card-body", [svgEl]);
+    card.appendChild(head);
+    card.appendChild(body);
+    return card;
+  }
+
+  function donutChart(counts, colors, total) {
+    var items = Object.keys(counts).map(function (k) {
+      return { label: k, value: counts[k], color: colors[k] || PMS.utils.colorForSeed(k) };
+    });
+    var wrap = h("div", { style: { display: "flex", alignItems: "center", gap: "20px" } });
+    wrap.appendChild(PMS.charts.donut(items, { size: 150, thickness: 26, centerText: String(total || 0) }));
+    var legend = h("div.chart-legend");
+    items.forEach(function (it) {
+      var item = h("span.lg-item");
+      item.appendChild(h("span.lg-swatch", { style: { background: it.color } }));
+      item.appendChild(h("span", { text: prettyKey(it.label) + " (" + it.value + ")" }));
+      legend.appendChild(item);
+    });
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  function progressCard(title, list) {
+    var card = h("div.card.chart-card");
+    card.appendChild(h("div.card-header", [h("div.card-title", { text: title })]));
+    var body = h("div.card-body", [h("div.project-progress-list", list)]);
+    card.appendChild(body);
+    return card;
+  }
+
+  function topProjects(projects) {
+    var roots = projects.filter(function (p) { return !p.parentId; }).slice(0, 8);
+    return roots.map(function (p) {
+      var prog = PMS.progress.projectProgress(PMS.store.data, p.id, 0);
+      var row = h("div.project-progress-row");
+      row.appendChild(h("span.pp-name.u-ellipsis", { text: p.name }));
+      row.appendChild(PMS.vformat.progressChip(prog));
+      return row;
+    });
+  }
+
+  function listCard(title, rows, count, full) {
+    var card = h("div.card" + (full ? "" : ""));
+    var head = h("div.card-header");
+    head.appendChild(h("div.card-title", { text: title }));
+    head.appendChild(h("span.badge", { text: String(count) }));
+    card.appendChild(head);
+    var body = h("div.card-body.stack", rows.length ? rows : [h("div.empty-state", [h("div", { text: "—" })])]);
+    card.appendChild(body);
+    return card;
+  }
+
+  function overdueRow(list) {
+    return list.map(function (tsk) {
+      var row = h("div.project-progress-row");
+      row.appendChild(h("span.pp-name.u-ellipsis", { text: tsk.title }));
+      row.style.cursor = "pointer";
+      row.addEventListener("click", function () { openTask(tsk); });
+      row.appendChild(h("span.badge", { text: tsk.dueDate || "", style: { background: "var(--danger-soft)", color: "var(--danger)" } }));
+      return row;
+    });
+  }
+
+  function upcomingRow(list) {
+    return list.map(function (tsk) {
+      var row = h("div.project-progress-row");
+      row.appendChild(h("span.pp-name.u-ellipsis", { text: tsk.title }));
+      row.style.cursor = "pointer";
+      row.addEventListener("click", function () { openTask(tsk); });
+      var statusColor = statusColorOf(tsk.status);
+      row.appendChild(h("span.badge", { text: tsk.dueDate || "", style: { background: PMS.vformat.hexToSoft(statusColor), color: statusColor } }));
+      return row;
+    });
+  }
+
+  function findDoneKey(entity) {
+    var list = entity === "project" ? PMS.store.data.projectStatuses : PMS.store.data.taskStatuses;
+    var done = (list || []).find(function (s) { return s.key === "done"; });
+    return done ? "done" : ((list && list[list.length - 1]) ? list[list.length - 1].key : "done");
+  }
+
+  function prettyKey(k) {
+    return PMS.i18n.t("statuses.task." + k) !== ("statuses.task." + k)
+      ? PMS.i18n.t("statuses.task." + k)
+      : (PMS.i18n.t("priorities." + k) !== ("priorities." + k) ? PMS.i18n.t("priorities." + k) : k);
+  }
+
+  function statusColorOf(key) {
+    var s = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === key; });
+    return s ? s.color : "#6b7280";
+  }
+
+  function openTask(tsk) { PMS.router.navigate("/tasks"); }
+
+  var view = {
+    id: "dashboard",
+    path: "/",
+    titleKey: "nav.dashboard",
+    icon: "▦",
+    nav: true,
+    render: function (container, params) {
+      render(container);
+      var off = PMS.bus.on("store:changed", function () { if (PMS.router.current === "/") render(container); });
+      return function () { off(); };
+    }
+  };
+  PMS.registry.registerView(view);
+  PMS.router.register("/", "dashboard");
+})(window.PMS);
