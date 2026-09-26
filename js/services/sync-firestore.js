@@ -649,10 +649,25 @@
       PMS.bus.emit("cloud:state", { booted: true });
       return synced;
     }).catch(function (e) {
+      // Diagnostics for the "Missing or insufficient permissions" case: report
+      // the signed-in Firebase uid so we can verify it matches a profile doc
+      // in zms_auth_users (the round-3 rules deny every read when it does not).
+      // Captured BEFORE teardown() which deletes the Firebase app.
+      var diagUid = null, diagEmail = null;
+      try {
+        if (window.firebase && window.firebase.apps) {
+          var app = window.firebase.apps.find(function (a) { return a.name === APP_NAME; });
+          if (app) {
+            var cu = window.firebase.auth(app).currentUser;
+            diagUid = cu && cu.uid; diagEmail = cu && cu.email;
+          }
+        }
+      } catch (diagErr) { console.warn("[cloudsync] boot diagnostics unavailable", diagErr); }
       enabled = false;
       teardown();
       if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
       console.error("[cloudsync] boot failed", e);
+      console.warn("[cloudsync] boot diagnostics uid=", diagUid, "email=", diagEmail);
       return false;
     });
   }
