@@ -138,7 +138,7 @@
 
   /* ---------------- shared cloud login (Firebase Auth) ---------------- */
   // One email + password per person works on every device. Roles live in
-  // Firestore (zms_auth/users/<uid> + a zms_auth/bootstrap doc recording the
+  // Firestore (zms_auth_users/<uid> + a zms_auth/bootstrap doc recording the
   // first admin). The app still keeps a slim local record through the
   // PMS.auth bridge so existing role gates and person linking keep working.
   function authx() {
@@ -150,7 +150,7 @@
     });
   }
   function bootRef() { return docRef("zms_auth/bootstrap"); }
-  function cloudUserRef(uid) { return docRef("zms_auth/users/" + uid); }
+  function cloudUserRef(uid) { return docRef("zms_auth_users/" + uid); }
 
   function authErrorMessage(e) {
     var code = e && e.code || "";
