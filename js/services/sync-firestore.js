@@ -271,8 +271,10 @@
       }
       lastPushed = Date.now();
       PMS.bus.emit("cloud:state", { pushed: true });
+      console.info("[cloudsync] push ok", COLLECTIONS.filter(function (c) { return Array.isArray(d && d[c]); }).reduce(function (o, c) { o[c] = (d[c] || []).length; return o; }, {}));
       return true;
     }).catch(function (e) {
+      console.error("[cloudsync] push failed:", e);
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
     });
