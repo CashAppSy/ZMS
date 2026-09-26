@@ -198,7 +198,11 @@
       });
     }).then(function (obj) {
       if (!obj) return false;
-      if (mode === "merge") obj = mergeWithLocal(obj);
+      // Replace is destructive (whole dataset is overwritten by the remote
+      // copy). Automatic / merge pulls UNION by id, so a slow device whose
+      // pushes failed (e.g. editing before cloud rules were ready) keeps its
+      // local additions instead of silently losing them to a newer clock.
+      if (mode !== "replace") obj = mergeWithLocal(obj);
       // accounts + per-device preferences never come from the cloud
       obj.users = PMS.utils.deepClone((PMS.store.data && PMS.store.data.users) || []);
       obj.settings = PMS.utils.deepClone((PMS.store.data && PMS.store.data.settings) || PMS.schema.defaultData().settings);
@@ -340,10 +344,16 @@
       startPoller();
       return pull();
     }).then(function (changed) {
-      if (changed && PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.synced"), "success");
-      if (changed && PMS.router && PMS.router.handle) PMS.router.handle();
+      // seed the cloud with this device's data when it is empty or older, so
+      // other devices can pull a real dataset from the very first load
+      return pushIfLocalIsAhead().then(function (pushed) {
+        return !!(changed || pushed);
+      });
+    }).then(function (synced) {
+      if (synced && PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.synced"), "success");
+      if (synced && PMS.router && PMS.router.handle) PMS.router.handle();
       PMS.bus.emit("cloud:state", { booted: true });
-      return changed;
+      return synced;
     }).catch(function (e) {
       enabled = false;
       teardown();
