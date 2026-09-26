@@ -53,6 +53,7 @@
   var unsubSaved = null;
   var onFocus = null;
   var onVisibility = null;
+  var functionsReady = null; // backend availability memo (null = unknown)
 
   function now() { return new Date().toISOString(); }
 
@@ -120,6 +121,13 @@
       });
     });
     return chain;
+  }
+
+  function loadFunctionsSDK() {
+    return loadSDK().then(function () {
+      if (window.firebase && window.firebase.functions) return undefined;
+      return injectScript("https://www.gstatic.com/firebasejs/" + SDK_VERSION + "/firebase-functions-compat.js");
+    });
   }
 
   function ensureReady() {
@@ -190,10 +198,10 @@
     }
   }
 
-  // Decides which role may be written for a NEW cloud account (ZMS-04).
+  // Decides which role may be written for a NEW cloud account.
   //  - a normal signup is ALWAYS "member"
   //  - while the bootstrap admin record does not exist yet, the very first
-  //    account may pick its role (it is the bootstrap admin)
+  //    account becomes the admin
   //  - when the bootstrap exists, elevated roles are only allowed for an
   //    already-admin caller; anything else is forced back to "member"
   // This mirrors what the Firestore rules enforce; the browser cannot decide
@@ -205,6 +213,9 @@
     return callerIsAdmin ? wanted : "member";
   }
 
+  // ZMS-R06: signup no longer accepts a role from the client at all. Whatever
+  // the caller submits is ignored; the role comes only from the resolver above
+  // (bootstrap admin for the very first account, member otherwise).
   function signUpWithPassword(opts) {
     if (!opts || !opts.email || !opts.password) return Promise.reject(new Error("bad-input"));
     return authx().then(function (a) {
@@ -214,7 +225,7 @@
       return bootRef().get().then(function (b) {
         var caller = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
         var callerIsAdmin = !!(caller && caller.role === "admin");
-        var role = resolveSignupRole(opts.role, b.exists, callerIsAdmin);
+        var role = resolveSignupRole("member", b.exists, callerIsAdmin);
         var rec = {
           email: opts.email, role: role,
           displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
@@ -258,16 +269,47 @@
   }
 
   // Keep role changes made in Settings mirrored to the cloud so the next
-  // device sign-in sees the same role. Fire-and-forget.
-  // SECURITY (ZMS-05): only the local admin may request a cloud role write,
-  // and only valid roles are accepted. The Firestore rules remain the real
-  // boundary — a member must not be able to promote themselves.
+  // device sign-in sees the same role.
+  // SECURITY (ZMS-R07): authorized role changes run through the trusted
+  // backend FIRST — the HTTPS callable "adminSetRole" (see functions/) checks
+  // the caller's uid against zms_auth_users and only then writes the role.
+  // The direct Firestore write is kept ONLY as a fallback for deployments
+  // without the Cloud Functions (self-hosted/dev): it stays admin-gated in the
+  // client and is additionally blocked for non-admins by the Firestore rules.
+  function setRoleViaBackend(uid, role) {
+    if (functionsReady === false) return Promise.resolve(false);
+    return loadFunctionsSDK().then(function () {
+      if (!window.firebase || !window.firebase.functions) { functionsReady = false; return false; }
+      var fn = window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminSetRole");
+      return fn({ uid: uid, role: role }).then(function () { functionsReady = true; return true; }, function () { functionsReady = false; return false; });
+    }, function () { functionsReady = false; return false; });
+  }
+
   function setCloudRole(uid, role) {
     if (!uid || ["admin", "manager", "member"].indexOf(role) === -1) return Promise.resolve(false);
     if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
-    return ensureReady().then(function () {
-      return cloudUserRef(uid).set({ role: role }, { merge: true });
-    }).catch(function () { return false; });
+    return setRoleViaBackend(uid, role).then(function (done) {
+      if (done) return true;
+      // fallback: no deployed function — direct write (rules are the real gate)
+      return ensureReady().then(function () {
+        return cloudUserRef(uid).set({ role: role }, { merge: true });
+      }).then(function () { return true; }).catch(function () { return false; });
+    });
+  }
+
+  // ZMS-R05: removing a shared cloud account must NOT be a client-side write.
+  // It is done by the trusted backend callable "adminDeleteUser" (it verifies
+  // the caller is an admin from Firestore, then deletes the account record).
+  // Without deployed functions the operation is refused — there is no direct
+  // browser fallback for deletions.
+  function deleteCloudAccount(uid) {
+    if (!uid) return Promise.reject(new Error("bad-input"));
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.reject({ userCode: "forbidden" });
+    if (functionsReady === false) return Promise.reject({ userCode: "backendRequired" });
+    return loadFunctionsSDK().then(function () {
+      if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
+      return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminDeleteUser")({ uid: uid });
+    }).then(function () { functionsReady = true; return true; });
   }
 
   /* ---------------- push (local -> cloud) ---------------- */
@@ -561,6 +603,7 @@
     signOut: signOut,
     resetPassword: resetPassword,
     setCloudRole: setCloudRole,
+    deleteCloudAccount: deleteCloudAccount,
     authErrorMessage: authErrorMessage,
     // internal helpers exported for the offline test suite
     _mergeForTest: mergeWithLocal,

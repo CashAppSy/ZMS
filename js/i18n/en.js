@@ -41,7 +41,9 @@
       deleteProject: "Delete project '{name}' and all its sub-projects and tasks? This cannot be undone.",
       deleteTask: "Delete task '{title}' and all its sub-tasks?",
       deleteField: "Delete this custom field? Existing values will be lost.",
-      restoreBackup: "Restore backup from {date}? Current data will be replaced."
+      restoreBackup: "Restore backup from {date}? Current data will be replaced.",
+      continue: "Continue",
+      adminReauth: "Enter your password to confirm this action:"
     },
     dashboard: {
       title: "Dashboard",
@@ -265,9 +267,11 @@
       cloudReset: "Send password-reset email",
       cloudResetSent: "Password-reset email sent",
       cloudResetConfirm: "Send a password-reset email to {email}?",
-      cloudAccountsNote: "Cloud accounts (☁) are shared across every device. Password resets go by email; to fully remove one, use the Firebase console.",
+      cloudAccountsNote: "Cloud accounts (☁) are shared across every device. Password resets go by email; to fully remove one, a trusted backend action removes it (Settings → Deleting a cloud account).",
       addCloudAccount: "Add shared account",
       cloudAccountCreated: "Shared account created — this email + password now work on every device.",
+      cloudDeleteConfirm: "Remove the shared account '{name}' from every device? Without deployed Cloud Functions (paid plan), this works by deleting its document in the Firebase console.",
+      backendRequired: "Not allowed directly from the browser. Delete the document in the Firebase console (zms_auth_users/<uid>) — or deploy the Cloud Functions (functions/).",
       password: "Password"
     },
     cloud: {

@@ -88,7 +88,7 @@
       renderCloudLogin(root);
       return;
     }
-    PMS.auth.adoptUser({ id: local.id, cloudUid: local.cloudUid });
+    PMS.auth._adoptBridge({ id: local.id, cloudUid: local.cloudUid });
     root.innerHTML = "";
     done();
   }
@@ -125,7 +125,6 @@
         username: userInput.value,
         password: passInput.value,
         personId: personId,
-        role: "admin",
         name: personId ? null : userInput.value
       });
       if (res.error) { setError(form, res.error); return; }

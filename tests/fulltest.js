@@ -391,8 +391,9 @@ const root = () => document.getElementById("view-root");
   // Earlier sections may have reset the dataset and wiped accounts; guarantee a
   // known admin ("boss"/"pw1234") exists and that we are logged in as it.
   PMS.auth.logout();
-  if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
-    PMS.auth.createUser({ username: "boss", password: "pw1234", role: "admin", name: "Boss" });
+if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
+    const bossAcc = PMS.auth.createUser({ username: "boss", password: "pw1234", name: "Boss" });
+    if (!bossAcc.error && bossAcc.user.role !== "admin") PMS.auth.updateUser(bossAcc.user.id, { role: "admin" });
   }
   const bootLogin = PMS.auth.login("boss", "pw1234");
   ok("auth admin login works", !bootLogin.error && PMS.auth.currentUser().role === "admin");
@@ -407,15 +408,17 @@ const root = () => document.getElementById("view-root");
   ok("wrong password keeps session", PMS.auth.currentUser() !== null);
 
   // duplicate username
-  const dup = PMS.auth.createUser({ username: "boss", password: "x1234", role: "member" });
+  const dup = PMS.auth.createUser({ username: "boss", password: "x1234" });
   ok("duplicate username rejected", dup.error === "duplicate");
 
   // create an account linked to a real person + one manager + one member
   const linaP = PMS.repos.people.all().find(p => p.name === "Lina Haddadin");
-  const linaAcc = PMS.auth.createUser({ username: "lina", password: "lina1234", personId: linaP.id, role: "member" });
+  const linaAcc = PMS.auth.createUser({ username: "lina", password: "lina1234", personId: linaP.id });
   ok("createUser linked to person", !linaAcc.error && linaAcc.user.personId === linaP.id && linaAcc.user.role === "member");
-  const mgrAcc = PMS.auth.createUser({ username: "omar", password: "omar1234", personId: PMS.repos.people.all().find(p => p.name === "Omar Khalil").id, role: "manager" });
-  ok("createUser manager", !mgrAcc.error && mgrAcc.user.role === "manager");
+  const mgrAcc = PMS.auth.createUser({ username: "omar", password: "omar1234", personId: PMS.repos.people.all().find(p => p.name === "Omar Khalil").id });
+  ok("createUser always creates a member (bootstrap only makes the first admin)", !mgrAcc.error && mgrAcc.user.role === "member");
+  PMS.auth.updateUser(mgrAcc.user.id, { role: "manager" });
+  ok("manager promoted by admin through updateUser", PMS.auth.userById(mgrAcc.user.id).role === "manager");
   ok("lina displayName = person name", PMS.authUI.displayName(linaAcc.user) === "Lina Haddadin");
 
   // password reset then login
@@ -521,14 +524,14 @@ section("Cloud sync (offline-safe API)");
     // session — only a uid that a Firebase Auth result on this page just
     // verified may be adopted.
     ok("adoptUser refuses without a verified cloud sign-in",
-      PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid }) === null);
+      PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid }) === null);
     PMS.auth._markCloudVerified("uid-bridge-1");
-    const adopted = PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid });
+    const adopted = PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid });
     ok("adoptUser creates an active session after verification",
       adopted && PMS.auth.currentUser().username === "team@example.com" && PMS.auth.currentUser().role === "admin");
     PMS.auth._markCloudVerified("uid-other-device");
     ok("adoptUser refuses a mismatched verified uid",
-      PMS.auth.adoptUser({ id: cu.id, cloudUid: cu.cloudUid }) === null);
+      PMS.auth._adoptBridge({ id: cu.id, cloudUid: cu.cloudUid }) === null);
     PMS.auth.logout();
     ok("logout clears the cloud session", PMS.auth.currentUser() === null);
   }
@@ -595,13 +598,20 @@ section("Cloud sync (offline-safe API)");
   // ZMS-02/-12: user-management functions enforce admin inside, not just in UI
   PMS.auth.login("lina", "newpass1");
   const target = PMS.auth.users().find(u => u.username === "omar");
-  ok("member cannot createUser", PMS.auth.createUser({ username: "x", password: "xxxxx", role: "member" }).error === "forbidden");
+  ok("member cannot createUser", PMS.auth.createUser({ username: "x", password: "xxxxx" }).error === "forbidden");
   ok("member cannot updateUser role", PMS.auth.updateUser(target.id, { role: "admin" }).error === "forbidden");
   ok("member cannot updateUser active", PMS.auth.updateUser(target.id, { active: false }).error === "forbidden");
   ok("member cannot resetPassword", PMS.auth.resetPassword(target.id, "xxxxx").error === "forbidden");
   ok("member cannot removeUser", PMS.auth.removeUser(target.id).error === "forbidden");
   PMS.auth.login("boss", "pw1234");
   ok("admin updateUser works after guards", PMS.auth.updateUser(target.id, { role: "manager" }).ok === true);
+  // ZMS-R02: createUser ignores any role the caller submits
+  const r2 = PMS.auth.createUser({ username: "zz-new-acc", password: "pw1234", role: "owner" });
+  ok("createUser cannot mint a role via the role param", !r2.error && r2.user.role === "member");
+  PMS.auth.removeUser(r2.user.id);
+  // ZMS-R15: admin re-authentication helpers
+  ok("reauthenticateAdmin accepts the admin password", PMS.auth.reauthenticateAdmin("pw1234") === true);
+  ok("reauthenticateAdmin rejects a wrong password", PMS.auth.reauthenticateAdmin("nope") === false);
   // the verified cloud bridge may sync the role, and nothing else
   PMS.auth.logout();
   const bridgeRec = PMS.auth.userByCloudUid("uid-bridge-1");

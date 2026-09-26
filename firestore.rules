@@ -1,0 +1,89 @@
+rules_version = '2';
+// ============================================================================
+// ZMS Firestore Security Rules (hardened).
+//
+// WHAT CHANGED vs "allow read, write: if true":
+//   1. Anonymous unauthenticated access is denied everywhere.
+//   2. Account records (zms_auth_users) are readable by any signed-in user
+//      (needed to mirror roles on every device) but:
+//        - a new account is created as role "member" (unless it is the very
+//          first/bootstrap account),
+//        - a user may update their OWN record but NEVER their own role,
+//        - role changes and account deletion require an admin.
+//   3. The shared dataset docs still use the whole-dataset model, so access is
+//      "any signed-in user" (the app's shared-account design). Granular
+//      per-project/per-task authorization requires the per-record data model
+//      redesign (see README "Security"); the rules below are the correct
+//      boundary for the CURRENT model and a prerequisite for the redesign.
+//
+// DEPLOY: push these from the Firebase CLI or paste them in the console:
+//   firebase deploy --only firestore:rules
+// (or Console -> Firestore Database -> Rules -> publish.)
+// ============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin(uid) {
+      let doc = get(/databases/$(database)/documents/zms_auth_users/$(uid));
+      return doc.exists && doc.data.role == 'admin';
+    }
+
+    // ---- shared dataset (whole-document model) ----
+    // NOTE: `match /zms_{collection}/data` would require a wildcard inside a
+    // literal segment, which Firestore rules do not allow — so each collection
+    // document is listed explicitly.
+    match /zms_departments/data { allow read, write: if signedIn(); }
+    match /zms_people/data { allow read, write: if signedIn(); }
+    match /zms_projects/data { allow read, write: if signedIn(); }
+    match /zms_tasks/data { allow read, write: if signedIn(); }
+    match /zms_taskStatuses/data { allow read, write: if signedIn(); }
+    match /zms_projectStatuses/data { allow read, write: if signedIn(); }
+    match /zms_priorities/data { allow read, write: if signedIn(); }
+    match /zms_customFieldDefs/data { allow read, write: if signedIn(); }
+    match /zms_savedFilters/data { allow read, write: if signedIn(); }
+
+    // ---- sync metadata (state + probe) ----
+    match /zms_meta/{doc} {
+      allow read, write: if signedIn();
+    }
+
+    // ---- bootstrap marker: records the first admin ----
+    match /zms_auth/bootstrap {
+      allow read: if signedIn();
+      // created once, only while it does not exist yet
+      allow create: if signedIn()
+        && !exists(/databases/$(database)/documents/zms_auth/bootstrap);
+      allow update: if signedIn() && isAdmin(request.auth.uid);
+      allow delete: if false;
+    }
+
+    // ---- cloud account records ----
+    match /zms_auth_users/{uid} {
+      allow read: if signedIn();
+
+      // Signup always writes role "member", EXCEPT while the bootstrap marker
+      // is missing (i.e. the very first account may pick its role). Elevated
+      // roles for later accounts must come from a trusted path (an admin using
+      // a server SDK/Cloud Function sets them; then the role guard below lets
+      // them through via update).
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && (request.resource.data.role == 'member'
+            || !exists(/databases/$(database)/documents/zms_auth/bootstrap)
+            || isAdmin(request.auth.uid));
+
+      // role is immutable from the browser for everyone but an admin
+      allow update: if signedIn()
+        && (isAdmin(request.auth.uid)
+            || (request.auth.uid == uid
+                && request.resource.data.role == resource.data.role));
+
+      // deleting an account is reserved for an admin
+      allow delete: if signedIn() && isAdmin(request.auth.uid);
+    }
+  }
+}

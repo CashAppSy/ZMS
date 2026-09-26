@@ -199,15 +199,21 @@ cloud data is the Firestore security rules** — client-side checks only protect
 
 Implemented hardening (`js/`):
 
-- **Admin-gated management**: `createUser`, `updateUser`, `resetPassword`, `removeUser`
+- **Admin-gated management**: `updateUser`, `resetPassword`, `removeUser`
   return `forbidden` unless the current session is the admin (or the very first
   bootstrap account is being created). The cloud-account bridge may only sync the
-  role of a uid that Firebase Auth just verified.
-- **No role self-promotion**: `signUpWithPassword` always writes role `member` unless
-  the bootstrap admin record is missing or an admin caller requests the elevation;
-  `setCloudRole` is admin-only and role-validated. Firestore rules must mirror this.
-- **No session minting from an id alone**: `adoptUser` requires a `cloudUid` matching
-  both the account record and a uid verified by a real Firebase Auth result.
+  role of a uid that Firebase Auth just verified. Destructive actions
+  (restore, import-replace) additionally re-confirm the admin password.
+- **No role input from clients at all**: `createUser` and `signUpWithPassword`
+  no longer accept a role — a new account is always `member`, except the very
+  first (bootstrap) account. Role changes are admin-only via `updateUser`
+  (local) or the `adminSetRole` cloud function (cloud); `setCloudRole` is
+  admin-gated, role-validated and routes through the trusted backend first.
+- **No public session minting**: the bridge helper (`_adoptBridge`) is internal
+  and requires a `cloudUid` matching both the account record and a uid verified
+  by a real Firebase Auth result — an id alone can never create a session.
+- **Cloud account removal is backend-only**: deleting a shared cloud account runs
+  through the `adminDeleteUser` callable; there is no direct browser fallback.
 - **Credentials stay local**: password hashes/salts are stripped from JSON exports,
   JSON imports and backup snapshots (existing accounts keep their password; new
   imported accounts need a password reset).
@@ -229,6 +235,34 @@ Deploy in the Firebase console (Firestore → Rules → Publish) or with:
 firebase deploy --only firestore:rules
 ```
 
+### Trusted backend (Cloud Functions) — OPTIONAL (paid plan)
+
+Role changes and cloud-account deletion never trust the browser. The client
+(`js/services/sync-firestore.js`) calls two HTTPS callables **when they are
+deployed**:
+
+- `adminSetRole({ uid, role })` — verifies the caller is an admin (reads
+  `zms_auth_users/{callerUid}`), validates the target + role, preserves the
+  last active admin, then writes the role.
+- `adminDeleteUser({ uid })` — same admin check, then deletes the account
+  document so it can no longer be adopted on any device.
+
+**Without the functions (free tier — the default here):**
+
+- Role changes **still work**: the client falls back to an admin-gated Firestore
+  write, blocked for non-admins by the Firestore rules. The client remembers the
+  functions are unavailable, so there is no per-click delay.
+- Cloud-account deletion is **refused from the browser**. The free alternative:
+  Firebase console → Firestore → `zms_auth_users/<uid>` → delete the document
+  (same effect: the account can no longer be adopted on any device).
+
+Deploying the functions requires a **Blaze plan** (Cloud Functions are paid):
+
+```
+cd functions && npm install && cd ..
+firebase deploy --only functions,firestore:rules
+```
+
 Notes:
 
 - The current data model keeps each collection in one document, so the rules grant
@@ -236,8 +270,5 @@ Notes:
   per-project/per-task isolation needs the per-record data-model redesign
   (organizations → projects → tasks documents) before this app should host unrelated
   tenants.
-- Elevated roles can never be granted from the browser by design. To make someone an
-  admin/manager today, either create the account first (member) and promote them from
-  the Firebase console, or grant roles via a backend/Cloud Function.
 - Web Firebase config keys are public: they are not a secret. Restrict real access
   with the rules above + Firebase App Check for production use.

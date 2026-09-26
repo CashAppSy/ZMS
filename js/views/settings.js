@@ -485,6 +485,36 @@
     return row;
   }
 
+  // ZMS-R15: destructive admin actions re-confirm the admin password first
+  // (cloud admins pass through their Firebase session — no local password to
+  // check). Non-admins are already blocked by requireDelete() at the call sites.
+  function confirmAdmin(onOk) {
+    var u = PMS.auth.currentUser();
+    var localVerifiable = u && !(u.passwordHash && String(u.passwordHash).indexOf("cloud::") === 0);
+    if (!localVerifiable) { onOk(); return; }
+    var pw = h("input", { type: "password", name: "pw", placeholder: "••••••••", required: true, attrs: { autocomplete: "current-password" } });
+    pw.classList.add("input");
+    pw.classList.add("input-block");
+    var wrap = h("div.field");
+    wrap.appendChild(h("label.form-label", { text: t("confirm.adminReauth") }));
+    wrap.appendChild(pw);
+    PMS.modal.open({
+      title: t("confirm.title"),
+      content: wrap,
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: t("confirm.continue"), class: "btn-primary",
+          onClick: function () {
+            if (!PMS.auth.reauthenticateAdmin(pw.value)) { PMS.toast.show(t("auth.invalidCredentials"), "error"); return; }
+            PMS.modal.close();
+            onOk();
+          }
+        }
+      ]
+    });
+  }
+
   function doImport(text) {
     var obj;
     try { obj = JSON.parse(text); } catch (e) { PMS.toast.show(t("export.importInvalid"), "error"); return; }
@@ -498,7 +528,14 @@
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         { label: t("settings.merge"), onClick: function () { PMS.exportService.importJSON(obj, "merge"); PMS.modal.close(); } },
-        { label: t("settings.replace"), class: "btn-danger", onClick: function () { PMS.exportService.importJSON(obj, "replace"); PMS.modal.close(); } }
+        { label: t("settings.replace"), class: "btn-danger", onClick: function () {
+          PMS.modal.close();
+          confirmAdmin(function () {
+            PMS.exportService.importJSON(obj, "replace");
+            PMS.toast.show(t("settings.restore") + " ✓", "success");
+            render(document.getElementById("view-root"));
+          });
+        } }
       ]
     });
   }
@@ -511,10 +548,12 @@
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         { label: t("settings.restore"), class: "btn-primary", onClick: function () {
-          PMS.backup.restore(bk.id).then(function () {
-            PMS.modal.close();
-            PMS.toast.show(t("settings.restore") + " ✓", "success");
-            render(document.getElementById("view-root"));
+          PMS.modal.close();
+          confirmAdmin(function () {
+            PMS.backup.restore(bk.id).then(function () {
+              PMS.toast.show(t("settings.restore") + " ✓", "success");
+              render(document.getElementById("view-root"));
+            });
           });
         } }
       ]
@@ -723,7 +762,7 @@
 
       row.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function () { editAccount(u); } } }));
       row.appendChild(h("button.btn.btn-sm.btn-icon", { text: "🔑", attrs: { title: t("auth.resetPassword") }, on: { click: function () { if (u.cloudUid) cloudResetPassword(u); else resetPasswordAccount(u); } } }));
-      if (!u.cloudUid) row.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", attrs: { title: t("common.delete") }, on: { click: function () { deleteAccount(u); } } }));
+      row.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", attrs: { title: t("common.delete") }, on: { click: function () { if (u.cloudUid) deleteCloudAccount(u); else deleteAccount(u); } } }));
       b.appendChild(row);
     });
     if (list.some(function (x) { return x.cloudUid; })) {
@@ -795,10 +834,9 @@
           { key: "personId", label: t("auth.linkPerson"), type: "select", options: personOptions },
           { key: "email", label: t("auth.cloudEmail"), type: "text", required: true },
           { key: "name", label: t("auth.name"), type: "text" },
-          { key: "role", label: t("auth.roleLabel"), type: "select", options: accountOptions(), value: "member" },
           { key: "password", label: t("auth.password") + " (" + t("auth.pwHint") + ")", type: "password", required: true },
           { key: "confirm", label: t("auth.confirmPassword"), type: "password", required: true }
-        ], { role: "member" });
+        ], {});
       },
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
@@ -809,7 +847,7 @@
             if (v.password !== v.confirm) { PMS.toast.show(t("auth.mismatch"), "error"); return; }
             if (!PMS.cloudsync || !PMS.cloudsync.signUpWithPassword) return;
             PMS.cloudsync.signUpWithPassword({
-              email: v.email, password: v.password, name: v.name || "", role: v.role, personId: v.personId || null
+              email: v.email, password: v.password, name: v.name || "", personId: v.personId || null
             }).then(function (res) {
               PMS.auth.registerCloudUser({ username: res.email, cloudUid: res.uid, role: res.role, name: res.displayName || v.name || "", personId: v.personId || null });
               PMS.modal.close();
@@ -893,6 +931,38 @@
             PMS.modal.close();
             PMS.store.flush();
             render(document.getElementById("view-root"));
+          }
+        }
+      ]
+    });
+  }
+
+  // ZMS-R05: cloud account deletion goes through the trusted backend callable
+  // only — there is deliberately NO direct-browser fallback for this one.
+  function deleteCloudAccount(user) {
+    if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
+    PMS.modal.open({
+      title: t("auth.deleteAccount"),
+      content: h("p", { text: t("auth.cloudDeleteConfirm", { name: user.username }) }),
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: t("common.delete"), class: "btn-danger",
+          onClick: function () {
+            var p = (PMS.cloudsync && PMS.cloudsync.deleteCloudAccount)
+              ? PMS.cloudsync.deleteCloudAccount(user.cloudUid)
+              : Promise.reject({ userCode: "backendRequired" });
+            p.then(function () {
+              if (PMS.auth && PMS.auth.removeUser) PMS.auth.removeUser(user.id);
+              PMS.modal.close();
+              PMS.store.flush();
+              render(document.getElementById("view-root"));
+            }).catch(function (err) {
+              PMS.modal.close();
+              PMS.toast.show((err && err.userCode) === "backendRequired"
+                ? t("auth.backendRequired")
+                : PMS.authUI.errorMessage("generic"), "error");
+            });
           }
         }
       ]

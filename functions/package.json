@@ -1,0 +1,12 @@
+{
+  "name": "zms-functions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trusted-admin HTTPS callables for ZMS (role changes, cloud account removal).",
+  "engines": { "node": "18" },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^11.11.1",
+    "firebase-functions": "^4.9.0"
+  }
+}

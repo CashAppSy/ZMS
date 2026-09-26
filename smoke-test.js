@@ -99,7 +99,7 @@ function ensureAuth() {
   if (PMS.auth && PMS.auth.createUser) {
     if (!PMS.auth.currentUser()) {
       if (!PMS.auth.users().some(u => u.username === "smoke")) {
-        PMS.auth.createUser({ username: "smoke", password: "pw1234", role: "admin", name: "Smoke Admin" });
+        PMS.auth.createUser({ username: "smoke", password: "pw1234", name: "Smoke Admin" });
       }
       PMS.auth.login("smoke", "pw1234");
     }

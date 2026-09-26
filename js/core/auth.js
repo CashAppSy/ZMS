@@ -255,8 +255,11 @@
     opts = opts || {};
     if (!manageAllowed()) return { error: "forbidden" };
     var username = normalizeUsername(opts.username);
-    var role = ROLES.indexOf(opts.role) !== -1 ? opts.role : "member";
-    if (!configured()) role = "admin"; // first account is always the admin
+    // ZMS-R02: the caller can no longer request a role. Later accounts are
+    // ALWAYS "member"; only the very first account (bootstrap, when no account
+    // exists at all) becomes the admin. Changing a role is an admin-only
+    // operation via updateUser() (or the trusted backend functions).
+    var role = configured() ? "member" : "admin";
     if (!username) return { error: "username" };
     if (!opts.password || String(opts.password).length < 4) return { error: "password" };
     if (byUsername(username)) return { error: "duplicate" };
@@ -366,6 +369,21 @@
 
   function isAdmin() { return role() === "admin"; }
 
+  // Confirms the current admin session by re-entering the local password
+  // (used before destructive operations like restore/import-replace).
+  // Returns:
+  //   true  - the password is correct (or the session is not locally verifiable)
+  //   false - the password is wrong
+  // Sessions backed by a cloud account cannot be re-verified locally (their
+  // true password lives in Firebase Auth), so they pass identity through the
+  // already-established Firebase session.
+  function reauthenticateAdmin(password) {
+    var u = currentUser();
+    if (!u || u.role !== "admin") return false;
+    if (u.passwordHash && String(u.passwordHash).indexOf("cloud::") === 0) return true;
+    return !!u.salt && u.passwordHash === hashPassword(password || "", u.salt);
+  }
+
   // Deleting data (projects, tasks, people, departments, definitions, ...) is
   // reserved for the admin alone, no matter what per-view edit permission the
   // signed-in user has.
@@ -459,11 +477,15 @@
     role: role,
     can: can,
     isAdmin: isAdmin,
+    reauthenticateAdmin: reauthenticateAdmin,
     canDelete: canDelete,
     requireDelete: requireDelete,
     registerCloudUser: registerCloudUser,
     userByCloudUid: userByCloudUid,
-    adoptUser: adoptUser,
+    // INTERNAL: never expose this as a public, id-only session miter
+    // (ZMS-R01). Only the cloud layer calls it, and only after a real
+    // Firebase Auth result verified the same uid on this page.
+    _adoptBridge: adoptUser,
     _markCloudVerified: markCloudVerified,
     _setSessionTTLForTest: function (ms) { SESSION_TTL_MS = (ms === undefined || ms === null) ? SESSION_TTL_DEFAULT : ms; },
     _resetSessionForTest: function () { SESSION = null; try { window.localStorage.removeItem(SESSION_KEY); } catch (e) {} }
