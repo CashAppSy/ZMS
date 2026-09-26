@@ -9,6 +9,8 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
+  var activeSection = "people";
+
   function render(container) {
     container.innerHTML = "";
     var header = h("div.page-header");
@@ -16,8 +18,8 @@
     var canWrite = PMS.auth ? PMS.auth.can("people.write") : true;
     if (canWrite) {
       var actions = h("div.actions");
-      actions.appendChild(h("button.btn", { text: "+ " + t("people.addDepartment"), on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { render(container); }); } } }));
-      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("people.addPerson"), on: { click: function () { PMS.editors.openPersonEditor(null, function () { render(container); }); } } }));
+      actions.appendChild(h("button.btn", { text: "+ " + t("people.addDepartment"), on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { activeSection = "depts"; render(container); }); } } }));
+      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("people.addPerson"), on: { click: function () { PMS.editors.openPersonEditor(null, function () { activeSection = "people"; render(container); }); } } }));
       header.appendChild(actions);
     }
     container.appendChild(header);
@@ -25,8 +27,8 @@
     // Tabs
     var wrap = h("div");
     var tabs = h("div.tabs");
-    var tabPeople = h("button.tab.active", { text: t("people.people"), on: { click: function () { show("people"); } } });
-    var tabDepts = h("button.tab", { text: t("people.departments"), on: { click: function () { show("depts"); } } });
+    var tabPeople = h("button.tab" + (activeSection === "people" ? ".active" : ""), { text: t("people.people"), on: { click: function () { show("people"); } } });
+    var tabDepts = h("button.tab" + (activeSection === "depts" ? ".active" : ""), { text: t("people.departments"), on: { click: function () { show("depts"); } } });
     tabs.appendChild(tabPeople);
     tabs.appendChild(tabDepts);
     wrap.appendChild(tabs);
@@ -36,6 +38,7 @@
     container.appendChild(wrap);
 
     function show(section) {
+      activeSection = section;
       tabPeople.classList.toggle("active", section === "people");
       tabDepts.classList.toggle("active", section === "depts");
       PMS.dom.clear(content);
@@ -43,7 +46,7 @@
       else renderDepts(content);
     }
 
-    show("people");
+    show(activeSection);
   }
 
   function renderPeople(container) {

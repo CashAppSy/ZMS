@@ -1,6 +1,9 @@
 /* ==========================================================================
    PMS.authUI - login screen + first-run admin setup.
    Renders into #auth-root (a fixed overlay shown before the app shell).
+   When a cloud project is available (js/cloud-config.js filled) the screen is
+   cloud-first: one email + password shared on every device (Firebase Auth),
+   with a link back to the classic local accounts for offline use.
    ========================================================================== */
 (function (PMS) {
   "use strict";
@@ -8,6 +11,11 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
   var done = function () {};
+
+  function cloudAvailable() {
+    return !!(PMS.cloudsync && PMS.cloudsync.isConfigured &&
+      PMS.cloudsync.isConfigured() && PMS.cloudsync.signUpWithPassword);
+  }
 
   function field(label, input) {
     var wrap = h("div.field", { style: { marginBlockEnd: "12px", textAlign: "start" } });
@@ -40,11 +48,91 @@
     } else line.textContent = msg;
   }
 
-  /* ---------------- first-run: create the admin account ---------------- */
-  function renderSetup(root) {
+  function linkSwitcher(label, onClick) {
+    return h("button.btn.btn-ghost.btn-block", {
+      text: label,
+      style: { marginBlockStart: "10px" },
+      on: { click: function (e) { e.preventDefault(); onClick(); } }
+    });
+  }
+
+  function personSelect() {
     var people = PMS.repos ? PMS.repos.people.all() : [];
     var activePeople = people.filter(function (p) { return p.status !== "inactive"; });
+    var sel = h("select.select", { name: "personId" });
+    sel.appendChild(h("option", { value: "", text: t("auth.noPerson") }));
+    activePeople.forEach(function (p) {
+      sel.appendChild(h("option", { value: p.id, text: p.name + (p.jobTitle ? " — " + p.jobTitle : "") }));
+    });
+    return sel;
+  }
 
+  /* ------------- shared helpers for cloud auth flows ------------- */
+  function bridgeAndEnter(root, res) {
+    // keep the cloud identity + role, creating a slim local record when this
+    // device has never seen that uid before
+    var local = PMS.auth.userByCloudUid(res.uid);
+    if (local) {
+      if (local.role !== res.role && PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled()) {
+        PMS.auth.updateUser(local.id, { role: res.role });
+        local = PMS.auth.userById(local.id);
+      }
+    } else {
+      local = PMS.auth.registerCloudUser({
+        username: res.email, cloudUid: res.uid, role: res.role,
+        name: res.displayName || res.email
+      });
+    }
+    if (!local || local.active === false) {
+      PMS.toast.show(t("auth.inactive"), "error");
+      renderCloudLogin(root);
+      return;
+    }
+    PMS.auth.adoptUser(local.id);
+    root.innerHTML = "";
+    done();
+  }
+
+  /* ---------------- first-run: cloud admin account ---------------- */
+  function renderCloudSetup(root) {
+    var nameInput = h("input", { type: "text", name: "name", autocomplete: "name", placeholder: t("auth.namePlaceholder") });
+    var emailInput = h("input", { type: "email", name: "username", autocomplete: "email", placeholder: "name@domain.com", required: true });
+    var passInput = h("input", { type: "password", name: "password", autocomplete: "new-password", placeholder: "••••••••", required: true });
+    var pass2Input = h("input", { type: "password", name: "password2", autocomplete: "new-password", placeholder: "••••••••", required: true });
+
+    var form = h("form", { style: { marginTop: "4px" } });
+    form.appendChild(h("p.u-muted", { text: t("auth.cloudDesc"), style: { marginBlockEnd: "14px" } }));
+    form.appendChild(field(t("auth.cloudEmail"), emailInput));
+    form.appendChild(field(t("auth.password"), passInput));
+    form.appendChild(field(t("auth.confirmPassword"), pass2Input));
+    form.appendChild(field(t("auth.name"), nameInput));
+
+    var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.cloudCreate") });
+    form.appendChild(submit);
+    form.appendChild(linkSwitcher(t("auth.localSetupLink"), function () { renderLocalSetup(root); }));
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (passInput.value !== pass2Input.value) { setError(form, "mismatch"); return; }
+      submit.disabled = true;
+      submit.textContent = t("auth.cloudWaiting");
+      PMS.cloudsync.signUpWithPassword({
+        email: emailInput.value, password: passInput.value, name: nameInput.value
+      }).then(function (res) {
+        PMS.toast.show(t("auth.adminCreated"), "success");
+        bridgeAndEnter(root, res);
+      }).catch(function (err) {
+        submit.disabled = false;
+        submit.textContent = t("auth.cloudCreate");
+        setError(form, (err && err.userCode) || "generic");
+      });
+    });
+
+    root.appendChild(card(t("auth.cloudSetupTitle"), form));
+  }
+
+  /* ---------------- first-run: classic local admin ---------------- */
+  function renderLocalSetup(root) {
     var userInput = h("input", { type: "text", name: "username", autocomplete: "username", placeholder: t("auth.usernamePlaceholder"), required: true });
     var passInput = h("input", { type: "password", name: "password", autocomplete: "new-password", placeholder: "••••••••", required: true });
     var pass2Input = h("input", { type: "password", name: "password2", autocomplete: "new-password", placeholder: "••••••••", required: true });
@@ -52,13 +140,9 @@
     var form = h("form", { style: { marginTop: "4px" } });
     form.appendChild(h("p.u-muted", { text: t("auth.setupDesc"), style: { marginBlockEnd: "14px" } }));
 
-    if (activePeople.length) {
-      var sel = h("select.select", { name: "personId" });
-      sel.appendChild(h("option", { value: "", text: t("auth.noPerson") }));
-      activePeople.forEach(function (p) {
-        sel.appendChild(h("option", { value: p.id, text: p.name + (p.jobTitle ? " — " + p.jobTitle : "") }));
-      });
-      form.appendChild(field(t("auth.linkPerson"), sel));
+    var people = PMS.repos ? PMS.repos.people.all() : [];
+    if (people.some(function (p) { return p.status !== "inactive"; })) {
+      form.appendChild(field(t("auth.linkPerson"), personSelect()));
     }
 
     form.appendChild(field(t("auth.username"), userInput));
@@ -69,6 +153,7 @@
     var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.createAdmin") });
     btnRow.appendChild(submit);
     form.appendChild(btnRow);
+    if (cloudAvailable()) form.appendChild(linkSwitcher(t("auth.cloudSetupLink"), function () { renderCloudSetup(root); }));
 
     form.addEventListener("submit", function (e) {
       e.preventDefault();
@@ -92,8 +177,40 @@
     root.appendChild(card(t("auth.setupTitle"), form));
   }
 
-  /* ---------------- login ---------------- */
-  function renderLogin(root) {
+  /* ---------------- cloud login ---------------- */
+  function renderCloudLogin(root) {
+    var emailInput = h("input", { type: "email", name: "username", autocomplete: "email", placeholder: "name@domain.com", required: true });
+    var passInput = h("input", { type: "password", name: "password", autocomplete: "current-password", placeholder: "••••••••", required: true });
+
+    var form = h("form", { style: { marginTop: "4px" } });
+    form.appendChild(h("p.u-muted", { text: t("auth.cloudDesc"), style: { marginBlockEnd: "14px" } }));
+    form.appendChild(field(t("auth.cloudEmail"), emailInput));
+    form.appendChild(field(t("auth.password"), passInput));
+
+    var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.cloudSignIn") });
+    form.appendChild(submit);
+    form.appendChild(linkSwitcher(t("auth.localLoginLink"), function () { renderLocalLogin(root); }));
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      submit.disabled = true;
+      submit.textContent = t("auth.cloudWaiting");
+      PMS.cloudsync.signInWithPassword({ email: emailInput.value, password: passInput.value })
+        .then(function (res) {
+          bridgeAndEnter(root, res);
+        }).catch(function (err) {
+          submit.disabled = false;
+          submit.textContent = t("auth.cloudSignIn");
+          setError(form, (err && err.userCode) || "generic");
+        });
+    });
+
+    root.appendChild(card(t("auth.cloudTitle"), form));
+    emailInput.focus();
+  }
+
+  /* ---------------- classic local login ---------------- */
+  function renderLocalLogin(root) {
     var userInput = h("input", { type: "text", name: "username", autocomplete: "username", placeholder: t("auth.usernamePlaceholder"), required: true });
     var passInput = h("input", { type: "password", name: "password", autocomplete: "current-password", placeholder: "••••••••", required: true });
 
@@ -105,6 +222,7 @@
     var submit = h("button.btn.btn-primary.btn-block", { type: "submit", text: t("auth.login") });
     btnRow.appendChild(submit);
     form.appendChild(btnRow);
+    if (cloudAvailable()) form.appendChild(linkSwitcher(t("auth.cloudLoginLink"), function () { renderCloudLogin(root); }));
     form.appendChild(h("p.u-muted", { text: t("auth.localCaveat"), style: { marginBlockStart: "12px", fontSize: "0.78rem" } }));
 
     form.addEventListener("submit", function (e) {
@@ -129,6 +247,8 @@
       case "lastAdmin": return t("auth.lastAdmin");
       case "self": return t("auth.selfDelete");
       case "notfound": return t("auth.notFound");
+      case "weak": return t("auth.weak");
+      case "network": return t("auth.network");
       default: return t("errors.generic");
     }
   }
@@ -142,8 +262,13 @@
     if (PMS.app && PMS.app.applyTheme) PMS.app.applyTheme(PMS.store.data.settings.theme || "light");
     root.innerHTML = "";
     root.style.display = "flex";
-    if (!PMS.auth.configured()) renderSetup(root);
-    else renderLogin(root);
+    if (!PMS.auth.configured()) {
+      if (cloudAvailable()) renderCloudSetup(root);
+      else renderLocalSetup(root);
+    } else {
+      if (cloudAvailable()) renderCloudLogin(root);
+      else renderLocalLogin(root);
+    }
     document.title = PMS.i18n.t("auth.loginTitle") + " — " + PMS.i18n.t("app.name");
   }
 

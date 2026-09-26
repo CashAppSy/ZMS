@@ -678,6 +678,7 @@
       if (PMS.auth.currentUser() && PMS.auth.currentUser().id === u.id) {
         nameLine.appendChild(h("span.chip", { text: t("auth.you") }));
       }
+      if (u.cloudUid) nameLine.appendChild(h("span.chip", { text: t("auth.cloudBadge") }));
       if (u.active === false) nameLine.appendChild(h("span.chip", { text: t("auth.inactiveFlag") }));
       main.appendChild(nameLine);
       var metaLine = h("div.ar-meta");
@@ -705,10 +706,13 @@
       row.appendChild(toggle);
 
       row.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function () { editAccount(u); } } }));
-      row.appendChild(h("button.btn.btn-sm.btn-icon", { text: "🔑", attrs: { title: t("auth.resetPassword") }, on: { click: function () { resetPasswordAccount(u); } } }));
-      row.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", attrs: { title: t("common.delete") }, on: { click: function () { deleteAccount(u); } } }));
+      row.appendChild(h("button.btn.btn-sm.btn-icon", { text: "🔑", attrs: { title: t("auth.resetPassword") }, on: { click: function () { if (u.cloudUid) cloudResetPassword(u); else resetPasswordAccount(u); } } }));
+      if (!u.cloudUid) row.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", attrs: { title: t("common.delete") }, on: { click: function () { deleteAccount(u); } } }));
       b.appendChild(row);
     });
+    if (list.some(function (x) { return x.cloudUid; })) {
+      b.appendChild(h("p.u-muted", { text: t("auth.cloudAccountsNote"), style: { marginBlockStart: "10px", fontSize: "0.78rem" } }));
+    }
     card.appendChild(b);
     body.appendChild(card);
   }
@@ -751,6 +755,10 @@
             if (isEdit) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
             else res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
             if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
+            // keep the shared cloud role in sync so other devices see it
+            if (isEdit && user.cloudUid && PMS.cloudsync && PMS.cloudsync.setCloudRole) {
+              PMS.cloudsync.setCloudRole(user.cloudUid, v.role);
+            }
             PMS.modal.close();
             PMS.store.flush();
             render(document.getElementById("view-root"));
@@ -782,6 +790,30 @@
             PMS.modal.close();
             PMS.toast.show(t("auth.passwordReset"), "success");
             PMS.store.flush();
+          }
+        }
+      ]
+    });
+  }
+
+  function cloudResetPassword(user) {
+    PMS.modal.open({
+      title: t("auth.resetPassword") + " — " + (user.username || ""),
+      size: "sm",
+      content: h("p", { text: t("auth.cloudResetConfirm", { email: user.username }) }),
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: t("auth.cloudReset"), class: "btn-primary",
+          onClick: function () {
+            if (!PMS.cloudsync || !PMS.cloudsync.resetPassword) return;
+            PMS.cloudsync.resetPassword(user.username).then(function () {
+              PMS.modal.close();
+              PMS.toast.show(t("auth.cloudResetSent"), "success");
+            }).catch(function () {
+              PMS.modal.close();
+              PMS.toast.show(t("auth.network"), "error");
+            });
           }
         }
       ]
