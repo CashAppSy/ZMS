@@ -313,6 +313,53 @@
   function isAdmin() { return role() === "admin"; }
   function isLoggedIn() { return !!currentUser(); }
 
+  /* ---------------- cloud-account bridge ---------------- */
+  // Firebase Auth sign-ins are shared across devices; here we keep a slim
+  // local record (identity + role only) so existing role gates and person
+  // linking keep working. The authoritative password lives in Firebase only.
+  // These helpers are fully local (no network), safe for browser + tests.
+  function registerCloudUser(opts) {
+    var now = new Date().toISOString();
+    var rec = {
+      id: opts.id || PMS.ids.uuid(),
+      username: String(opts.username || "").trim().toLowerCase(),
+      name: opts.name || String(opts.username || "").trim(),
+      role: ROLES.indexOf(opts.role) !== -1 ? opts.role : "member",
+      cloudUid: opts.cloudUid || null,
+      passwordHash: "cloud::" + (opts.cloudUid || rec.id),
+      salt: "",
+      linkedToCloud: !!opts.cloudUid,
+      active: opts.active !== false,
+      createdAt: now
+    };
+    persist(function (us) { us.push(rec); }, "register-cloud");
+    return rec;
+  }
+
+  function userByCloudUid(uid) {
+    if (!uid) return null;
+    return users().find(function (u) { return u.cloudUid === uid; }) || null;
+  }
+
+  function adoptUser(id) {
+    var u = userById(id);
+    if (!u || u.active === false) return null;
+    SESSION = {
+      userId: u.id,
+      username: u.username,
+      role: u.role,
+      personId: u.personId || null,
+      at: new Date().toISOString()
+    };
+    try { window.localStorage.setItem(SESSION_KEY, JSON.stringify(SESSION)); } catch (e) {}
+    persist(function (us) {
+      var x = us.find(function (y) { return y.id === u.id; });
+      if (x) x.lastLoginAt = new Date().toISOString();
+    }, "login");
+    PMS.bus.emit("auth:login", currentUser());
+    return currentUser();
+  }
+
   PMS.auth = {
     roles: ROLES,
     rolePermissions: ROLE_PERMS,
@@ -334,6 +381,9 @@
     role: role,
     can: can,
     isAdmin: isAdmin,
+    registerCloudUser: registerCloudUser,
+    userByCloudUid: userByCloudUid,
+    adoptUser: adoptUser,
     _resetSessionForTest: function () { SESSION = null; try { window.localStorage.removeItem(SESSION_KEY); } catch (e) {} }
   };
 })(window.PMS);
