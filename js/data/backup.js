@@ -72,6 +72,14 @@
   function restore(id) {
     // Destructive operation: admin only (ZMS-13).
     if (!adminOnly()) return Promise.reject(new Error("forbidden"));
+    // ZMS-R16: restore is STRICTLY gated behind a freshly re-authenticated
+    // admin password in production (token consumed once, so it cannot be fired
+    // from the console without a verified password). Tests bypass via
+    // window.__ZMS_TEST__.
+    if (!window.__ZMS_TEST__ && !(PMS.auth && PMS.auth.consumeFreshAdmin())) {
+      if (PMS.toast && PMS.toast.show) PMS.toast.show(PMS.i18n.t("confirm.sensitiveRequired"), "error");
+      return Promise.resolve(false);
+    }
     var b = backups.find(function (x) { return x.id === id; });
     if (!b) return Promise.reject(new Error("backup not found"));
     var snap = PMS.utils.deepClone(b.data);

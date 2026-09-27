@@ -40,7 +40,7 @@
 
     if (!tasks.length) {
       var emptyActions = [h("div", { text: t("tasks.noTasks") })];
-      if (PMS.auth ? PMS.auth.can("data.manage") : true) emptyActions.push(h("button.btn.btn-primary", { text: t("settings.seedData"), on: { click: function () { PMS.editors.loadSampleData(); } } }));
+      if (PMS.auth ? PMS.auth.can("data.manage") : true) emptyActions.push(h("button.btn.btn-primary", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
       container.appendChild(h("div.empty-state", emptyActions));
       return;
     }

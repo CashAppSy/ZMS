@@ -44,7 +44,9 @@
       deleteField: "Delete this custom field? Existing values will be lost.",
       restoreBackup: "Restore backup from {date}? Current data will be replaced.",
       continue: "Continue",
-      adminReauth: "Enter your password to confirm this action:"
+      adminReauth: "Enter your password to confirm this action:",
+      sensitiveRequired: "This action requires the admin password.",
+      sensitiveForbidden: "Only the admin can perform this action."
     },
     dashboard: {
       title: "Dashboard",

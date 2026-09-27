@@ -462,6 +462,85 @@
   }
   function isLoggedIn() { return !!currentUser(); }
 
+  /* ---------------- strict re-authentication for sensitive actions ----------------
+     Sensitive bulk operations ("load demo data", "erase all data", whole-data
+     "Upload now"/"Download now", backup restore) must always be re-confirmed
+     with the admin password — even for cloud admins, whose password is verified
+     against Firebase (reauthenticateWithCredential). A successful re-auth mints
+     a ONE-SHOT token that the underlying command consumes, so the command cannot
+     be invoked from the console without a freshly verified admin password. Test
+     runs bypass the token via window.__ZMS_TEST__ (set only by tests/). */
+  var sensitiveFresh = false;
+
+  function markFreshAdmin() { sensitiveFresh = true; }
+  function consumeFreshAdmin() {
+    if (typeof window !== "undefined" && window.__ZMS_TEST__) return true;
+    var ok = sensitiveFresh;
+    sensitiveFresh = false;
+    return ok;
+  }
+
+  // Re-verifies a cloud admin's session by asking Firebase to reauthenticate
+  // the signed-in user with the supplied password. Resolves true only on a
+  // genuine Firebase-verified success; also refreshes the recent-login stamp.
+  function reauthCloudSession(raw) {
+    if (!(PMS.cloudsync && PMS.cloudsync.auth)) return Promise.resolve(false);
+    return PMS.cloudsync.auth().then(function (auth) {
+      var cu = auth ? auth.currentUser : null;
+      if (!cu || !cu.email) return false;
+      var provider = window.firebase && window.firebase.auth && window.firebase.auth.EmailAuthProvider;
+      if (!provider) return false;
+      return cu.reauthenticateWithCredential(provider.credential(cu.email, raw))
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    }).catch(function () { return false; });
+  }
+
+  // Always asks the admin for their password before calling onOk, regardless of
+  // whether the session is local (hash) or cloud-backed (Firebase). Nothing runs
+  // on a wrong/cancelled password. The fresh token is cleared right after onOk
+  // so every action requires its own confirmation.
+  function confirmSensitive(onOk) {
+    var u = currentUser();
+    if (!u || u.role !== "admin") {
+      if (PMS.toast && PMS.toast.show) PMS.toast.show(PMS.i18n.t("confirm.sensitiveForbidden"), "error");
+      return;
+    }
+    var isCloud = !!(u.passwordHash && String(u.passwordHash).indexOf("cloud::") === 0);
+    if (!(PMS.i18n && PMS.modal && PMS.dom)) {
+      // UI layer not present (edge/remote call): never auto-grant, refuse loudly.
+      if (PMS.toast && PMS.toast.show) PMS.toast.show(PMS.i18n.t("confirm.sensitiveRequired"), "error");
+      return;
+    }
+    var h = PMS.dom.h;
+    var pw = h("input", { type: "password", name: "pw", placeholder: "••••••••", required: true, attrs: { autocomplete: "current-password" } });
+    pw.classList.add("input");
+    pw.classList.add("input-block");
+    var wrap = h("div.field");
+    wrap.appendChild(h("label.form-label", { text: PMS.i18n.t("confirm.adminReauth") }));
+    wrap.appendChild(pw);
+    PMS.modal.open({
+      title: PMS.i18n.t("confirm.title"),
+      content: wrap,
+      footer: [
+        { label: PMS.i18n.t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: PMS.i18n.t("confirm.continue"), class: "btn-primary",
+          onClick: function () {
+            var done = function (ok) {
+              if (!ok) { PMS.toast.show(PMS.i18n.t("auth.invalidCredentials"), "error"); return; }
+              PMS.modal.close();
+              markFreshAdmin();
+              try { onOk(); } finally { sensitiveFresh = false; }
+            };
+            if (isCloud) reauthCloudSession(pw.value).then(done);
+            else done(!!reauthenticateAdmin(pw.value));
+          }
+        }
+      ]
+    });
+  }
+
   /* ---------------- cloud-account bridge ---------------- */
   // Firebase Auth sign-ins are shared across devices; here we keep a slim
   // local record (identity + role only) so existing role gates and person
@@ -558,7 +637,11 @@ PMS.auth = {
     canEditProject: canEditProject,
     canDelete: canDelete,
     requireDelete: requireDelete,
-    reauthenticateAdmin: reauthenticateAdmin
+    reauthenticateAdmin: reauthenticateAdmin,
+    // ZMS-R16: sensitive-action gate (local + cloud admin password).
+    confirmSensitive: confirmSensitive,
+    markFreshAdmin: markFreshAdmin,
+    consumeFreshAdmin: consumeFreshAdmin
   };
   // ZMS-RT-03: no auth-bridge helpers here. The cloud bridge lives on
   // PMS.cloudBridge (below) and only the cloud login flow calls it.

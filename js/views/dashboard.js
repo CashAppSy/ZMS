@@ -76,7 +76,7 @@
         introActions.unshift(h("button.btn", { text: "+ " + t("dashboard.newProject"), on: { click: function () { PMS.editors.openProjectEditor(null, {}); } } }));
       }
       if (PMS.auth ? PMS.auth.can("data.manage") : true) {
-        introActions.push(h("button.btn.btn-ghost", { text: t("settings.seedData"), on: { click: function () { PMS.editors.loadSampleData(); } } }));
+        introActions.push(h("button.btn.btn-ghost", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
       }
       intro.appendChild(h("div.card-body", [
         h("p.u-bold", { text: t("dashboard.title") }),

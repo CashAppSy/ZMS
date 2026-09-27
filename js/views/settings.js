@@ -353,12 +353,14 @@
     var actions = h("div.u-flex", { style: { gap: "8px", marginTop: "12px" } });
     actions.appendChild(h("button.btn.btn-sm", { text: t("cloud.configure"), on: { click: function () { configModal(); } } }));
     actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pushNow"), on: { click: function () {
-      PMS.cloudsync.push().then(function (ok) {
-        if (ok) PMS.toast.show(t("cloud.pushDone"), "success");
-        else PMS.toast.show(t("cloud.pushFail"), "error");
+      PMS.auth.confirmSensitive(function () {
+        PMS.cloudsync.push().then(function (ok) {
+          if (ok) PMS.toast.show(t("cloud.pushDone"), "success");
+          else PMS.toast.show(t("cloud.pushFail"), "error");
+        });
       });
     } } }));
-    actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pullNow"), on: { click: function () { pullModal(); } } }));
+    actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pullNow"), on: { click: function () { PMS.auth.confirmSensitive(function () { pullModal(); }); } } }));
     b.appendChild(actions);
 
     b.appendChild(h("div.section-title", [txt(t("cloud.helpTitle"))]));
@@ -561,7 +563,9 @@
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         { label: t("settings.restore"), class: "btn-primary", onClick: function () {
           PMS.modal.close();
-          confirmAdmin(function () {
+          // ZMS-R16: restore is STRICTLY admin-password-gated (local hash or
+          // Firebase re-auth) — cloud admins no longer pass through sessions.
+          PMS.auth.confirmSensitive(function () {
             PMS.backup.restore(bk.id).then(function () {
               PMS.toast.show(t("settings.restore") + " ✓", "success");
               render(document.getElementById("view-root"));
@@ -595,15 +599,15 @@
     row.appendChild(right);
     b.appendChild(row);
 
-    // seed & clear
+    // seed & clear (both gated behind a fresh admin password, ZMS-R16)
     var seedRow = h("div.setting-row");
     seedRow.appendChild(h("div", {}, [h("div.u-bold", { text: t("settings.seedData") }), h("div.u-muted", { text: t("settings.seedData") })]));
-    seedRow.appendChild(h("button.btn.btn-sm", { text: t("settings.seedData"), on: { click: loadSeed } }));
+    seedRow.appendChild(h("button.btn.btn-sm", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
     b.appendChild(seedRow);
 
     var clearRow = h("div.setting-row");
     clearRow.appendChild(h("div", {}, [h("div.u-bold", { text: t("settings.clearAll") }), h("div.u-muted", { text: t("settings.clearAll") })]));
-    clearRow.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("settings.clearAll"), on: { click: clearAllData } }));
+    clearRow.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("settings.clearAll"), on: { click: function () { PMS.auth.confirmSensitive(clearAllData); } } }));
     b.appendChild(clearRow);
 
     card.appendChild(b);
@@ -697,12 +701,13 @@
     render(document.getElementById("view-root"));
   }
 
-  function loadSeed() {
-    PMS.editors.loadSampleData();
-  }
-
   function clearAllData() {
     if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
+    // ZMS-R16: requiring the freshly verified admin password up front.
+    if (!(PMS.auth && PMS.auth.consumeFreshAdmin())) {
+      if (PMS.toast && PMS.toast.show) PMS.toast.show(t("confirm.sensitiveRequired"), "error");
+      return;
+    }
     PMS.modal.open({
       title: t("confirm.title"),
       content: h("p", { text: t("settings.clearAll") + "?" }),

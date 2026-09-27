@@ -23,7 +23,7 @@
     if (!PMS.store.data.tasks.length) {
       var hint = h("div.card", { style: { marginBlockEnd: "16px" } });
       var hintBody = [h("p.u-muted", { text: t("reports.empty") })];
-      if (PMS.auth ? PMS.auth.can("data.manage") : true) hintBody.push(h("button.btn.btn-sm", { text: t("settings.seedData"), on: { click: function () { PMS.editors.loadSampleData(); } } }));
+      if (PMS.auth ? PMS.auth.can("data.manage") : true) hintBody.push(h("button.btn.btn-sm", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
       hint.appendChild(h("div.card-body", hintBody));
       container.appendChild(hint);
     }

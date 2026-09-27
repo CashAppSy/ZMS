@@ -417,6 +417,25 @@ const root = () => document.getElementById("view-root");
   ok("backup remove", PMS.backup.list().every(x => x.id !== b.id));
   PMS.backup.load();
 
+  section("Sensitive actions: admin-password gates (ZMS-R16)");
+  const __testFlag = window.__ZMS_TEST__;
+  window.__ZMS_TEST__ = false;
+  ok("sensitive token is one-shot", (PMS.auth.markFreshAdmin(), PMS.auth.consumeFreshAdmin() === true && PMS.auth.consumeFreshAdmin() === false));
+  const seedBefore = JSON.stringify(PMS.store.data);
+  const refusedSeed = await PMS.editors.loadSampleData();
+  ok("loadSampleData refuses without fresh token in production", refusedSeed === null && JSON.stringify(PMS.store.data) === seedBefore);
+  PMS.auth.markFreshAdmin();
+  const seededData = await PMS.editors.loadSampleData();
+  ok("loadSampleData runs after a fresh admin password", !!seededData && Array.isArray(seededData.tasks) && seededData.tasks.length >= 15);
+  const bkBefore = JSON.stringify(PMS.store.data);
+  const refusedBackup = await PMS.backup.restore("missing-id");
+  ok("backup.restore refuses without fresh token in production", refusedBackup === false && JSON.stringify(PMS.store.data) === bkBefore);
+  const snapR16 = PMS.backup.create();
+  PMS.auth.markFreshAdmin();
+  await PMS.backup.restore(snapR16.id);
+  ok("backup.restore runs after a fresh admin password", PMS.store.data.tasks.length >= 15);
+  window.__ZMS_TEST__ = __testFlag;
+
   section("Editors open/close for every record");
   PMS.store.setData(PMS.seed.build());
   PMS.store.data.settings.autoBackupEnabled = false;

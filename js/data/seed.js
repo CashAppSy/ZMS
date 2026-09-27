@@ -165,8 +165,15 @@
   }
 
   function load() {
+    // ZMS-R16: demo data is a sensitive bulk action — requires a freshly
+    // re-authenticated admin session (password) in production. Tests bypass
+    // via window.__ZMS_TEST__. Keep existing accounts so seeding never locks
+    // anyone out.
+    if (!window.__ZMS_TEST__ && !(PMS.auth && PMS.auth.consumeFreshAdmin())) {
+      if (PMS.toast && PMS.toast.show) PMS.toast.show(PMS.i18n.t("confirm.sensitiveRequired"), "error");
+      return Promise.resolve(null);
+    }
     var fresh = build();
-    // Keep existing accounts so seeding never locks anyone out.
     if (PMS.store.data && Array.isArray(PMS.store.data.users)) fresh.users = U.deepClone(PMS.store.data.users);
     PMS.store.setData(fresh);
     PMS.toast.show(PMS.i18n.t("settings.seedLoaded"), "success");
