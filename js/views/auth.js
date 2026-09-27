@@ -76,6 +76,9 @@
     var local = PMS.cloudBridge.userByCloudUid(res.uid);
     if (local) {
       var patch = {};
+      // adopt an email changed in the Firebase console (the only way a cloud
+      // account's sign-in email can change on the free plan) on the next sign-in
+      if (String(local.username || "").trim().toLowerCase() !== String(res.email || "").trim().toLowerCase()) patch.username = String(res.email).trim().toLowerCase();
       if (local.role !== res.role && PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled()) patch.role = res.role;
       if ((local.personId || null) !== (res.personId || null)) patch.personId = res.personId || null;
       if (Object.keys(patch).length) {
@@ -92,6 +95,17 @@
       PMS.toast.show(t("auth.inactive"), "error");
       renderCloudLogin(root);
       return;
+    }
+    // heal the linked person's profile email into lockstep with the real
+    // Firebase sign-in email (covers emails changed in the Firebase console,
+    // which the app cannot see through its own Cloud Functions).
+    var healed = String(res.email || "").trim().toLowerCase();
+    if (healed && (res.personId || (local && local.personId)) && PMS.repos && PMS.repos.people) {
+      var pid = res.personId || (local && local.personId);
+      var lp = PMS.repos.people.get(pid);
+      if (lp && String(lp.email || "").trim().toLowerCase() !== healed) {
+        PMS.repos.people.update(lp.id, { email: healed });
+      }
     }
     PMS.cloudBridge.adopt({ id: local.id, cloudUid: local.cloudUid });
     root.innerHTML = "";
