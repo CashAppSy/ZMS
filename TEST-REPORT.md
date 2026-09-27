@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T09:31:26.240Z
+**Date:** 2026-09-27T09:43:51.297Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 114 |
+| **Passed** | 121 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 13 ms |
-| Mean route render | ~21 ms |
-| Slowest route | ~56 ms |
+| App boot (store init from live bundle) | 10 ms |
+| Mean route render | ~26 ms |
+| Slowest route | ~73 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -39,8 +39,8 @@
 |---|---|---|
 | 1 | live index.html reachable (200) | PASS |
 | 2 | live index.html == repo index.html (line-endings normalized) | PASS |
-| 3 | all 52 live js assets fetched | PASS |
-| 4 | live js == committed js (byte-identical, 52/52) | PASS |
+| 3 | all 54 live js assets fetched | PASS |
+| 4 | live js == committed js (byte-identical, 54/54) | PASS |
 | 5 | all 8 live css assets fetched (200) | PASS |
 | 6 | live css set matches repo css set | PASS |
 
@@ -48,11 +48,18 @@
 
 | # | Check | Status |
 |---|---|---|
-| 1 | all 52 scripts evaluated without error | PASS |
+| 1 | all 54 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
 | 4 | zero window errors during boot | PASS |
-| 5 | bootstrap admin login works (live auth logic) | PASS |
+| 5 | PMS.network monitor present | PASS |
+| 6 | PMS.loadingBox present | PASS |
+| 7 | loading box hidden by default | PASS |
+| 8 | slow/offline/syncing i18n keys on live bundle | PASS |
+| 9 | offline without active cloud keeps box hidden | PASS |
+| 10 | offline + active cloud shows offline box | PASS |
+| 11 | back online hides offline box | PASS |
+| 12 | bootstrap admin login works (live auth logic) | PASS |
 
 ### C. Dummy data creation (admin)
 
@@ -122,7 +129,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/0ea9f59a-2a7b-47d6-aa54-b515979cb056 renders clean | PASS |
+| 3 | route /projects/d7e34bb6-f234-4312-bf59-b6bf1379b1b8 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
