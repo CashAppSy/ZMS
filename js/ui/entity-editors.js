@@ -311,8 +311,48 @@
     if (PMS.auth.byUsername(email)) { PMS.toast.show(t("auth.duplicateEmail"), "error"); return; }
     var pw = Math.random().toString(36).slice(2, 10) + "Z1!";
     var res = PMS.auth.createUser({ username: email, password: pw, name: person.name, personId: person.id, active: person.status !== "inactive" });
-    if (res && res.error) PMS.toast.show(PMS.authUI ? PMS.authUI.errorMessage(res.error) : t("auth.forbidden"), "error");
-    else PMS.toast.show(t("people.accountLocalNote"), "error");
+    if (res && res.error) { PMS.toast.show(PMS.authUI ? PMS.authUI.errorMessage(res.error) : t("auth.forbidden"), "error"); return; }
+    // Best effort: send the password-reset link straight from the browser SDK when
+    // Firebase Auth is configured — no cloud function and no paid plan required.
+    // (Succeeds when a matching cloud account already exists.)
+    if (PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled() && PMS.cloudsync.resetPassword) {
+      PMS.cloudsync.resetPassword(email).then(function () {
+        PMS.toast.show(t("people.accountInviteSent", { email: email }), "success");
+      }, function () {
+        showLocalPassword(email, pw);
+      });
+      return;
+    }
+    showLocalPassword(email, pw);
+  }
+
+  function showLocalPassword(email, pw) {
+    var code = h("code.local-pw-block", {
+      text: pw,
+      style: { display: "block", fontSize: "1.4em", padding: "8px", borderRadius: "8px", marginTop: "8px", textAlign: "center", background: "var(--bg-subtle)", border: "1px dashed var(--border)", userSelect: "all" }
+    });
+    PMS.modal.open({
+      title: t("people.accountTempTitle"),
+      content: h("div", [
+        h("p", { text: t("people.accountTempIntro", { email: email }) }),
+        h("p.u-bold", { text: t("people.accountTempPass") }),
+        code
+      ]),
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        { label: t("people.accountTempCopy"), class: "btn-primary", onClick: function () {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(pw).then(function () {
+              PMS.toast.show(t("people.accountTempCopied"), "success"); PMS.modal.close();
+            }, function () { PMS.modal.close(); });
+          } else {
+            var range = document.createRange(); range.selectNodeContents(code);
+            var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+            PMS.modal.close();
+          }
+        } }
+      ]
+    });
   }
 
   function openProjectEditor(project, opts) {

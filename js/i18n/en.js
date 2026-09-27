@@ -126,7 +126,12 @@
       accountNeedsEmail: "Add an email to this person so a login account can be created.",
       accountInviteSent: "Login account created — a password-reset link was emailed to {email}.",
       accountCreatedNoMail: "Login account created, but the reset email could not be sent. Try again later.",
-      accountLocalNote: "Login account created (local only — no cloud configured/deployed). Set the password from Settings → Accounts.",
+      accountLocalNote: "Login account created (local only — no cloud configured/deployed).",
+      accountTempTitle: "Local login account created",
+      accountTempIntro: "{email} can now sign in on this device with the temporary password below — a local account that needs no cloud and no paid plan. They can change it anytime from Settings → Accounts.",
+      accountTempPass: "Temporary password",
+      accountTempCopy: "Copy password",
+      accountTempCopied: "Password copied",
       emailSyncFail: "Email changed locally, but Firebase rejected it — deploy the Cloud Functions (functions/).",
       onlyAdminCreatesAccount: "Only the admin can create login accounts.",
       resetPasswordMail: "Reset password"

@@ -189,7 +189,9 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("person merge i18n keys on live bundle",
     PMS.i18n.t("people.hasAccount") !== "people.hasAccount" &&
     PMS.i18n.t("people.createAccount") !== "people.createAccount" &&
-    PMS.i18n.t("people.onlyAdminCreatesAccount") !== "people.onlyAdminCreatesAccount");
+    PMS.i18n.t("people.onlyAdminCreatesAccount") !== "people.onlyAdminCreatesAccount" &&
+    PMS.i18n.t("people.accountTempCopy") !== "people.accountTempCopy" &&
+    PMS.i18n.t("people.accountTempCopied") !== "people.accountTempCopied");
   errors.length = 0; // hook-driven state flips must not leak window errors
 
   // bootstrap first admin (auth as deployed in the real browser)
