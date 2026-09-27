@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T14:20:03.802Z
+**Date:** 2026-09-27T14:32:04.672Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -20,7 +20,7 @@
 |---|---|
 | App boot (store init from live bundle) | 9 ms |
 | Mean route render | ~17 ms |
-| Slowest route | ~44 ms |
+| Slowest route | ~45 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -136,7 +136,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/534caefc-b42f-4ed7-817a-329b971c7d6c renders clean | PASS |
+| 3 | route /projects/34649b1b-beea-4ead-8048-4d44b57c3d4c renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
