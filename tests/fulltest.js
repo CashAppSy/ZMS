@@ -228,6 +228,16 @@ const root = () => document.getElementById("view-root");
   errors.length = 0; route("/tasks");
   const tblRows = root().querySelectorAll(".vt-row").length;
   ok("tasks table shows all tasks (" + tblRows + " of " + tasks.length + ")", tblRows === tasks.length);
+  const fbar = root().querySelector(".filter-bar");
+  const farea = root().querySelector(".filter-area");
+  ok("tasks filter bar is collapsible (hidden by default)", !!farea && !!fbar && fbar.classList.contains("collapsed"));
+  if (farea) {
+    const ftog = farea.querySelector(".filter-toggle");
+    if (ftog) {
+      ftog.click();
+      ok("tasks filter bar expands on toggle", !farea.querySelector(".filter-bar").classList.contains("collapsed"));
+    } else ok("tasks filter bar has a toggle button", false);
+  }
   const sel = root().querySelector(".vt-row select.vt-status");
   if (sel) {
     const beforeMap = new Map(PMS.store.data.tasks.map(t => [t.id, t.status]));

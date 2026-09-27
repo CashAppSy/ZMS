@@ -27,7 +27,7 @@
       { key: "dueDate", label: t("tasks.dueDate"), render: cellDue, visible: true, sortable: true },
       { key: "estimatedHours", label: t("tasks.estimated"), render: cellEst, visible: true, sortable: true },
       { key: "actualHours", label: t("tasks.actual"), render: cellActual, visible: false, sortable: true },
-      { key: "progress", label: t("tasks.progress"), render: cellProgress, visible: true, sortable: true }
+      { key: "progress", label: t("tasks.progress"), width: "120px", render: cellProgress, visible: true, sortable: true }
     ];
   }
 
@@ -62,7 +62,26 @@
     header.appendChild(actions);
     container.appendChild(header);
 
-    // filter bar
+    // collapsible filter bar (hidden by default; auto-expands while filters are active)
+    function activeFilterCount(q) {
+      var n = 0;
+      q = q || {};
+      ["search", "projectId", "statusKey", "priorityKey", "assigneeId"].forEach(function (k) { if (q[k]) n++; });
+      if (q.lateOnly) n++;
+      return n;
+    }
+    var actCount = activeFilterCount(state.query);
+    var filterArea = h("div.filter-area");
+    var filterOpen = actCount > 0; // default: collapsed unless a filter is already applied
+    var toggleBtn = h("button.btn.btn-sm.filter-toggle" + (actCount ? ".active" : ""), {
+      text: t("tasks.filters") + (actCount ? " (" + actCount + ")" : "") + (filterOpen ? " ▴" : " ▾"),
+      on: { click: function () {
+        filterOpen = !filterOpen;
+        filterBar.classList.toggle("collapsed", !filterOpen);
+        toggleBtn.textContent = t("tasks.filters") + (actCount ? " (" + actCount + ")" : "") + (filterOpen ? " ▴" : " ▾");
+      } }
+    });
+    filterArea.appendChild(toggleBtn);
     var filterBar = PMS.taskFilter.build({
       query: state.query,
       onApply: function (f) {
@@ -70,7 +89,9 @@
         render(container);
       }
     });
-    container.appendChild(filterBar);
+    if (!filterOpen) filterBar.classList.add("collapsed");
+    filterArea.appendChild(filterBar);
+    container.appendChild(filterArea);
 
     // toolbar: grouping + columns + export
     var toolbar = h("div.toolbar");
@@ -259,10 +280,17 @@
 
   function cellActual(row) { return h("span", { text: PMS.utils.hours(row.actualHours, PMS.i18n) }); }
 
-  function cellProgress(row) { return PMS.vformat.progressChip(derivedProgress(row)); }
-
-  function derivedProgress(row) {
-    return PMS.progress.taskProgress(PMS.store.data, row.id, PMS.store.data.settings.weightByTime);
+  function cellProgress(row) {
+    var d = PMS.store.data;
+    var p = PMS.progress.taskProgress(d, row.id, d.settings.weightByTime);
+    var st = (d.taskStatuses || []).find(function (s) { return s.key === row.status; });
+    var color = st && st.color ? st.color : "var(--primary)";
+    var wrap = h("span.u-flex", { style: { gap: "6px" } });
+    var track = h("div.progress-track", { style: { width: "64px", height: "6px" } });
+    track.appendChild(h("div.progress-fill", { style: { width: Math.round(p) + "%", background: color } }));
+    wrap.appendChild(track);
+    wrap.appendChild(h("span.progress-label", { text: PMS.utils.pct(p) }));
+    return wrap;
   }
 
   function groupKey(row) {

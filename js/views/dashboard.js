@@ -47,9 +47,14 @@
     var byStatus = {}, byPriority = {};
     tasks.forEach(function (tsk) { byStatus[tsk.status] = (byStatus[tsk.status] || 0) + 1; byPriority[tsk.priority] = (byPriority[tsk.priority] || 0) + 1; });
 
-    var statusColors = {}, prioColors = {};
+    // projects by status (for the byProjectStatus donut)
+    var byProjectStatus = {};
+    projects.forEach(function (p) { byProjectStatus[p.status] = (byProjectStatus[p.status] || 0) + 1; });
+
+    var statusColors = {}, prioColors = {}, pStatusColors = {};
     (data.taskStatuses || []).forEach(function (s) { statusColors[s.key] = s.color; });
     (data.priorities || []).forEach(function (p) { prioColors[p.key] = p.color; });
+    (data.projectStatuses || []).forEach(function (s) { pStatusColors[s.key] = s.color; });
 
     // KPIs
     var kpis = h("div.kpi-grid");
@@ -82,16 +87,21 @@
 
     root.appendChild(kpis);
 
-    // Charts row
+    // Hero charts row: overall ring + task distribution donuts
     var charts = h("div.dash-charts");
     charts.appendChild(overallCard(overall, roots.length));
     charts.appendChild(chartCard(t("dashboard.byStatus"), donutChart(byStatus, statusColors, totalTasks)));
     charts.appendChild(chartCard(t("dashboard.byPriority"), donutChart(byPriority, prioColors, totalTasks)));
-    charts.appendChild(progressCard(t("dashboard.byProject"), topProjects(projects)));
     root.appendChild(charts);
 
+    // Second charts row: projects by status + progress by project
+    var charts2 = h("div.dash-charts.dash-charts-2col");
+    charts2.appendChild(chartCard(t("dashboard.byProjectStatus"), donutChart(byProjectStatus, pStatusColors, projects.length)));
+    charts2.appendChild(progressCard(t("dashboard.byProject"), topProjects(projects)));
+    root.appendChild(charts2);
+
     // Lists row
-    var lists = h("div.grid-2");
+    var lists = h("div.grid-2.dash-lists");
     lists.appendChild(listCard(t("dashboard.lateTasks"), overdueRow(overdue.slice(0, 8)), overdue.length));
     lists.appendChild(listCard(t("dashboard.upcomingTasks"), upcomingRow(dueThisWeek.slice(0, 8)), dueThisWeek.length));
     root.appendChild(lists);
@@ -227,9 +237,11 @@
   }
 
   function prettyKey(k) {
-    return PMS.i18n.t("statuses.task." + k) !== ("statuses.task." + k)
-      ? PMS.i18n.t("statuses.task." + k)
-      : (PMS.i18n.t("priorities." + k) !== ("priorities." + k) ? PMS.i18n.t("priorities." + k) : k);
+    var tk = "statuses.task." + k, pk = "statuses.project." + k, pr = "priorities." + k;
+    if (PMS.i18n.t(tk) !== tk) return PMS.i18n.t(tk);
+    if (PMS.i18n.t(pk) !== pk) return PMS.i18n.t(pk);
+    if (PMS.i18n.t(pr) !== pr) return PMS.i18n.t(pr);
+    return k;
   }
 
   function statusColorOf(key) {
