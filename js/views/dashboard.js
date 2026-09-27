@@ -36,9 +36,13 @@
     });
     var avg = progN ? progSum / progN : 0;
 
-    // overall progress: weighted mean of the top-level pillars, where each
-    // pillar's weight decides its share (heaviest pillar -> biggest share).
+    // overall progress: weighted mean over ALL pillars at every level — each
+    // pillar's weight decides its share of the total (heaviest pillar -> biggest).
     var overall = PMS.progress.overallProgress(data);
+    // how many pillars actually participate in that mean (have direct work + weight)
+    var weightedPillars = projects.filter(function (p) {
+      return PMS.progress.pillarWeight(data, p) > 0 && tasks.some(function (t) { return t.projectId === p.id && !t.parentTaskId; });
+    }).length;
 
     // by status/priority
     var byStatus = {}, byPriority = {};
@@ -86,8 +90,7 @@
 
     // Hero charts row: overall ring + task distribution donuts
     var charts = h("div.dash-charts");
-    var roots = projects.filter(function (p) { return !p.parentId; });
-    charts.appendChild(overallCard(overall, roots.length));
+    charts.appendChild(overallCard(overall, weightedPillars));
     charts.appendChild(chartCard(t("dashboard.byStatus"), donutChart(byStatus, statusColors, totalTasks)));
     charts.appendChild(chartCard(t("dashboard.byPriority"), donutChart(byPriority, prioColors, totalTasks)));
     root.appendChild(charts);

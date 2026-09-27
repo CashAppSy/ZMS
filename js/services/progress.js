@@ -145,23 +145,32 @@
     return map;
   }
 
-  // OVERALL progress across all top-level pillars, weighted by each pillar's
-  // weight — the heavier a pillar, the bigger its share of the total. Empty
-  // pillars (no tasks) contribute their weight × 0 (=0). When there are no
-  // pillars at all, falls back to the average of leaf task progress.
+  // OVERALL progress across ALL pillars at every level, weighted by each
+  // pillar's own weight — the heavier a pillar, the bigger its share of the
+  // total. Every pillar contributes its own DIRECT task progress × its weight,
+  // so sub-pillars participate next to top-level ones. A parent pillar's
+  // weight is only counted for its own direct tasks: a pure "folder" pillar
+  // (all work lives in its sub-pillars) contributes no separate weight, so its
+  // sub-pillars carry it — no double counting and no dilution. Zero-weight and
+  // empty pillars are ignored. When no pillar has direct work, falls back to
+  // the average of leaf task progress.
   function overallProgress(data) {
-    var projects = (data.projects || []).filter(function (p) { return !p.parentId; });
-    if (projects.length) {
-      var total = 0, wsum = 0;
-      projects.forEach(function (p) {
-        var w = pillarWeight(data, p);
-        total += w * projectProgress(data, p.id, 0);
-        wsum += w;
-      });
-      if (wsum > 0) return clampProgress(total / wsum);
-    }
+    var projects = data.projects || [];
+    var tasks = data.tasks || [];
+    var weightByTime = !!(data.settings && data.settings.weightByTime);
+    var total = 0, wsum = 0, count = 0;
+    projects.forEach(function (p) {
+      var w = pillarWeight(data, p);
+      if (!(w > 0)) return;
+      var own = projectDirectTasks(data, p.id);
+      if (!own.length) return; // weight delegates to this pillar's sub-pillars
+      total += w * aggregate(data, own, weightByTime);
+      wsum += w;
+      count++;
+    });
+    if (count && wsum > 0) return clampProgress(total / wsum);
     var sum = 0, n = 0;
-    (data.tasks || []).forEach(function (tsk) {
+    tasks.forEach(function (tsk) {
       if (!taskChildren(data, tsk.id).length) { sum += statusPct(data, tsk.status); n++; }
     });
     return n ? clampProgress(sum / n) : 0;
@@ -173,6 +182,7 @@
     allProjectProgress: allProjectProgress,
     statusPct: statusPct,
     taskChildren: taskChildren,
+    projectDirectTasks: projectDirectTasks,
     allTaskTree: allTaskTree,
     taskWeightAttr: taskWeightAttr,
     pillarWeight: pillarWeight,

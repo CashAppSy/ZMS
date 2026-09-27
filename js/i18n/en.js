@@ -58,7 +58,7 @@
       noUpcoming: "Nothing due in the next 7 days",
       workload: "Team workload",
       overallProgress: "Overall progress",
-      overallSub: "Weighted across {n} top-level pillars",
+      overallSub: "Weighted across {n} pillars (all levels)",
       newTask: "New task", newProject: "New pillar", nMembers: "{n} members",
       activeProjects: "Active pillars", tasksTotal: "Total tasks",
       emptyHint: "No data yet. Create a pillar, a task, or load demo data to see the dashboard filled with important information.",

@@ -363,6 +363,24 @@ const root = () => document.getElementById("view-root");
   ]);
   ok("split weight reflects subtask statuses", Math.round(PMS.progress.taskProgress(part, "tp2", false)) === Math.round((donePct + todoPct) / 2));
   ok("overall empty tree = leaf-task average", PMS.progress.overallProgress(mkW([], [sTask("xt", "p", "l", "todo", null)])) === todoPct);
+  // overall spans ALL pillars at every level (sub-pillars participate directly)
+  const wTree = mkW([
+    wPrj("root1", 2), wPrj("sub1a", 1), wPrj("sub1b", 1), wPrj("root2", 1)
+  ], [
+    sTask("rt1", "root1", "root task done", "done"),
+    sTask("st1", "sub1a", "a done", "done"),
+    sTask("st2", "sub1b", "b todo", "todo"),
+    sTask("rt2", "root2", "c done", "done")
+  ]);
+  const wTreeExp = (2 * donePct + 1 * donePct + 1 * todoPct + 1 * donePct) / 5;
+  ok("overall spans all pillar levels", Math.round(PMS.progress.overallProgress(wTree)) === Math.round(wTreeExp));
+  // a pure folder pillar (no own tasks) delegates its weight to sub-pillars:
+  // it must NOT dilute the average (no double counting)
+  const wFolder = mkW([wPrj("pf", 3), wPrj("cf1", 1), wPrj("cf2", 1)], [
+    sTask("ct1", "cf1", "done", "done"),
+    sTask("ct2", "cf2", "todo", "todo")
+  ]);
+  ok("folder pillar contributes no separate weight (no dilution)", Math.round(PMS.progress.overallProgress(wFolder)) === Math.round((donePct + todoPct) / 2));
 
   section("Validation");
   ok("task valid", PMS.validation.check("task", { title: "OK" }).valid);
