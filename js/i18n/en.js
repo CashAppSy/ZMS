@@ -330,7 +330,10 @@
       configInvalid: "Invalid configuration — make sure it is a JSON object with a projectId.",
       connectFail: "Could not connect to Firebase",
       synced: "Synced with cloud",
-      bootFailed: "Cloud sync unavailable — check your internet connection or turn off ad/privacy blockers for this site."
+      bootFailed: "Cloud sync unavailable — check your internet connection or turn off ad/privacy blockers for this site.",
+      syncing: "Syncing with cloud…",
+      slowNet: "Slow connection — syncing…",
+      offline: "Offline — changes are saved on this device and will sync when the connection returns"
     },
     errors: { generic: "Something went wrong", notFound: "Not found" },
     lang: { ar: "العربية", en: "English" },

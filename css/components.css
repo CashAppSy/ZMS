@@ -592,3 +592,53 @@ table.tbl {
 .settings-nav { flex: 0 0 220px; display: flex; flex-direction: column; gap: 2px; }
 .settings-body { flex: 1; min-width: 0; }
 @media (max-width: 720px) { .settings-layout { flex-direction: column; } .settings-nav { flex-direction: row; flex-wrap: wrap; } }
+
+/* ---------- Loading / network box ----------
+   Shown while a cloud sync is in flight and the connection is slow or the
+   device is offline, so the UI never looks frozen on a bad network. */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#loading-box {
+  position: fixed;
+  inset-inline-start: var(--space-4);
+  inset-block-end: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  max-width: min(340px, calc(100vw - var(--space-6)));
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--info);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-loading);
+  font-size: 0.85rem;
+  animation: slideIn 0.16s ease;
+}
+#loading-box.is-hidden { display: none; }
+
+#loading-box .spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border);
+  border-block-start-color: var(--info);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+#loading-box .status-dot { display: none; }
+
+#loading-box.is-slow { border-inline-start-color: var(--warning); }
+#loading-box.is-slow .spinner { border-block-start-color: var(--warning); animation-duration: 1.15s; }
+
+#loading-box.is-offline .spinner { display: none; }
+#loading-box.is-offline .status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--warning);
+}

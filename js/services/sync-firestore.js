@@ -631,6 +631,7 @@
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
     if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
+    PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
       return ensureReady().then(function () {
@@ -705,6 +706,9 @@
       console.error("[cloudsync] push failed:", e);
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
+    }).then(function (r) {
+      PMS.bus.emit("cloud:inflight", { busy: false, op: "push" });
+      return r;
     });
   }
 
@@ -712,6 +716,7 @@
   // mode: undefined (only when remote is newer) | "replace" | "merge"
   function pull(mode) {
     if (!enabled) return Promise.resolve(false);
+    PMS.bus.emit("cloud:inflight", { busy: true, op: "pull" });
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
       return ensureReady();
@@ -803,6 +808,9 @@
     }).catch(function (e) {
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
+    }).then(function (r) {
+      PMS.bus.emit("cloud:inflight", { busy: false, op: "pull" });
+      return r;
     });
   }
 
@@ -965,6 +973,7 @@
   function boot() {
     if (!isConfigured()) return Promise.resolve(false);
     if (PAGE_ID === null) PAGE_ID = PMS.ids.uuid();
+    PMS.bus.emit("cloud:inflight", { busy: true, op: "boot" });
     return loadSDK().then(function () {
       return ensureReady();
     }).then(function () {
@@ -988,6 +997,7 @@
       if (synced && PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.synced"), "success");
       if (synced && PMS.router && PMS.router.handle) PMS.router.handle();
       PMS.bus.emit("cloud:state", { booted: true });
+      PMS.bus.emit("cloud:inflight", { busy: false, op: "boot" });
       return synced;
     }).catch(function (e) {
       // Diagnostics for the "Missing or insufficient permissions" case: report
@@ -1046,6 +1056,7 @@
             teardown();
             if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
             console.error("[cloudsync] boot failed", e);
+            PMS.bus.emit("cloud:inflight", { busy: false, op: "boot" });
             return false;
           });
         });
@@ -1056,6 +1067,7 @@
       if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.bootFailed"), "error");
       console.error("[cloudsync] boot failed", e);
       console.warn("[cloudsync] boot diagnostics uid=", diagUid, "email=", diagEmail);
+      PMS.bus.emit("cloud:inflight", { busy: false, op: "boot" });
       return false;
     });
   }

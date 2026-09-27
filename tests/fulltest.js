@@ -753,6 +753,47 @@ section("Cloud sync (offline-safe API)");
     ok("local salts differ across users", saltA !== saltB);
   }
 
+section("Loading box / network monitor");
+  ok("PMS.network present", PMS.network && typeof PMS.network.isOnline === "function");
+  ok("PMS.loadingBox present", PMS.loadingBox && typeof PMS.loadingBox.show === "function" && typeof PMS.loadingBox.hide === "function");
+  ok("loading box starts hidden", PMS.loadingBox.isVisible() === false);
+  ok("slow/offline/syncing i18n keys exist (en)",
+    PMS.i18n.t("cloud.slowNet") !== "cloud.slowNet" &&
+    PMS.i18n.t("cloud.offline") !== "cloud.offline" &&
+    PMS.i18n.t("cloud.syncing") !== "cloud.syncing");
+  PMS.i18n.setLang("ar");
+  ok("slowNet loads in ar", PMS.i18n.t("cloud.slowNet").indexOf("جارٍ") !== -1 && PMS.i18n.t("cloud.offline").indexOf("غير متصل") !== -1);
+  PMS.i18n.setLang("en");
+  // connectivity flipping (test-only hook, never present in a browser)
+  PMS.network._setOnline(false);
+  ok("network reports offline", PMS.network.isOnline() === false);
+  PMS.network._setOnline(true);
+  ok("network reports online again", PMS.network.isOnline() === true);
+  // a long push shows the "slow connection" box after SLOW_MS
+  PMS.loadingBox._setSlowMs(20);
+  PMS.loadingBox._setCloudActive(true);
+  PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
+  await new Promise(r => setTimeout(r, 60));
+  ok("long push shows slow box", PMS.loadingBox.isVisible() && PMS.loadingBox.visibleReason() === "slow");
+  PMS.bus.emit("cloud:inflight", { busy: false, op: "push" });
+  ok("push end hides slow box", PMS.loadingBox.isVisible() === false);
+  // boot shows immediately (no timer)
+  PMS.bus.emit("cloud:inflight", { busy: true, op: "boot" });
+  ok("boot shows busy box immediately", PMS.loadingBox.isVisible() && PMS.loadingBox.visibleReason() === "busy");
+  PMS.bus.emit("cloud:inflight", { busy: false, op: "boot" });
+  ok("boot end hides box", PMS.loadingBox.isVisible() === false);
+  // offline shows the offline box only while cloud sync is active
+  PMS.network._setOnline(false);
+  ok("offline + cloud shows offline box", PMS.loadingBox.isVisible() && PMS.loadingBox.visibleReason() === "offline");
+  PMS.network._setOnline(true);
+  ok("back online hides offline box", PMS.loadingBox.isVisible() === false);
+  PMS.loadingBox._setCloudActive(false);
+  PMS.network._setOnline(false);
+  ok("offline without cloud stays hidden", PMS.loadingBox.isVisible() === false);
+  PMS.network._setOnline(true);
+  PMS.loadingBox._setCloudActive(null);
+  PMS.loadingBox._setSlowMs();
+
 section("Bilingual / RTL");
   PMS.i18n.setLang("ar");
   ok("i18n ar active", PMS.i18n.getLang() === "ar");
