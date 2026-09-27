@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T11:22:00.672Z
+**Date:** 2026-09-27T13:47:53.244Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 123 |
+| **Passed** | 129 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~21 ms |
-| Slowest route | ~78 ms |
+| App boot (store init from live bundle) | 568 ms |
+| Mean route render | ~26 ms |
+| Slowest route | ~73 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 54 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (568ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -61,7 +61,11 @@
 | 11 | back online hides offline box | PASS |
 | 12 | cloudsync.setCloudEmail present (browser bundle) | PASS |
 | 13 | cloud email sync i18n keys on live bundle | PASS |
-| 14 | bootstrap admin login works (live auth logic) | PASS |
+| 14 | userByPersonId present (browser bundle) | PASS |
+| 15 | createMemberAccount + setCloudActive present (browser bundle) | PASS |
+| 16 | PMS.accounts helper present (browser bundle) | PASS |
+| 17 | person merge i18n keys on live bundle | PASS |
+| 18 | bootstrap admin login works (live auth logic) | PASS |
 
 ### C. Dummy data creation (admin)
 
@@ -131,7 +135,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/3bef517a-20bd-482c-a364-d7e253948586 renders clean | PASS |
+| 3 | route /projects/ee5623a2-180e-4607-9107-af5dab9be0cb renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -162,6 +166,8 @@
 | 3 | leaf progress derives from status (done=100) | PASS |
 | 4 | parent aggregates children (done+review => 87.5) | PASS |
 | 5 | project progress tree aggregation in [0,100] | PASS |
+| 6 | pillar weight helpers exposed | PASS |
+| 7 | pillar weight i18n keys exist (en) | PASS |
 
 ### E.4 Filters / sorting / grouping
 
