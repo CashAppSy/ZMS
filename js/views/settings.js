@@ -811,7 +811,11 @@
           role: user ? user.role : "member"
         });
         if (isEdit && user.cloudUid) {
-          form.appendChild(h("p.u-muted", { text: t("auth.cloudEmailNote"), style: { marginBlockStart: "8px", fontSize: "0.78rem" } }));
+          var noteText = t("auth.cloudEmailNote");
+          if (PMS.cloudsync && PMS.cloudsync.backendAvailable && PMS.cloudsync.backendAvailable() === false) {
+            noteText = t("auth.emailNotSynced");
+          }
+          form.appendChild(h("p.u-muted", { text: noteText, style: { marginBlockStart: "8px", fontSize: "0.78rem" } }));
         }
         return form;
       },
@@ -846,6 +850,15 @@
               if (PMS.cloudsync && PMS.cloudsync.setCloudEmail && v.username !== user.username) {
                 PMS.cloudsync.setCloudEmail(user.cloudUid, v.username).catch(function (err) {
                   PMS.auth.updateUser(user.id, { username: user.username });
+                  // undo the person-email mirror too so the profile stays in
+                  // lockstep with the (still valid) sign-in email — never leave
+                  // a half-applied change behind on a failed cloud update
+                  if (v.personId && PMS.repos && PMS.repos.people) {
+                    var lp2 = PMS.repos.people.get(v.personId);
+                    if (lp2 && String(lp2.email || "").trim().toLowerCase() !== String(user.username || "").trim().toLowerCase()) {
+                      PMS.repos.people.update(lp2.id, { email: user.username });
+                    }
+                  }
                   PMS.store.flush();
                   render(document.getElementById("view-root"));
                   var msg = (err && err.userCode === "backendRequired")

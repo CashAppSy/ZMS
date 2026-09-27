@@ -132,7 +132,7 @@
       accountTempPass: "Temporary password",
       accountTempCopy: "Copy password",
       accountTempCopied: "Password copied",
-      emailSyncFail: "Email changed locally, but Firebase rejected it — deploy the Cloud Functions (functions/).",
+      emailSyncFail: "A Cloud account's sign-in email can't be changed without Cloud Functions (not available on the free plan), so this person keeps the old email for signing in.",
       onlyAdminCreatesAccount: "Only the admin can create login accounts.",
       resetPasswordMail: "Reset password"
     },
@@ -310,8 +310,8 @@
       cloudAccountCreated: "Shared account created — this email + password now work on every device.",
       cloudDeleteConfirm: "Remove the shared account '{name}' from every device? Without deployed Cloud Functions (paid plan), this works by deleting its document in the Firebase console.",
       backendRequired: "Not allowed directly from the browser. Delete the document in the Firebase console (zms_auth_users/<uid>) — or deploy the Cloud Functions (functions/).",
-      cloudEmailNote: "For cloud accounts the sign-in email lives in Firebase Authentication. The adminUpdateEmail Cloud Function (functions/) keeps it in sync — deploy it, or the email is only changed on this device.",
-      emailNotSynced: "Email changed only on this device — Firebase rejected it. Deploy the Cloud Functions (functions/) or change the email in the Firebase console.",
+      cloudEmailNote: "For cloud accounts the sign-in email lives in Firebase Authentication and can only be changed by the Cloud Functions (adminUpdateEmail), which need a paid plan. On the free plan the change is rolled back — keep the old email for signing in, or create a free local account with the new email.",
+      emailNotSynced: "A Cloud account's sign-in email can't be changed without Cloud Functions (not available on the free plan), so nothing was changed here. The person keeps signing in with the old email — you can create a free local account with the new email instead.",
       emailInUse: "That email already belongs to another Firebase account.",
       password: "Password"
     },

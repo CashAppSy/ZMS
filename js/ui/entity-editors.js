@@ -271,6 +271,14 @@
         if (uPatch.username) {
           PMS.cloudsync.setCloudEmail(acc.cloudUid, email).catch(function () {
             PMS.auth.updateUser(acc.id, { username: prev && prev.email ? String(prev.email).trim().toLowerCase() : acc.username });
+            // keep lockstep: the person's profile email IS the sign-in email,
+            // so on a failed cloud change roll the profile email back too —
+            // never leave a half-applied edit behind (free plan => no callable)
+            if (prev && prev.email && PMS.repos && PMS.repos.people) {
+              var lp = PMS.repos.people.get(person.id);
+              if (lp) PMS.repos.people.update(person.id, { email: String(prev.email).trim().toLowerCase() });
+            }
+            if (PMS.router) PMS.router.handle();
             PMS.toast.show(t("people.emailSyncFail"), "error");
           });
         }

@@ -1166,6 +1166,9 @@
     createMemberAccount: createMemberAccount,
     setCloudActive: setCloudActive,
     deleteCloudAccount: deleteCloudAccount,
+    // Backend (Cloud Functions) availability memo: true after any callable
+    // succeeds, false after one fails as unavailable, null while unknown.
+    backendAvailable: function () { return functionsReady; },
     authErrorMessage: authErrorMessage
   };
   // ZMS-RT-03: test-only helpers are reachable only under the test harness

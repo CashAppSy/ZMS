@@ -185,6 +185,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   // person <-> login account merge (browser bundle)
   ok("userByPersonId present (browser bundle)", !!(PMS.auth && typeof PMS.auth.userByPersonId === "function"));
   ok("createMemberAccount + setCloudActive present (browser bundle)", !!(PMS.cloudsync && typeof PMS.cloudsync.createMemberAccount === "function" && typeof PMS.cloudsync.setCloudActive === "function"));
+  ok("cloud backend availability probe present (browser bundle)", !!(PMS.cloudsync && typeof PMS.cloudsync.backendAvailable === "function"));
   ok("PMS.accounts helper present (browser bundle)", !!(PMS.accounts && typeof PMS.accounts.createForPerson === "function" && typeof PMS.accounts.setActiveForPerson === "function"));
   ok("person merge i18n keys on live bundle",
     PMS.i18n.t("people.hasAccount") !== "people.hasAccount" &&
