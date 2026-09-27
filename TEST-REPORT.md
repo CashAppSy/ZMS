@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T13:51:34.959Z
+**Date:** 2026-09-27T13:59:46.689Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 13 ms |
-| Mean route render | ~166 ms |
-| Slowest route | ~1228 ms |
+| App boot (store init from live bundle) | 11 ms |
+| Mean route render | ~18 ms |
+| Slowest route | ~56 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 54 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -135,7 +135,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/3967cb5e-ce5f-491f-b19a-655928b87a92 renders clean | PASS |
+| 3 | route /projects/741d0301-bec6-4494-86c4-91d33ec15e42 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
