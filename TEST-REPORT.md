@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T09:43:51.297Z
+**Date:** 2026-09-27T11:22:00.672Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 121 |
+| **Passed** | 123 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -19,8 +19,8 @@
 | Metric | Value |
 |---|---|
 | App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~26 ms |
-| Slowest route | ~73 ms |
+| Mean route render | ~21 ms |
+| Slowest route | ~78 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -59,7 +59,9 @@
 | 9 | offline without active cloud keeps box hidden | PASS |
 | 10 | offline + active cloud shows offline box | PASS |
 | 11 | back online hides offline box | PASS |
-| 12 | bootstrap admin login works (live auth logic) | PASS |
+| 12 | cloudsync.setCloudEmail present (browser bundle) | PASS |
+| 13 | cloud email sync i18n keys on live bundle | PASS |
+| 14 | bootstrap admin login works (live auth logic) | PASS |
 
 ### C. Dummy data creation (admin)
 
@@ -129,7 +131,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/d7e34bb6-f234-4312-bf59-b6bf1379b1b8 renders clean | PASS |
+| 3 | route /projects/3bef517a-20bd-482c-a364-d7e253948586 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
