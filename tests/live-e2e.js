@@ -182,6 +182,14 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
     PMS.i18n.t("auth.cloudEmailNote") !== "auth.cloudEmailNote" &&
     PMS.i18n.t("auth.emailNotSynced") !== "auth.emailNotSynced" &&
     PMS.i18n.t("auth.emailInUse") !== "auth.emailInUse");
+  // person <-> login account merge (browser bundle)
+  ok("userByPersonId present (browser bundle)", !!(PMS.auth && typeof PMS.auth.userByPersonId === "function"));
+  ok("createMemberAccount + setCloudActive present (browser bundle)", !!(PMS.cloudsync && typeof PMS.cloudsync.createMemberAccount === "function" && typeof PMS.cloudsync.setCloudActive === "function"));
+  ok("PMS.accounts helper present (browser bundle)", !!(PMS.accounts && typeof PMS.accounts.createForPerson === "function" && typeof PMS.accounts.setActiveForPerson === "function"));
+  ok("person merge i18n keys on live bundle",
+    PMS.i18n.t("people.hasAccount") !== "people.hasAccount" &&
+    PMS.i18n.t("people.createAccount") !== "people.createAccount" &&
+    PMS.i18n.t("people.onlyAdminCreatesAccount") !== "people.onlyAdminCreatesAccount");
   errors.length = 0; // hook-driven state flips must not leak window errors
 
   // bootstrap first admin (auth as deployed in the real browser)
@@ -305,7 +313,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
     ok("route " + r + " renders clean", (root().textContent || "").length > 0 && errors.length === 0, ms + "ms");
     timings[r] = ms;
   });
-  ok("dashboard includes all chart sections", (route("/"), /Overall progress/.test(root().textContent || "") && /Projects by status/.test(root().textContent) && /Progress by project/.test(root().textContent)));
+  ok("dashboard includes all chart sections", (route("/"), /Overall progress/.test(root().textContent || "") && /Pillars by status/.test(root().textContent) && /Progress by pillar/.test(root().textContent)));
 
   section("E.2 Editors open/save for every entity");
   PMS.modal.close();
@@ -328,6 +336,8 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("leaf progress derives from status (done=100)", PMS.progress.taskProgress(PMS.store.data, tLeaf2.id, false) === 100);
   ok("parent aggregates children (done+review => " + PMS.progress.taskProgress(PMS.store.data, tParent.id, false) + ")", PMS.progress.taskProgress(PMS.store.data, tParent.id, false) === 87.5);
   ok("project progress tree aggregation in [0,100]", PMS.progress.projectProgress(PMS.store.data, projNew.id, false) >= 0 && PMS.progress.projectProgress(PMS.store.data, projNew.id, false) <= 100);
+  ok("pillar weight helpers exposed", typeof PMS.progress.pillarWeight === "function" && typeof PMS.progress.overallProgress === "function" && typeof PMS.progress.taskWeightAttr === "function");
+  ok("pillar weight i18n keys exist (en)", PMS.i18n.t("projects.weight") === "Weight" && PMS.i18n.t("projects.weightHint").length > 0);
 
   section("E.4 Filters / sorting / grouping");
   const all = PMS.repos.tasks.all();

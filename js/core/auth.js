@@ -496,6 +496,13 @@
     return users().find(function (u) { return u.cloudUid === uid; }) || null;
   }
 
+  // A person has at most one login account (created from the person editor).
+  // Returns the linked account for a person id, or null.
+  function userByPersonId(personId) {
+    if (!personId) return null;
+    return users().find(function (u) { return u.personId === personId; }) || null;
+  }
+
   function adoptUser(opts) {
     // SECURITY: creating a session from an id alone was a bypass (reported as
     // ZMS-01). Adopting now requires { id, cloudUid } where the cloudUid has to
@@ -538,6 +545,7 @@ PMS.auth = {
     users: users,
     userById: userById,
     byUsername: byUsername,
+    userByPersonId: userByPersonId,
     hashPassword: hashPassword,
     normalizeUsername: normalizeUsername,
     role: role,

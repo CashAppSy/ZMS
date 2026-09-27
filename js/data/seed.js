@@ -84,6 +84,7 @@
         startDate: opts.start || iso(opts.startOffset !== undefined ? opts.startOffset : -10),
         endDate: opts.end || iso(opts.endOffset !== undefined ? opts.endOffset : 60),
         budget: opts.budget != null ? opts.budget : 50000,
+        weight: opts.weight != null ? opts.weight : 1,
         tags: opts.tags || ["sample"], links: [], notes: "",
         customFields: mapCf(opts.cf || {}),
         createdAt: now, updatedAt: now
@@ -92,11 +93,11 @@
       return p;
     }
 
-    var web = makeProject("Website Redesign", null, { status: "active", priority: "high", budget: 120000, members: ["Omar Khalil", "Nour Salameh", "Rania Barakat"], tags: ["web", "2026"], cf: { client: "Acme Corp" } });
-    var mobile = makeProject("Mobile App", null, { status: "active", priority: "high", budget: 250000, members: ["Omar Khalil", "Lina Haddadin", "Nour Salameh"], tags: ["mobile"], cf: { client: "Nova Bank" } });
+    var web = makeProject("Website Redesign", null, { status: "active", priority: "high", budget: 120000, weight: 3, members: ["Omar Khalil", "Nour Salameh", "Rania Barakat"], tags: ["web", "2026"], cf: { client: "Acme Corp" } });
+    var mobile = makeProject("Mobile App", null, { status: "active", priority: "high", budget: 250000, weight: 2, members: ["Omar Khalil", "Lina Haddadin", "Nour Salameh"], tags: ["mobile"], cf: { client: "Nova Bank" } });
     makeProject("Mobile App / Backend", mobile, { status: "active", priority: "high", budget: 120000, members: ["Lina Haddadin", "Ali Yousef"], tags: ["backend"], cf: { client: "Nova Bank" } });
     makeProject("Mobile App / Frontend", mobile, { status: "active", priority: "medium", budget: 90000, members: ["Omar Khalil", "Nour Salameh"], tags: ["frontend"], cf: { client: "Nova Bank" } });
-    var ops = makeProject("Operations Dashboard", null, { status: "active", priority: "urgent", budget: 60000, managerId: person("Ali Yousef").id, members: ["Ali Yousef", "Dana Haddad", "Rania Barakat"], tags: ["ops", "kpi"], cf: { client: "Internal" } });
+    var ops = makeProject("Operations Dashboard", null, { status: "active", priority: "urgent", budget: 60000, weight: 2.5, managerId: person("Ali Yousef").id, members: ["Ali Yousef", "Dana Haddad", "Rania Barakat"], tags: ["ops", "kpi"], cf: { client: "Internal" } });
 
     // ------- tasks -------
     function addTask(proj, title, o) {

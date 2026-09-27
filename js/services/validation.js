@@ -18,13 +18,17 @@
       person: function (o) {
         var err = [];
         if (!required(o.name)) err.push("name");
-        if (o.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email)) err.push("email");
+        // every person must be able to sign in (their email is the login id)
+        if (!required(o.email)) err.push("email");
+        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email)) err.push("email");
         return { valid: err.length === 0, errors: err };
       },
       project: function (o) {
         var err = [];
         if (!required(o.name)) err.push("name");
         if (o.startDate && o.endDate && String(o.endDate) < String(o.startDate)) err.push("dates");
+        if (o.weight !== undefined && o.weight !== null && o.weight !== "" &&
+            (!isFinite(Number(o.weight)) || Number(o.weight) < 0)) err.push("weight");
         return { valid: err.length === 0, errors: err };
       },
       task: function (o) {

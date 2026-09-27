@@ -111,18 +111,88 @@
 
     // actions
     var canWrite = PMS.auth ? PMS.auth.can("people.write") : true;
+    var isAdmin = PMS.auth ? PMS.auth.isAdmin() : false;
+    var acc = isAdmin ? personAccount(person) : null;
     if (canWrite) {
       var actions = h("div.u-flex", { style: { marginTop: "8px" } });
       actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function (e) { e.stopPropagation(); PMS.editors.openPersonEditor(person, function () { render(document.getElementById("view-root")); }); } } }));
+      if (isAdmin) {
+        if (acc) {
+          actions.appendChild(h("span.chip", { text: "🔑 " + t("people.hasAccount"), style: acc.cloudUid ? { background: "var(--info-soft)", color: "var(--info)" } : { background: "var(--bg-subtle)", color: "var(--text-faint)" } }));
+          actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("people.resetPasswordMail"), on: { click: function (e) { e.stopPropagation(); resetPersonPassword(person, acc); } } }));
+        } else {
+          actions.appendChild(h("span.chip", { text: t("people.noAccount"), style: { background: "var(--bg-subtle)", color: "var(--text-faint)" } }));
+          actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("people.createAccount"), on: { click: function (e) { e.stopPropagation(); createPersonAccountDialog(person); } } }));
+        }
+      }
       if (person.status !== "inactive") {
         actions.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("common.archive"), on: { click: function (e) { e.stopPropagation(); archivePerson(person); } } }));
       } else {
-        actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.restore"), on: { click: function (e) { e.stopPropagation(); PMS.repos.people.update(person.id, { status: "active" }); render(document.getElementById("view-root")); } } }));
+        actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.restore"), on: { click: function (e) { e.stopPropagation(); PMS.repos.people.update(person.id, { status: "active" }); if (PMS.accounts && PMS.accounts.setActiveForPerson) PMS.accounts.setActiveForPerson(PMS.repos.people.get(person.id)); render(document.getElementById("view-root")); } } }));
       }
       card.appendChild(actions);
     }
     card.addEventListener("click", function () { openPersonDetail(person); });
     return card;
+  }
+
+  function personAccount(person) {
+    if (!person || !PMS.auth || !PMS.auth.userByPersonId) return null;
+    return PMS.auth.userByPersonId(person.id) || null;
+  }
+
+  function resetPersonPassword(person, acc) {
+    var email = String(person.email || acc.username || "").trim().toLowerCase();
+    if (acc.cloudUid && PMS.cloudsync && PMS.cloudsync.resetPassword) {
+      PMS.modal.open({
+        title: t("auth.resetPassword") + " — " + person.name,
+        content: h("p", { text: t("auth.cloudResetConfirm", { email: email }) }),
+        footer: [
+          { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+          { label: t("auth.cloudReset"), class: "btn-primary", onClick: function () {
+            PMS.cloudsync.resetPassword(email).then(function () {
+              PMS.modal.close();
+              PMS.toast.show(t("auth.cloudResetSent"), "success");
+            });
+          } }
+        ]
+      });
+      return;
+    }
+    PMS.modal.open({
+      title: t("auth.resetPassword") + " — " + person.name,
+      content: function () {
+        return PMS.forms.build([{ key: "pw", label: t("auth.password") + " (" + t("auth.pwHint") + ")", type: "password", required: true }]);
+      },
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        { label: t("auth.resetPassword"), class: "btn-primary", onClick: function (_, body) {
+          var form = body.querySelector("form");
+          var v = form._getValues();
+          var res = PMS.auth.resetPassword(acc.id, v.pw);
+          if (res && res.error) { PMS.toast.show(t("auth.invalidCredentials"), "error"); return; }
+          PMS.modal.close();
+          PMS.toast.show(t("auth.passwordReset") + " ✓", "success");
+        } }
+      ]
+    });
+  }
+
+  function createPersonAccountDialog(person) {
+    if (!person.email) { PMS.toast.show(t("people.accountNeedsEmail"), "error"); return; }
+    PMS.modal.open({
+      title: t("people.createAccount"),
+      content: h("p", { text: t("people.createAccountConfirm", { name: person.name, email: person.email }) }),
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        { label: t("people.createAccount"), class: "btn-primary", onClick: function () {
+          PMS.modal.close();
+          if (PMS.accounts && PMS.accounts.createForPerson) PMS.accounts.createForPerson(person);
+          else PMS.toast.show(t("auth.forbidden"), "error");
+          render(document.getElementById("view-root"));
+        } }
+      ]
+    });
   }
 
   function archivePerson(person) {
@@ -134,6 +204,7 @@
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         { label: t("common.archive"), class: "btn-danger", onClick: function () {
           PMS.repos.people.archive(person.id);
+          if (PMS.accounts && PMS.accounts.setActiveForPerson) PMS.accounts.setActiveForPerson(PMS.repos.people.get(person.id));
           PMS.modal.close();
           PMS.toast.show(t("common.archive") + " ✓", "success");
           render(document.getElementById("view-root"));

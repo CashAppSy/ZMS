@@ -36,12 +36,9 @@
     });
     var avg = progN ? progSum / progN : 0;
 
-    // overall progress: mean projectProgress across the top-level projects
-    // (empty tree falls back to the leaf-task average)
-    var roots = projects.filter(function (p) { return !p.parentId; });
-    var rootSum = 0;
-    roots.forEach(function (p) { rootSum += PMS.progress.projectProgress(data, p.id, 0); });
-    var overall = roots.length ? rootSum / roots.length : avg;
+    // overall progress: weighted mean of the top-level pillars, where each
+    // pillar's weight decides its share (heaviest pillar -> biggest share).
+    var overall = PMS.progress.overallProgress(data);
 
     // by status/priority
     var byStatus = {}, byPriority = {};
@@ -89,6 +86,7 @@
 
     // Hero charts row: overall ring + task distribution donuts
     var charts = h("div.dash-charts");
+    var roots = projects.filter(function (p) { return !p.parentId; });
     charts.appendChild(overallCard(overall, roots.length));
     charts.appendChild(chartCard(t("dashboard.byStatus"), donutChart(byStatus, statusColors, totalTasks)));
     charts.appendChild(chartCard(t("dashboard.byPriority"), donutChart(byPriority, prioColors, totalTasks)));
@@ -189,8 +187,10 @@
     var roots = projects.filter(function (p) { return !p.parentId; }).slice(0, 8);
     return roots.map(function (p) {
       var prog = PMS.progress.projectProgress(PMS.store.data, p.id, 0);
+      var w = PMS.progress.pillarWeight(PMS.store.data, p);
       var row = h("div.project-progress-row");
       row.appendChild(h("span.pp-name.u-ellipsis", { text: p.name }));
+      row.appendChild(h("span.badge", { text: t("projects.weight") + " " + w, style: { background: "var(--bg-subtle)", color: "var(--text-faint)" } }));
       row.appendChild(PMS.vformat.progressChip(prog));
       return row;
     });

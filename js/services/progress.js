@@ -58,12 +58,29 @@
     return aggregate(data, children, weightByTime);
   }
 
+  // The weight a task claims inside its pillar (progress weighting):
+  // a leaf task claims its own unit (estimated hours when weightByTime is on,
+  // otherwise 1). A parent task DOES NOT claim extra weight on top of its
+  // children — its allocated weight is SPLIT between its sub-tasks (and, in
+  // turn, between their sub-tasks), so a task with N children distributes its
+  // quota among them. A fully-done task therefore delivers the full share that
+  // was allocated to it.
+  function taskWeightAttr(data, task, weightByTime) {
+    var children = taskChildren(data, task.id);
+    if (!children.length) {
+      return weightByTime && task.estimatedHours ? Number(task.estimatedHours) || 1 : 1;
+    }
+    var sum = 0;
+    children.forEach(function (c) { sum += taskWeightAttr(data, c, weightByTime); });
+    return sum;
+  }
+
   // aggregate progress for a flat list of tasks at the same nesting level
   function aggregate(data, tasks, weightByTime) {
     if (!tasks.length) return 0;
     var total = 0, weight = 0;
     tasks.forEach(function (t) {
-      var w = weightByTime && t.estimatedHours ? Number(t.estimatedHours) || 1 : 1;
+      var w = taskWeightAttr(data, t, weightByTime);
       total += w * taskProgress(data, t.id, weightByTime);
       weight += w;
     });
@@ -73,6 +90,18 @@
   function clampProgress(n) {
     n = Number(n) || 0;
     return Math.max(0, Math.min(100, Math.round(n * 10) / 10));
+  }
+
+  // A pillar's influence on the Overall progress: its explicit weight field.
+  // Defaults to 1 for older data (or the estimated budget when the
+  // "weight by time" setting is on), so existing projects behave unchanged.
+  function pillarWeight(data, p) {
+    var w = Number(p && p.weight);
+    if (isFinite(w) && w >= 0) return w;
+    if (data && data.settings && data.settings.weightByTime && p && Number(p.estimatedBudget) > 0) {
+      return Number(p.estimatedBudget);
+    }
+    return 1;
   }
 
   // total progress for a project = aggregate of its root tasks and sub-projects
@@ -97,14 +126,12 @@
     var childrenProjects = (data.projects || []).filter(function (p) { return p.parentId === projectId; });
 
     rootTasks.forEach(function (t) {
-      var p = taskProgress(data, t.id, weightByTime);
-      var w = weightByTime && t.estimatedHours ? Number(t.estimatedHours) || 1 : 1;
-      out.push({ weight: w, value: p });
+      var p2 = taskProgress(data, t.id, weightByTime);
+      out.push({ weight: taskWeightAttr(data, t, weightByTime), value: p2 });
     });
     childrenProjects.forEach(function (child) {
       var cp = projectProgress(data, child.id, 0);
-      var w = weightByTime && child.estimatedBudget ? Number(child.estimatedBudget) || 1 : 1;
-      out.push({ weight: w, value: cp });
+      out.push({ weight: pillarWeight(data, child), value: cp });
     });
     return out;
   }
@@ -118,12 +145,37 @@
     return map;
   }
 
+  // OVERALL progress across all top-level pillars, weighted by each pillar's
+  // weight — the heavier a pillar, the bigger its share of the total. Empty
+  // pillars (no tasks) contribute their weight × 0 (=0). When there are no
+  // pillars at all, falls back to the average of leaf task progress.
+  function overallProgress(data) {
+    var projects = (data.projects || []).filter(function (p) { return !p.parentId; });
+    if (projects.length) {
+      var total = 0, wsum = 0;
+      projects.forEach(function (p) {
+        var w = pillarWeight(data, p);
+        total += w * projectProgress(data, p.id, 0);
+        wsum += w;
+      });
+      if (wsum > 0) return clampProgress(total / wsum);
+    }
+    var sum = 0, n = 0;
+    (data.tasks || []).forEach(function (tsk) {
+      if (!taskChildren(data, tsk.id).length) { sum += statusPct(data, tsk.status); n++; }
+    });
+    return n ? clampProgress(sum / n) : 0;
+  }
+
   PMS.progress = {
     taskProgress: taskProgress,
     projectProgress: projectProgress,
     allProjectProgress: allProjectProgress,
     statusPct: statusPct,
     taskChildren: taskChildren,
-    allTaskTree: allTaskTree
+    allTaskTree: allTaskTree,
+    taskWeightAttr: taskWeightAttr,
+    pillarWeight: pillarWeight,
+    overallProgress: overallProgress
   };
 })(window.PMS);

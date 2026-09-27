@@ -427,6 +427,57 @@
     }).then(function () { functionsReady = true; return true; });
   }
 
+  // Create a cloud MEMBER account for a person via the trusted admin callable
+  // "adminCreateUser" (it verifies the caller is an admin from Firestore, then
+  // creates the Firebase Authentication identity with a random temporary
+  // password). Doing this server-side means the admin's browser is never
+  // signed in as the new user (client-side createUserWithEmailAndPassword
+  // would hijack the session). The caller still sends the password-reset
+  // email invite through PMS.cloudsync.resetPassword. Resolves
+  // { uid } on success, rejects { userCode } otherwise.
+  function createMemberAccount(opts) {
+    var email = opts && opts.email ? String(opts.email).trim().toLowerCase() : "";
+    if (!email) return Promise.reject({ userCode: "invalid" });
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.reject({ userCode: "forbidden" });
+    if (functionsReady === false) return Promise.reject({ userCode: "backendRequired" });
+    return loadFunctionsSDK().then(function () {
+      if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
+      return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminCreateUser")({
+        email: email,
+        name: opts.name || email,
+        personId: opts.personId || null,
+        active: opts.active !== false
+      });
+    }).then(function (res) {
+      functionsReady = true;
+      var uid = res && res.data && res.data.uid;
+      if (uid && PMS.cloudBridge && PMS.cloudBridge.register) {
+        PMS.cloudBridge.register({
+          username: email,
+          cloudUid: uid,
+          role: "member",
+          name: opts.name || email,
+          personId: opts.personId || null,
+          active: opts.active !== false
+        });
+      }
+      return { uid: uid };
+    });
+  }
+
+  // Enable/disable a cloud account (mirrors the person's active status) via
+  // the trusted admin callable "adminSetActive". Resolves true on success,
+  // rejects { userCode } otherwise. No direct-browser fallback — exactly like
+  // deleteCloudAccount/setCloudEmail.
+  function setCloudActive(uid, active) {
+    if (!uid) return Promise.reject({ userCode: "invalid" });
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.reject({ userCode: "forbidden" });
+    if (functionsReady === false) return Promise.reject({ userCode: "backendRequired" });
+    return loadFunctionsSDK().then(function () {
+      if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
+      return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminSetActive")({ uid: uid, active: active !== false });
+    }).then(function () { functionsReady = true; return true; });
+  }
   // Change a cloud account's SIGN-IN email (Firebase Authentication). The
   // web SDK can never rewrite another account's email (even Firestore writes
   // only touch the profile doc), so this runs through the trusted admin
@@ -1112,6 +1163,8 @@
     setCloudRole: setCloudRole,
     setCloudPersonId: setCloudPersonId,
     setCloudEmail: setCloudEmail,
+    createMemberAccount: createMemberAccount,
+    setCloudActive: setCloudActive,
     deleteCloudAccount: deleteCloudAccount,
     authErrorMessage: authErrorMessage
   };

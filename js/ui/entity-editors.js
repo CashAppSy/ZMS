@@ -83,7 +83,7 @@
       { key: "name", label: t("people.name"), type: "text", required: true },
       { key: "jobTitle", label: t("people.jobTitle"), type: "text" },
       { key: "departmentId", label: t("people.department"), type: "select", options: depts },
-      { key: "email", label: t("people.email"), type: "email" },
+      { key: "email", label: t("people.email"), type: "email", required: true },
       { key: "phone", label: t("people.phone"), type: "text" },
       { key: "status", label: t("common.status"), type: "select", options: [
         { label: t("people.active"), value: "active" },
@@ -131,6 +131,7 @@
       { key: "startDate", label: t("projects.startDate"), type: "date" },
       { key: "endDate", label: t("projects.endDate"), type: "date" },
       { key: "budget", label: t("projects.budget"), type: "number" },
+      { key: "weight", label: t("projects.weight"), type: "number", hint: t("projects.weightHint") },
       { key: "tags", label: t("common.tags"), type: "tags", full: true },
       { key: "links", label: t("projects.links"), type: "text", hint: t("common.typeHere") },
       { key: "notes", label: t("common.notes"), type: "textarea", full: true }
@@ -208,11 +209,19 @@
   function openPersonEditor(person, onSaved) {
     if (!canOpenPerson()) return;
     var isEdit = !!person;
+    var isAdmin = PMS.auth && PMS.auth.isAdmin ? PMS.auth.isAdmin() : false;
     PMS.modal.open({
       title: isEdit ? t("people.editPerson") : t("people.addPerson"),
       size: "sm",
       content: function () {
-        return PMS.forms.build(personSchema(), person || { status: "active" });
+        var wrap = PMS.forms.build(personSchema(), person || { status: "active" });
+        // The admin only creates login accounts (account creation sends a
+        // password-reset email / needs an existing admin session).
+        if (!isEdit && !isAdmin && PMS.auth) {
+          var note = h("p.u-muted", { text: t("people.onlyAdminCreatesAccount"), style: { marginBlockStart: "10px", fontSize: "0.78rem" } });
+          wrap.appendChild(note);
+        }
+        return wrap;
       },
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
@@ -227,14 +236,83 @@
             };
             var check = PMS.validation.check("person", payload);
             if (!check.valid) return toastFirstError(form, check.errors, personSchema());
-            if (isEdit) PMS.repos.people.update(person.id, payload);
-            else PMS.repos.people.add(payload);
+            var prev = isEdit ? PMS.repos.people.get(person.id) : null;
+            var saved;
+            if (isEdit) { PMS.repos.people.update(person.id, payload); saved = PMS.repos.people.get(person.id); }
+            else { saved = PMS.repos.people.add(payload); }
+            if (isAdmin) syncPersonAccount(saved, prev);
             PMS.modal.close();
             if (onSaved) onSaved();
           }
         }
       ]
     });
+  }
+
+  // Every person must be able to sign in: saving a person (admin only) ensures
+  // a login account exists for their email and keeps it in sync with the
+  // person's active status. Cloud accounts are created through the trusted
+  // backend callable so the caller's own browser session is never hijacked.
+  function syncPersonAccount(person, prev) {
+    if (!person || !person.id) return;
+    var email = String(person.email || "").trim().toLowerCase();
+    var acc = PMS.auth.userByPersonId(person.id) || (email ? PMS.auth.byUsername(email) : null);
+    if (acc) {
+      var uPatch = { personId: person.id };
+      if (email && acc.username !== email) uPatch.username = email;
+      if (person.status === "inactive" && acc.active !== false) uPatch.active = false;
+      if (person.status !== "inactive" && acc.active === false) uPatch.active = true;
+      if (person.name && acc.name !== person.name) uPatch.name = person.name;
+      PMS.auth.updateUser(acc.id, uPatch);
+      if (acc.cloudUid) {
+        if (acc.personId !== person.id && PMS.cloudsync && PMS.cloudsync.setCloudPersonId) {
+          PMS.cloudsync.setCloudPersonId(acc.cloudUid, person.id).catch(function () {});
+        }
+        if (uPatch.username) {
+          PMS.cloudsync.setCloudEmail(acc.cloudUid, email).catch(function () {
+            PMS.auth.updateUser(acc.id, { username: prev && prev.email ? String(prev.email).trim().toLowerCase() : acc.username });
+            PMS.toast.show(t("people.emailSyncFail"), "error");
+          });
+        }
+        if (uPatch.active !== undefined && PMS.cloudsync && PMS.cloudsync.setCloudActive) {
+          PMS.cloudsync.setCloudActive(acc.cloudUid, person.status !== "inactive").catch(function () {});
+        }
+      }
+      return;
+    }
+    createPersonAccount(person);
+  }
+
+  function createPersonAccount(person) {
+    var email = String(person.email || "").trim().toLowerCase();
+    if (!email) { PMS.toast.show(t("people.accountNeedsEmail"), "error"); return; }
+    if (PMS.auth.byUsername(email)) { PMS.toast.show(t("auth.duplicateEmail"), "error"); return; }
+    if (PMS.cloudsync && PMS.cloudsync.isEnabled && PMS.cloudsync.isEnabled() && PMS.cloudsync.createMemberAccount) {
+      PMS.cloudsync.createMemberAccount({ email: email, name: person.name, personId: person.id, active: person.status !== "inactive" })
+        .then(function () {
+          if (PMS.cloudsync.resetPassword) PMS.cloudsync.resetPassword(email).then(function () {
+            PMS.toast.show(t("people.accountInviteSent", { email: email }), "success");
+          }, function () {
+            PMS.toast.show(t("people.accountCreatedNoMail"), "error");
+          });
+        })
+        .catch(function (err) {
+          if (err && err.userCode === "backendRequired") { createLocalAccount(person, email); return; }
+          if (err && err.message === "EMAIL_IN_USE") { PMS.toast.show(t("auth.duplicateEmail"), "error"); return; }
+          if (err && err.message === "NOT_AN_ADMIN") { PMS.toast.show(t("auth.forbidden"), "error"); return; }
+          PMS.toast.show(PMS.authUI ? PMS.authUI.errorMessage("generic") : t("auth.forbidden"), "error");
+        });
+      return;
+    }
+    createLocalAccount(person, email);
+  }
+
+  function createLocalAccount(person, email) {
+    if (PMS.auth.byUsername(email)) { PMS.toast.show(t("auth.duplicateEmail"), "error"); return; }
+    var pw = Math.random().toString(36).slice(2, 10) + "Z1!";
+    var res = PMS.auth.createUser({ username: email, password: pw, name: person.name, personId: person.id, active: person.status !== "inactive" });
+    if (res && res.error) PMS.toast.show(PMS.authUI ? PMS.authUI.errorMessage(res.error) : t("auth.forbidden"), "error");
+    else PMS.toast.show(t("people.accountLocalNote"), "error");
   }
 
   function openProjectEditor(project, opts) {
@@ -276,6 +354,7 @@
               status: v.status || "planned", priority: v.priority || "medium",
               managerId: v.managerId || null, memberIds: v.memberIds || [],
               startDate: v.startDate, endDate: v.endDate, budget: v.budget,
+              weight: v.weight === "" || v.weight === undefined || v.weight === null ? 1 : Number(v.weight),
               tags: v.tags || [], links: parseLinks(v.links), notes: v.notes, customFields: cf
             };
             var check = PMS.validation.check("project", payload);
@@ -386,6 +465,20 @@
     });
     PMS.toast.show(t("errors.generic"), "error");
   }
+
+  PMS.accounts = {
+    createForPerson: createPersonAccount,
+    setActiveForPerson: function (person) {
+      if (!person || !PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return;
+      var acc = PMS.auth.userByPersonId(person.id);
+      if (!acc) return;
+      var active = person.status !== "inactive";
+      PMS.auth.updateUser(acc.id, { active: active });
+      if (acc.cloudUid && PMS.cloudsync && PMS.cloudsync.setCloudActive) {
+        PMS.cloudsync.setCloudActive(acc.cloudUid, active).catch(function () {});
+      }
+    }
+  };
 
   PMS.editors = {
     fieldOptions: fieldOptions,

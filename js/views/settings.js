@@ -826,6 +826,14 @@
             if (isEdit) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
             else res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
             if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
+            // reverse-sync: keep the linked person's email in lockstep with the
+            // account's sign-in email (person e-mail is the profile of record).
+            if (isEdit && v.username && v.personId && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.username) && PMS.repos && PMS.repos.people) {
+              var lp = PMS.repos.people.get(v.personId);
+              if (lp && String(lp.email || "").trim().toLowerCase() !== v.username.toLowerCase()) {
+                PMS.repos.people.update(lp.id, { email: v.username });
+              }
+            }
             // keep the shared cloud role + linked person in sync so other
             // devices see them (personId is what authorizes per-record writes)
             if (isEdit && user.cloudUid) {

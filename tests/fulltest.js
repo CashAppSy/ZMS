@@ -332,12 +332,48 @@ const root = () => document.getElementById("view-root");
   const doneKey = (data.taskStatuses || []).find(s => s.key === "done");
   if (doneKey) ok("progress.statusPct done maps its pct", PMS.progress.statusPct(data, "done") === doneKey.pct);
 
+  const wPrj = (id, weight) => ({ id: id, parentId: null, name: id, status: "active", weight: weight });
+  const sTask = (id, proj, title, status, parent) => ({ id: id, projectId: proj, parentTaskId: parent || null, title: title, status: status, priority: "medium", assignees: [], tags: [], checklist: [], comments: [], activity: [], startDate: null, dueDate: null, estimatedHours: 8, actualHours: 0, progress: 0 });
+  const mkW = (projects, tasks) => ({ settings: { weightByTime: false }, taskStatuses: data.taskStatuses, projects: projects, tasks: tasks });
+  const donePct = doneKey ? doneKey.pct : 100;
+  const todoKey = (data.taskStatuses || []).find(s => s.key === "todo");
+  const todoPct = todoKey ? todoKey.pct : 0;
+  const w1 = wPrj("wp1", 2), w2 = wPrj("wp2", 1), w0 = wPrj("wp0", 0);
+  const wdata = mkW([w1, w2, w0], [
+    sTask("wt1", "wp1", "a", "done"), sTask("wt2", "wp1", "b", "todo"),
+    sTask("wt3", "wp2", "c", "done")
+  ]);
+  const wExp = (2 * ((donePct + todoPct) / 2) + 1 * donePct) / 3;
+  ok("overall weighted by pillar weight", Math.round(PMS.progress.overallProgress(wdata)) === Math.round(wExp));
+  ok("zero-weight pillar silently excluded", Math.round(PMS.progress.overallProgress(mkW([w1], []))) === 0);
+  ok("pillarWeight fallback 1 (legacy data)", PMS.progress.pillarWeight(mkW([], []), { id: "x" }) === 1);
+  ok("pillarWeight legacy weightByTime uses budget", PMS.progress.pillarWeight({ settings: { weightByTime: true } }, { id: "x", estimatedBudget: 400 }) === 400);
+  ok("taskWeightAttr leaf = 1", PMS.progress.taskWeightAttr(mkW([], []), sTask("t", "p", "leaf", "todo"), false) === 1);
+  const tree = mkW([], [
+    sTask("tp", "p", "parent", "inprogress", null),
+    sTask("tc1", "p", "c1", "done", "tp"),
+    sTask("tc2", "p", "c2", "done", "tp")
+  ]);
+  ok("taskWeightAttr parent = sum of children (weight split)", PMS.progress.taskWeightAttr(tree, tree.tasks[0], false) === 2);
+  ok("all-done subtree delivers full weight (100)", PMS.progress.taskProgress(tree, "tp", false) === donePct);
+  const part = mkW([], [
+    sTask("tp2", "p", "parent", "inprogress", null),
+    sTask("pc1", "p", "c1", "done", "tp2"),
+    sTask("pc2", "p", "c2", "todo", "tp2")
+  ]);
+  ok("split weight reflects subtask statuses", Math.round(PMS.progress.taskProgress(part, "tp2", false)) === Math.round((donePct + todoPct) / 2));
+  ok("overall empty tree = leaf-task average", PMS.progress.overallProgress(mkW([], [sTask("xt", "p", "l", "todo", null)])) === todoPct);
+
   section("Validation");
   ok("task valid", PMS.validation.check("task", { title: "OK" }).valid);
   ok("task missing title invalid", !PMS.validation.check("task", {}).valid);
   ok("task bad dates invalid", !PMS.validation.check("task", { title: "x", startDate: "2026-09-10", dueDate: "2026-09-01" }).valid);
   ok("person bad email invalid", !PMS.validation.check("person", { name: "x", email: "nope" }).valid);
+  ok("person missing email invalid", !PMS.validation.check("person", { name: "x" }).valid);
   ok("project bad dates invalid", !PMS.validation.check("project", { name: "x", startDate: "2026-10-10", endDate: "2026-09-01" }).valid);
+  ok("project weight negative invalid", !PMS.validation.check("project", { name: "x", weight: -1 }).valid);
+  ok("project weight non-numeric invalid", !PMS.validation.check("project", { name: "x", weight: "abc" }).valid);
+  ok("project weight ok", PMS.validation.check("project", { name: "x", weight: 2.5 }).valid);
 
   section("Export / import");
   const csv = PMS.exportService.toCSV([{ a: 'x"y', b: "a,b", c: "l1\nl2" }], ["a", "b", "c"]);
@@ -471,6 +507,17 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   PMS.auth.updateUser(mgrAcc.user.id, { role: "manager" });
   ok("manager promoted by admin through updateUser", PMS.auth.userById(mgrAcc.user.id).role === "manager");
   ok("lina displayName = person name", PMS.authUI.displayName(linaAcc.user) === "Lina Haddadin");
+
+  // person <-> login account linking (merge feature)
+  ok("userByPersonId exposes the linked account", PMS.auth.userByPersonId(linaP.id) && PMS.auth.userByPersonId(linaP.id).id === linaAcc.user.id);
+  ok("userByPersonId returns null for an unlinked person", PMS.auth.userByPersonId("person-none") === null);
+  // admin saving a person without an account auto-creates the login account
+  // (cloud disabled in tests -> local account path, member role)
+  const acmP = PMS.repos.people.add({ name: "ACM Person", email: "acm@example.com", departmentId: null });
+  if (PMS.accounts && PMS.accounts.createForPerson) PMS.accounts.createForPerson(acmP);
+  const acmAcc = PMS.auth.userByPersonId(acmP.id);
+  ok("person save auto-creates a login account", !!acmAcc && acmAcc.username === "acm@example.com" && acmAcc.role === "member" && acmAcc.personId === acmP.id);
+  if (acmAcc) PMS.auth.removeUser(acmAcc.id);
 
   // password reset then login
   ok("resetPassword ok", PMS.auth.resetPassword(linaAcc.user.id, "newpass1").ok === true);
@@ -721,6 +768,23 @@ section("Cloud sync (offline-safe API)");
     PMS.auth.login("boss", "pw1234");
     const rBad = await PMS.cloudsync.setCloudEmail("uid-x", "").then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
     ok("setCloudEmail rejects bad input", rBad === "invalid");
+  }
+  // createMemberAccount / setCloudActive are admin-gated; the real Firebase
+  // account creation/activation is only possible server-side, so the offline
+  // suite checks the guards (not the callables), like deleteCloudAccount.
+  {
+    PMS.auth.login("lina", "newpass1");
+    const rCMember = await PMS.cloudsync.createMemberAccount({ email: "x@y.com" }).then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("createMemberAccount denied for a member", rCMember === "forbidden");
+    PMS.auth.login("boss", "pw1234");
+    const rCBad = await PMS.cloudsync.createMemberAccount({}).then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("createMemberAccount rejects bad input", rCBad === "invalid");
+    PMS.auth.login("lina", "newpass1");
+    const rAMember = await PMS.cloudsync.setCloudActive("uid-x", false).then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("setCloudActive denied for a member", rAMember === "forbidden");
+    PMS.auth.login("boss", "pw1234");
+    const rABad = await PMS.cloudsync.setCloudActive("", false).then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("setCloudActive rejects bad input", rABad === "invalid");
   }
 
   section("ZMS-RT hardening (offline)");

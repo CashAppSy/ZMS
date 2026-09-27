@@ -15,6 +15,7 @@
    ========================================================================== */
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 
 admin.initializeApp();
 
@@ -150,5 +151,75 @@ exports.adminUpdateEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("internal", "AUTH_UPDATE_FAILED", { detail: e && e.code });
   }
   await cloudUserRef(uid).set({ email: email, emailVerified: false }, { merge: true });
+  return { ok: true };
+});
+
+/** adminCreateUser({ email, name, personId }) -> { uid }
+ *  Creates a cloud member account for a person WITHOUT signing the caller's
+ *  browser in as the new user (client-side createUserWithEmailAndPassword
+ *  would hijack the admin's Firebase session). A random temporary password is
+ *  set server-side; the browser then sends the standard Firebase password-
+ *  reset email so the person can choose their own password. The new account
+ *  is always role "member" and active by default. */
+exports.adminCreateUser = functions.https.onCall(async (data, context) => {
+  const callerUid = await requireAdmin(context);
+  if (!callerUid) {
+    throw new functions.https.HttpsError("permission-denied", "NOT_AN_ADMIN");
+  }
+  const email = typeof (data && data.email) === "string" ? data.email.trim().toLowerCase() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new functions.https.HttpsError("invalid-argument", "BAD_EMAIL");
+  }
+  const name = typeof (data && data.name) === "string" ? data.name.trim() : "";
+  const tempPassword = crypto.randomBytes(12).toString("base64").replace(/[+/=]/g, "").slice(0, 16);
+  let user;
+  try {
+    user = await admin.auth().createUser({
+      email,
+      password: tempPassword,
+      displayName: name || email,
+      emailVerified: false
+    });
+  } catch (e) {
+    if (e && e.code === "auth/email-already-in-use") {
+      throw new functions.https.HttpsError("already-exists", "EMAIL_IN_USE");
+    }
+    throw new functions.https.HttpsError("internal", "AUTH_CREATE_FAILED", { detail: e && e.code });
+  }
+  await cloudUserRef(user.uid).set({
+    email,
+    role: "member",
+    displayName: name || email,
+    personId: data && data.personId ? String(data.personId) : null,
+    active: data.active !== false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return { uid: user.uid };
+});
+
+/** adminSetActive({ uid, active }) -> { ok: true }
+ *  Enables/disables a cloud account, mirroring the person's active status
+ *  (archive person -> deactivate account, restore -> reactivate). */ 
+exports.adminSetActive = functions.https.onCall(async (data, context) => {
+  const callerUid = await requireAdmin(context);
+  if (!callerUid) {
+    throw new functions.https.HttpsError("permission-denied", "NOT_AN_ADMIN");
+  }
+  const uid = data && data.uid;
+  if (!uid) {
+    throw new functions.https.HttpsError("invalid-argument", "BAD_INPUT");
+  }
+  const target = await cloudUserRef(uid).get();
+  if (!target.exists) {
+    throw new functions.https.HttpsError("not-found", "NO_SUCH_CLOUD_ACCOUNT");
+  }
+  const active = data.active !== false;
+  try {
+    await admin.auth().updateUser(uid, { disabled: !active });
+  } catch (e) {
+    // the Auth identity may not exist (local-only record) — keep going so the
+    // document status can still be mirrored
+  }
+  await cloudUserRef(uid).set({ active }, { merge: true });
   return { ok: true };
 });
