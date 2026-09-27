@@ -427,6 +427,23 @@
     }).then(function () { functionsReady = true; return true; });
   }
 
+  // Change a cloud account's SIGN-IN email (Firebase Authentication). The
+  // web SDK can never rewrite another account's email (even Firestore writes
+  // only touch the profile doc), so this runs through the trusted admin
+  // callable "adminUpdateEmail" — there is deliberately NO direct-browser
+  // fallback, exactly like deleteCloudAccount. Resolves true on success,
+  // rejects { userCode } otherwise.
+  function setCloudEmail(uid, email) {
+    if (!uid || !email) return Promise.reject({ userCode: "invalid" });
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.reject({ userCode: "forbidden" });
+    if (functionsReady === false) return Promise.reject({ userCode: "backendRequired" });
+    var clean = String(email).trim().toLowerCase();
+    return loadFunctionsSDK().then(function () {
+      if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
+      return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminUpdateEmail")({ uid: uid, email: clean });
+    }).then(function () { functionsReady = true; return true; });
+  }
+
   /* ---------------- per-record change tracking (local mirror) ---------------- */
   // The per-record model writes individual documents, so we must know what we
   // LAST wrote (or last pulled) per record to avoid re-uploading unchanged data
@@ -1094,6 +1111,7 @@
     resetPassword: resetPassword,
     setCloudRole: setCloudRole,
     setCloudPersonId: setCloudPersonId,
+    setCloudEmail: setCloudEmail,
     deleteCloudAccount: deleteCloudAccount,
     authErrorMessage: authErrorMessage
   };

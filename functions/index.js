@@ -119,3 +119,36 @@ exports.adminDeleteUser = functions.https.onCall(async (data, context) => {
   }
   return { ok: true };
 });
+
+/** adminUpdateEmail({ uid, email }) -> { ok: true }
+ *  Changes a cloud account's SIGN-IN email in Firebase Authentication and
+ *  mirrors it in the zms_auth_users/<uid> profile. The browser SDK cannot
+ *  change any account's email by itself (updateEmail needs the signed-in
+ *  user's credentials), so this runs server-side with the Admin SDK.
+ *  Returns EMAIL_IN_USE when the new address already belongs to another
+ *  Firebase account. */
+exports.adminUpdateEmail = functions.https.onCall(async (data, context) => {
+  const callerUid = await requireAdmin(context);
+  if (!callerUid) {
+    throw new functions.https.HttpsError("permission-denied", "NOT_AN_ADMIN");
+  }
+  const uid = data && data.uid;
+  const email = typeof (data && data.email) === "string" ? data.email.trim().toLowerCase() : "";
+  if (!uid || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new functions.https.HttpsError("invalid-argument", "BAD_EMAIL");
+  }
+  const target = await cloudUserRef(uid).get();
+  if (!target.exists) {
+    throw new functions.https.HttpsError("not-found", "NO_SUCH_CLOUD_ACCOUNT");
+  }
+  try {
+    await admin.auth().updateUser(uid, { email: email, emailVerified: false });
+  } catch (e) {
+    if (e && e.code === "auth/email-already-in-use") {
+      throw new functions.https.HttpsError("already-exists", "EMAIL_IN_USE");
+    }
+    throw new functions.https.HttpsError("internal", "AUTH_UPDATE_FAILED", { detail: e && e.code });
+  }
+  await cloudUserRef(uid).set({ email: email, emailVerified: false }, { merge: true });
+  return { ok: true };
+});

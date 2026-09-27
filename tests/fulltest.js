@@ -563,7 +563,8 @@ section("Cloud sync (offline-safe API)");
     typeof PMS.cloudsync.signOut === "function" &&
     typeof PMS.cloudsync.resetPassword === "function" &&
     typeof PMS.cloudsync.setCloudRole === "function" &&
-    typeof PMS.cloudsync.setCloudPersonId === "function");
+    typeof PMS.cloudsync.setCloudPersonId === "function" &&
+    typeof PMS.cloudsync.setCloudEmail === "function");
   ok("authErrorMessage maps common codes",
     PMS.cloudsync.authErrorMessage({ code: "auth/wrong-password" }) === "invalid" &&
     PMS.cloudsync.authErrorMessage({ code: "auth/email-already-in-use" }) === "duplicate" &&
@@ -710,6 +711,17 @@ section("Cloud sync (offline-safe API)");
   PMS.auth.login("boss", "pw1234");
   const denyBad = await PMS.cloudsync.setCloudRole("uid-x", "owner");
   ok("setCloudRole rejects an invalid role", denyBad === false);
+  // ZMS-05: setCloudEmail is admin-gated; the actual Firebase email update is
+  // only possible server-side via the adminUpdateEmail callable, so the offline
+  // suite checks the guards (not the callable), the same way as deleteCloudAccount.
+  {
+    PMS.auth.login("lina", "newpass1");
+    const rMember = await PMS.cloudsync.setCloudEmail("uid-x", "x@y.com").then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("setCloudEmail denied for a member", rMember === "forbidden");
+    PMS.auth.login("boss", "pw1234");
+    const rBad = await PMS.cloudsync.setCloudEmail("uid-x", "").then(function () { return "ok"; }, function (e) { return (e && e.userCode) || "reject"; });
+    ok("setCloudEmail rejects bad input", rBad === "invalid");
+  }
 
   section("ZMS-RT hardening (offline)");
   // ZMS-RT-03: the auth bridge must not be discoverable on PMS.auth

@@ -794,7 +794,7 @@
     var personOptions = [{ label: t("auth.noPerson"), value: "" }].concat(people.map(function (p) { return { label: p.name, value: p.id }; }));
     var fields = [
       { key: "personId", label: t("auth.linkPerson"), type: "select", options: personOptions },
-      { key: "username", label: t("auth.username"), type: "text", required: true },
+      { key: "username", label: isEdit && user.cloudUid ? t("auth.cloudEmail") : t("auth.username"), type: "text", required: true },
       { key: "role", label: t("auth.roleLabel"), type: "select", options: accountOptions() }
     ];
     if (!isEdit) {
@@ -805,11 +805,15 @@
       title: isEdit ? t("common.edit") + " " + t("auth.account") : t("auth.addAccount"),
       size: "sm",
       content: function () {
-        return PMS.forms.build(fields, {
+        var form = PMS.forms.build(fields, {
           personId: user ? user.personId || "" : "",
           username: user ? user.username : "",
           role: user ? user.role : "member"
         });
+        if (isEdit && user.cloudUid) {
+          form.appendChild(h("p.u-muted", { text: t("auth.cloudEmailNote"), style: { marginBlockStart: "8px", fontSize: "0.78rem" } }));
+        }
+        return form;
       },
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
@@ -824,9 +828,26 @@
             if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
             // keep the shared cloud role + linked person in sync so other
             // devices see them (personId is what authorizes per-record writes)
-            if (isEdit && user.cloudUid && PMS.cloudsync && PMS.cloudsync.setCloudRole) {
-              PMS.cloudsync.setCloudRole(user.cloudUid, v.role);
-              PMS.cloudsync.setCloudPersonId(user.cloudUid, v.personId || null);
+            if (isEdit && user.cloudUid) {
+              if (PMS.cloudsync && PMS.cloudsync.setCloudRole) PMS.cloudsync.setCloudRole(user.cloudUid, v.role);
+              if (PMS.cloudsync && PMS.cloudsync.setCloudPersonId) PMS.cloudsync.setCloudPersonId(user.cloudUid, v.personId || null);
+              // the sign-in email lives in Firebase Authentication; only the
+              // trusted adminUpdateEmail callable may change it. On failure
+              // revert the local mirror so the list never shows an email that
+              // Firebase still rejects.
+              if (PMS.cloudsync && PMS.cloudsync.setCloudEmail && v.username !== user.username) {
+                PMS.cloudsync.setCloudEmail(user.cloudUid, v.username).catch(function (err) {
+                  PMS.auth.updateUser(user.id, { username: user.username });
+                  PMS.store.flush();
+                  render(document.getElementById("view-root"));
+                  var msg = (err && err.userCode === "backendRequired")
+                    ? t("auth.emailNotSynced")
+                    : (err && /already-exists|email-already-in-use/.test(err.code || err.userCode || ""))
+                      ? t("auth.emailInUse")
+                      : PMS.authUI.errorMessage("generic");
+                  PMS.toast.show(msg, "error");
+                });
+              }
             }
             PMS.modal.close();
             PMS.store.flush();

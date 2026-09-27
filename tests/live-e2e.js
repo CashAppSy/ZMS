@@ -176,6 +176,12 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.loadingBox._setCloudActive(null);
   PMS.network._setOnline(true);
   ok("back online hides offline box", PMS.loadingBox.isVisible() === false);
+  // cloud email change runs only via the trusted adminUpdateEmail callable
+  ok("cloudsync.setCloudEmail present (browser bundle)", !!(PMS.cloudsync && typeof PMS.cloudsync.setCloudEmail === "function"));
+  ok("cloud email sync i18n keys on live bundle",
+    PMS.i18n.t("auth.cloudEmailNote") !== "auth.cloudEmailNote" &&
+    PMS.i18n.t("auth.emailNotSynced") !== "auth.emailNotSynced" &&
+    PMS.i18n.t("auth.emailInUse") !== "auth.emailInUse");
   errors.length = 0; // hook-driven state flips must not leak window errors
 
   // bootstrap first admin (auth as deployed in the real browser)

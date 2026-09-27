@@ -293,6 +293,9 @@
       cloudAccountCreated: "Shared account created — this email + password now work on every device.",
       cloudDeleteConfirm: "Remove the shared account '{name}' from every device? Without deployed Cloud Functions (paid plan), this works by deleting its document in the Firebase console.",
       backendRequired: "Not allowed directly from the browser. Delete the document in the Firebase console (zms_auth_users/<uid>) — or deploy the Cloud Functions (functions/).",
+      cloudEmailNote: "For cloud accounts the sign-in email lives in Firebase Authentication. The adminUpdateEmail Cloud Function (functions/) keeps it in sync — deploy it, or the email is only changed on this device.",
+      emailNotSynced: "Email changed only on this device — Firebase rejected it. Deploy the Cloud Functions (functions/) or change the email in the Firebase console.",
+      emailInUse: "That email already belongs to another Firebase account.",
       password: "Password"
     },
     cloud: {

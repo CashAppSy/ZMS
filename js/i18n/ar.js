@@ -288,6 +288,9 @@
       cloudAccountCreated: "تم إنشاء الحساب المشترك — هذا البريد وكلمة المرور يعملان على كل الأجهزة الآن.",
       cloudDeleteConfirm: "إزالة الحساب المشترك «{name}» من كل الأجهزة؟ بدون نشر الدوال السحابية (خطة مدفوعة) يتم ذلك بحذف مستنده من كونسول Firebase.",
       backendRequired: "غير مسموح به مباشرة من المتصفح. احذف المستند من كونسول Firebase (zms_auth_users/<uid>) — أو انشر الدوال السحابية (functions/).",
+      cloudEmailNote: "بالنسبة للحسابات السحابية، بريد الدخول موجود في Firebase Authentication. الدالة السحابية adminUpdateEmail (في functions/) تحافظ على مزامنته — انشرها، وإلا سيتغيّر البريد على هذا الجهاز فقط.",
+      emailNotSynced: "تغيّر البريد على هذا الجهاز فقط — رفضته Firebase. انشر الدوال السحابية (functions/) أو غيّر البريد من كونسول Firebase.",
+      emailInUse: "هذا البريد مستخدم بالفعل من حساب Firebase آخر.",
       password: "كلمة المرور"
     },
     cloud: {
