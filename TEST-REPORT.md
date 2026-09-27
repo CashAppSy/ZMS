@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T13:59:46.689Z
+**Date:** 2026-09-27T14:17:00.664Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 129 |
+| **Passed** | 130 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -19,8 +19,8 @@
 | Metric | Value |
 |---|---|
 | App boot (store init from live bundle) | 11 ms |
-| Mean route render | ~18 ms |
-| Slowest route | ~56 ms |
+| Mean route render | ~25 ms |
+| Slowest route | ~69 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -63,9 +63,10 @@
 | 13 | cloud email sync i18n keys on live bundle | PASS |
 | 14 | userByPersonId present (browser bundle) | PASS |
 | 15 | createMemberAccount + setCloudActive present (browser bundle) | PASS |
-| 16 | PMS.accounts helper present (browser bundle) | PASS |
-| 17 | person merge i18n keys on live bundle | PASS |
-| 18 | bootstrap admin login works (live auth logic) | PASS |
+| 16 | cloud backend availability probe present (browser bundle) | PASS |
+| 17 | PMS.accounts helper present (browser bundle) | PASS |
+| 18 | person merge i18n keys on live bundle | PASS |
+| 19 | bootstrap admin login works (live auth logic) | PASS |
 
 ### C. Dummy data creation (admin)
 
@@ -135,7 +136,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/741d0301-bec6-4494-86c4-91d33ec15e42 renders clean | PASS |
+| 3 | route /projects/fbf74bbd-bf1e-472d-a5b6-f3e7aa74970b renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
