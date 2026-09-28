@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-27T14:32:04.672Z
+**Date:** 2026-09-28T14:27:17.340Z
 
 **Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 130 |
+| **Passed** | 134 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 9 ms |
-| Mean route render | ~17 ms |
-| Slowest route | ~45 ms |
+| App boot (store init from live bundle) | 11 ms |
+| Mean route render | ~18 ms |
+| Slowest route | ~53 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 54 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (9ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -122,6 +122,10 @@
 | 13 | manager canEditProject(new)=true (creates projects) | PASS |
 | 14 | manager cannot open project editor of another project | PASS |
 | 15 | manager can open own project editor | PASS |
+| 16 | manager canChangeStatus unassigned task in own project | PASS |
+| 17 | manager canChangeStatus unassigned SUBTASK in own project | PASS |
+| 18 | manager cannot change status of a task in another project | PASS |
+| 19 | manager may open status-only editor for own-project task | PASS |
 
 ### D.3 Role matrix — ADMIN (full)
 
@@ -136,7 +140,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/34649b1b-beea-4ead-8048-4d44b57c3d4c renders clean | PASS |
+| 3 | route /projects/c743a42f-3cff-43d5-86c9-19ca2914fff3 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
