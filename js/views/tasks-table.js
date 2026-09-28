@@ -241,12 +241,13 @@
     sel.value = row.status;
     var cur = statuses.find(function (s) { return s.key === row.status; });
     if (cur) { sel.style.color = cur.color; sel.style.background = PMS.vformat.hexToSoft(cur.color); }
-    // members/managers may only re-status the tasks assigned to them
-    var mayStatus = PMS.auth ? PMS.auth.canEditTask(row) : true;
+    // admins: any task; managers additionally re-status tasks inside the
+    // projects they manage; members only their own assigned tasks
+    var mayStatus = PMS.auth ? PMS.auth.canChangeStatus(row) : true;
     if (!mayStatus) sel.disabled = true;
     sel.addEventListener("change", function () {
       if (sel.value === row.status) return;
-      if (PMS.auth && !PMS.auth.canEditTask(row)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); sel.value = row.status; return; }
+      if (PMS.auth && !PMS.auth.canChangeStatus(row)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); sel.value = row.status; return; }
       PMS.repos.tasks.update(row.id, { status: sel.value }); // repos.logUpdate records the change
     });
     return sel;

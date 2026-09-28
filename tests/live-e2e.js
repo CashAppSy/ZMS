@@ -296,6 +296,18 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("manager cannot open project editor of another project", PMS.editors.canOpenProject(PMS.repos.projects.get(projSub.id)) === false && PMS.modal.isOpen === false);
   PMS.editors.openProjectEditor(own, {});
   ok("manager can open own project editor", PMS.editors.canOpenProject(own) === true && PMS.modal.isOpen === true);
+
+  // manager may change the STATUS of tasks/subtasks inside their own project
+  // (even when not assigned), but not inside a project they do not manage
+  const mgrLeaf1 = PMS.repos.tasks.get(tLeaf1.id);               // projNew, assigned to Ada only
+  const mgrChild = PMS.repos.tasks.children(tParent.id)[0];      // projNew subtask, no assignees
+  const betaT = PMS.repos.tasks.add({ title: "E2E beta task", projectId: projSub.id, status: "todo" });
+  ok("manager canChangeStatus unassigned task in own project", PMS.auth.canChangeStatus(mgrLeaf1) === true);
+  ok("manager canChangeStatus unassigned SUBTASK in own project", PMS.auth.canChangeStatus(mgrChild) === true);
+  ok("manager cannot change status of a task in another project", PMS.auth.canChangeStatus(betaT) === false);
+  ok("manager may open status-only editor for own-project task", PMS.editors.canOpenTask(mgrLeaf1) === true);
+  PMS.repos.tasks.remove(betaT.id);
+  PMS.modal.close();
   PMS.auth.logout();
 
   section("D.3 Role matrix — ADMIN (full)");

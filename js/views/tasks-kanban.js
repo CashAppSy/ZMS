@@ -52,8 +52,8 @@
         if (!id) return;
         var tsk = PMS.repos.tasks.get(id);
         if (tsk && tsk.status !== st.key) {
-          // members/managers may only re-status the tasks assigned to them
-          if (PMS.auth && !PMS.auth.canEditTask(tsk)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); return; }
+          // status change rules: admins any; managers own projects; members assigned only
+          if (PMS.auth && !PMS.auth.canChangeStatus(tsk)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); return; }
           PMS.repos.tasks.update(id, { status: st.key }); // repos.logUpdate records the change
         }
       });
@@ -67,7 +67,7 @@
   }
 
   function card(tsk, st) {
-    var canMove = PMS.auth ? PMS.auth.canEditTask(tsk) : true;
+    var canMove = PMS.auth ? PMS.auth.canChangeStatus(tsk) : true;
     var c = h("div.kanban-card", {
       attrs: { "data-id": tsk.id },
       on: {

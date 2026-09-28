@@ -586,6 +586,27 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   ok("manager cannot users.manage", !PMS.auth.can("users.manage"));
   ok("manager cannot settings", !PMS.auth.can("settings"));
 
+  // manager may change the STATUS of any task/subtask inside a project they
+  // manage (requested feature); members stay limited to assigned tasks
+  const mgrPerson = PMS.auth.currentPersonId() ? PMS.repos.people.get(PMS.auth.currentPersonId()) : null;
+  const mgrProj = PMS.repos.projects.add({ name: "Mgr Status Project", status: "active", managerId: mgrPerson ? mgrPerson.id : null });
+  const mgrTask = PMS.repos.tasks.add({ title: "Mgr status task", projectId: mgrProj.id, status: "todo" });
+  const mgrSub = PMS.repos.tasks.add({ title: "Mgr status subtask", projectId: mgrProj.id, parentTaskId: mgrTask.id, status: "todo" });
+  const foreignProj = PMS.repos.projects.add({ name: "Foreign Status Project", status: "active" });
+  const foreignTask = PMS.repos.tasks.add({ title: "Foreign status task", projectId: foreignProj.id, status: "todo" });
+  ok("manager canChangeStatus task in own project", PMS.auth.canChangeStatus(mgrTask) === true);
+  ok("manager canChangeStatus SUBTASK in own project", PMS.auth.canChangeStatus(mgrSub) === true);
+  ok("manager cannot change status of a foreign-project task", PMS.auth.canChangeStatus(foreignTask) === false);
+  ok("manager may open status-only editor for own-project task", PMS.editors.canOpenTask(mgrTask) === true);
+  PMS.auth.login("lina", "newpass1");
+  ok("member cannot change status of a task that is not assigned", PMS.auth.canChangeStatus(foreignTask) === false);
+  ok("member stays denied opening unassigned task editor", PMS.editors.canOpenTask(foreignTask) === false);
+  PMS.auth.login("boss", "pw1234");
+  ok("admin can change status of any task", PMS.auth.canChangeStatus(foreignTask) === true);
+  PMS.auth.login("omar", "omar1234");
+  PMS.repos.projects.remove(mgrProj.id); // cascade deletes mgrTask + mgrSub
+  PMS.repos.projects.remove(foreignProj.id); // cascade deletes foreignTask
+
   // admin-only route guard bounces non-admins
   errors.length = 0;
   PMS.router.navigate("/settings");

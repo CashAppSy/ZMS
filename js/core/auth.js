@@ -392,13 +392,46 @@
     return !!(project && project.managerId && currentPersonId() && project.managerId === currentPersonId());
   }
 
-  // Full task CRUD (every field). Admin only; managers and members may only
-  // touch the status of the tasks assigned to them (enforced in the editors).
+  // Full task CRUD (every field). Admins: every task. Managers and members:
+  // only the tasks assigned to them (enforced in the editors).
   function canEditTask(task) {
     var u = currentUser();
     if (!u) return false;
     if (u.role === "admin") return true;
     if (u.role === "manager" || u.role === "member") return isAssignee(task);
+    return false;
+  }
+
+  // Resolve the project a task belongs to. Subtasks may carry their own
+  // projectId; otherwise the parent chain is walked up until one is found.
+  function taskProjectId(task) {
+    if (!task) return null;
+    var cur = task;
+    var seen = {};
+    while (cur) {
+      if (cur.projectId) return cur.projectId;
+      if (seen[cur.id]) return null;
+      seen[cur.id] = true;
+      var parent = (PMS.store.data.tasks || []).find(function (x) { return x.id === cur.parentTaskId; });
+      cur = parent || null;
+    }
+    return null;
+  }
+
+  // May the current user change the STATUS of this task/subtask?
+  // Admins: any. Managers: every task/subtask inside a project they manage,
+  // plus their own assigned tasks. Members: only their assigned tasks.
+  function canChangeStatus(task) {
+    var u = currentUser();
+    if (!u || !task) return false;
+    if (u.role === "admin") return true;
+    if (isAssignee(task)) return true;
+    if (u.role === "manager") {
+      var pid = taskProjectId(task);
+      if (!pid) return false;
+      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === pid; });
+      return managesProject(p);
+    }
     return false;
   }
 
@@ -633,6 +666,7 @@ PMS.auth = {
     currentPersonId: currentPersonId,
     managesProject: managesProject,
     canEditTask: canEditTask,
+    canChangeStatus: canChangeStatus,
     canCreateTask: canCreateTask,
     canEditProject: canEditProject,
     canDelete: canDelete,

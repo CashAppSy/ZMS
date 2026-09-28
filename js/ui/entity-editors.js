@@ -43,14 +43,19 @@
   function canOpenTask(task, opts) {
     if (!PMS.auth) return true;
     if (PMS.auth.canEditTask(task)) return true;
+    // managers may open a task/subtask of their own projects to change its
+    // status (a status-only editor is offered for these)
+    if (PMS.auth.canChangeStatus(task)) return true;
     // creating a new task is a separate permission (admins: any project,
     // managers: only their own projects)
     if (!task && PMS.auth.canCreateTask(opts && opts.defaults && opts.defaults.projectId)) return true;
     return deny();
   }
 
-  // When a member/manager edits an assigned task they may ONLY change its
-  // status (dates, estimates, assignees, ... stay locked).
+  // Without full edit rights on a task, only its status may be changed
+  // (dates, estimates, assignees, ... stay locked). Members only reach the
+  // status-only editor on assigned tasks; managers also on every task of a
+  // project they manage.
   function statusOnlyTaskEditor() {
     var statuses = (PMS.store.data.taskStatuses || []).map(function (s) {
       return { label: PMS.i18n.trilingual(s.name)(s.name), value: s.key };
@@ -421,8 +426,11 @@
     if (!canOpenTask(task, opts)) return;
     opts = opts || {};
     var isEdit = !!task;
-    var canFull = PMS.auth ? PMS.auth.can("tasks.write") : true;
-    // members & managers editing their assigned task -> status-only editor
+    // Full edits need the write permission AND edit rights on this very task
+    // (admins: every task; managers/members: their assigned tasks).
+    var canFull = PMS.auth ? (!!PMS.auth.can("tasks.write") && !!PMS.auth.canEditTask(task)) : true;
+    // Status-only editor for everyone who lacks full edit rights on this task:
+    // members on assigned tasks, managers on tasks inside their own projects.
     var restricted = isEdit && !canFull;
     var allowedProjects = null;
     if (!PMS.auth) { /* no auth: full access */ }
@@ -471,8 +479,14 @@
               };
             }
             if (isEdit) {
-              if (!PMS.auth || PMS.auth.canEditTask(task)) PMS.repos.tasks.update(task.id, payload);
-              else { deny(); return; }
+              if (restricted) {
+                // status-only path: gate with the status permission
+                if (PMS.auth && !PMS.auth.canChangeStatus(task)) { deny(); return; }
+                PMS.repos.tasks.update(task.id, payload);
+              } else {
+                if (!PMS.auth || PMS.auth.canEditTask(task)) PMS.repos.tasks.update(task.id, payload);
+                else { deny(); return; }
+              }
             } else {
               if (!PMS.auth || PMS.auth.canCreateTask(payload.projectId)) PMS.repos.tasks.add(payload);
               else { deny(); return; }

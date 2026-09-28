@@ -58,7 +58,9 @@
         node.appendChild(h("div.section-title", [txt(t("tasks.assignees"))]));
         var assignees = (task.assignees || []).map(function (pid) { return PMS.repos.people.get(pid); }).filter(Boolean);
         node.appendChild(h("div.u-flex", assignees.length ? assignees.map(function (p) { return PMS.vformat.personChip(p.id); }) : [h("span.u-muted", { text: "—" })]));
-        var canEdit = PMS.auth ? PMS.auth.canEditTask(task) : true;
+        // status editors open for anyone who may change the task status
+        // (admins any; managers their assigned + own-project tasks; members assigned)
+        var canEdit = PMS.auth ? PMS.auth.canChangeStatus(task) : true;
         if (canEdit) node.appendChild(h("button.btn.btn-sm", { text: "+ " + t("common.edit"), on: { click: function () { PMS.modal.close(); PMS.editors.openTaskEditor(task, { onSaved: function () {} }); } } }));
 
         // sub tasks
