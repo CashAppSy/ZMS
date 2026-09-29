@@ -14,11 +14,11 @@
   // the cloud sync ships them as an append-only per-record collection
   // (zms_activities) so every device records the same history.
   var LOG_LIMIT = 500;
-  var LOGGED_COLLECTIONS = ["tasks", "projects", "people", "departments"];
+  var LOGGED_COLLECTIONS = ["tasks", "projects", "people", "departments", "meetings"];
   var LOG_NOISE = ["id", "createdAt", "updatedAt", "activity", "checklist", "comments"];
   // Per-collection key stored on an entry = singular entity name (matches the
   // activity.entities i18n keys and the entity colors in the view).
-  var ENTITY_KEY = { tasks: "task", projects: "project", people: "person", departments: "department" };
+  var ENTITY_KEY = { tasks: "task", projects: "project", people: "person", departments: "department", meetings: "meeting" };
 
   function actorName() {
     var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
@@ -27,7 +27,7 @@
 
   function entityLabel(collection, rec) {
     if (!rec) return "";
-    if (collection === "tasks") return rec.title || "";
+    if (collection === "tasks" || collection === "meetings") return rec.title || "";
     if (rec.name != null) {
       if (typeof rec.name === "string") return rec.name;
       return rec.name.en || rec.name.ar || "";
@@ -109,6 +109,7 @@
     record.createdAt = record.createdAt || now;
     record.updatedAt = now;
     PMS.store.commit(function (d) {
+      if (!Array.isArray(d[collection])) d[collection] = [];
       d[collection].push(record);
       if (LOGGED_COLLECTIONS.indexOf(collection) !== -1) pushLog(d, makeEntry(collection, record, "created"));
     }, "add-" + collection);
@@ -204,6 +205,12 @@
       get: function (id) { return find("tasks", id); },
       add: function (obj) {
         obj.parentTaskId = obj.parentTaskId || null;
+        obj.meetingId = obj.meetingId || null;
+        if (!Array.isArray(obj.linkedTaskIds)) obj.linkedTaskIds = [];
+        if (!obj.createdBy && PMS.auth && PMS.auth.currentUser) {
+          var cu = PMS.auth.currentUser();
+          obj.createdBy = cu ? cu.id : null;
+        }
         return add("tasks", obj);
       },
       update: function (id, patch) { return update("tasks", id, patch); },
@@ -236,6 +243,10 @@
             t.dependencies = (t.dependencies || []).filter(function (dep) {
               return toDelete.indexOf(dep) === -1;
             });
+            // task-to-task links pointing at a deleted task are dropped too
+            t.linkedTaskIds = (t.linkedTaskIds || []).filter(function (lid) {
+              return toDelete.indexOf(lid) === -1 && lid !== t.id;
+            });
           });
           if (root) pushLog(d, makeEntry("tasks", root, "deleted"));
         }, "remove-task");
@@ -246,6 +257,80 @@
       },
       children: function (parentTaskId) {
         return list("tasks").filter(function (t) { return t.parentTaskId === parentTaskId; });
+      },
+      forMeeting: function (meetingId) {
+        return list("tasks").filter(function (t) { return t.meetingId === meetingId; });
+      },
+      // task-to-task links (symmetric stored one-way: A lists B)
+      linksOf: function (taskId) {
+        var t = find("tasks", taskId);
+        return ((t && t.linkedTaskIds) || []).map(function (id) { return find("tasks", id); }).filter(Boolean);
+      },
+      linkedCount: function (taskId) {
+        var t = find("tasks", taskId);
+        return t && Array.isArray(t.linkedTaskIds) ? t.linkedTaskIds.length : 0;
+      },
+      link: function (taskId, otherId) {
+        if (!taskId || !otherId || taskId === otherId) return false;
+        var t = find("tasks", taskId);
+        var o = find("tasks", otherId);
+        if (!t || !o) return false;
+        if ((t.linkedTaskIds || []).indexOf(otherId) === -1) {
+          update("tasks", taskId, { linkedTaskIds: (t.linkedTaskIds || []).concat([otherId]) });
+        }
+        if ((o.linkedTaskIds || []).indexOf(taskId) === -1) {
+          update("tasks", otherId, { linkedTaskIds: (o.linkedTaskIds || []).concat([taskId]) });
+        }
+        return true;
+      },
+      unlink: function (taskId, otherId) {
+        var t = find("tasks", taskId);
+        if (!t) return false;
+        if ((t.linkedTaskIds || []).indexOf(otherId) !== -1) {
+          update("tasks", taskId, { linkedTaskIds: t.linkedTaskIds.filter(function (id) { return id !== otherId; }) });
+        }
+        var o = find("tasks", otherId);
+        if (o && (o.linkedTaskIds || []).indexOf(taskId) !== -1) {
+          update("tasks", otherId, { linkedTaskIds: o.linkedTaskIds.filter(function (id) { return id !== taskId; }) });
+        }
+        return true;
+      }
+    },
+
+    meetings: {
+      all: function () { return list("meetings"); },
+      get: function (id) { return find("meetings", id); },
+      add: function (obj) {
+        obj.attendees = Array.isArray(obj.attendees) ? obj.attendees : [];
+        obj.agenda = Array.isArray(obj.agenda) ? obj.agenda : [];
+        obj.projectIds = Array.isArray(obj.projectIds) ? obj.projectIds : [];
+        obj.taskIds = Array.isArray(obj.taskIds) ? obj.taskIds : [];
+        obj.status = obj.status || "planned";
+        return add("meetings", obj);
+      },
+      update: function (id, patch) { return update("meetings", id, patch); },
+      // deleting a meeting never deletes its tasks: they stay in the Tasks tab
+      remove: function (id) {
+        PMS.store.commit(function (d) {
+          var rec = d.meetings.find(function (m) { return m.id === id; });
+          d.meetings = d.meetings.filter(function (m) { return m.id !== id; });
+          (d.tasks || []).forEach(function (t) { if (t.meetingId === id) t.meetingId = null; });
+          if (rec) pushLog(d, makeEntry("meetings", rec, "deleted"));
+        }, "remove-meeting");
+        return true;
+      },
+      tasksOf: function (meetingId) {
+        return list("tasks").filter(function (t) { return t.meetingId === meetingId; });
+      },
+      upcoming: function () {
+        var today = PMS.utils.todayISO();
+        return list("meetings").filter(function (m) { return m.date && m.date >= today; })
+          .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+      },
+      past: function () {
+        var today = PMS.utils.todayISO();
+        return list("meetings").filter(function (m) { return m.date && m.date < today; })
+          .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
       }
     },
 

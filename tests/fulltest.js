@@ -171,10 +171,12 @@ const root = () => document.getElementById("view-root");
   await PMS.store.flush();
   ok("store.flush persists (fallback storage)", typeof window.localStorage.getItem("pms-data") === "string");
 
-  // migrations (VERSION=1 -> no-op path must be safe)
-  const old = { schemaVersion: 1, departments: [], people: [], projects: [], tasks: [], customFieldDefs: [] };
+  // migrations (a real v1 store must come out as v2 with the new fields)
+  const old = { schemaVersion: 1, departments: [], people: [], projects: [], tasks: [{ id: "t-old", title: "Old task" }], customFieldDefs: [] };
   const mig = PMS.migrations.migrate(old);
   ok("migrations.migrate safe on old data", mig && Array.isArray(mig.departments) && typeof mig.schemaVersion === "number");
+  ok("migrations 1 -> 2 add meetings + task link/meeting fields",
+    mig.schemaVersion === 2 && Array.isArray(mig.meetings) && Array.isArray(mig.tasks[0].linkedTaskIds) && mig.tasks[0].meetingId === null);
 
   // i18n parity
   const walkKeys = (obj, pre) => Object.keys(obj || {}).reduce((acc, k) => {
@@ -403,6 +405,12 @@ const root = () => document.getElementById("view-root");
   ok("importJSON replace roundtrip", reimported.ok && PMS.store.data.tasks.length === tasks.length);
   const merged = PMS.exportService.importJSON({ schemaVersion: PMS.schema.VERSION, departments: [], people: [], projects: [], tasks: [PMS.seed.build().tasks[0]] }, "merge");
   ok("importJSON merge", merged.ok);
+  // meetings + the new task fields survive export/import
+  const dump = PMS.exportService.sanitize(PMS.store.data);
+  ok("JSON export carries meetings", Array.isArray(dump.meetings) && dump.meetings.length === PMS.store.data.meetings.length);
+  ok("JSON export carries task links + meeting back-links", dump.tasks.every(t => Array.isArray(t.linkedTaskIds) && "meetingId" in t));
+  const mImport = PMS.exportService.importJSON({ schemaVersion: PMS.schema.VERSION, departments: [], people: [], projects: [], tasks: [], meetings: [{ id: "m-import", title: "Imported meeting", date: "2026-10-01" }] }, "merge");
+  ok("importJSON merge brings meetings in", mImport.ok && PMS.repos.meetings.get("m-import") && PMS.repos.meetings.get("m-import").status === "planned");
 
   section("Backup");
   PMS.backup.load();
@@ -467,6 +475,158 @@ const root = () => document.getElementById("view-root");
   PMS.taskDetail.open(PMS.repos.tasks.all()[0].id);
   ok("task detail opens modal", PMS.modal.isOpen);
   PMS.modal.close();
+
+  section("Meetings, task links & inline person creation");
+  // the editors section above re-seeded the store, which drops accounts: make
+  // sure an admin session is active before exercising the new features
+  if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
+    const mkBoss = PMS.auth.createUser({ username: "boss", password: "pw1234", name: "Boss" });
+    if (!mkBoss.error && mkBoss.user.role !== "admin") PMS.auth.updateUser(mkBoss.user.id, { role: "admin" });
+  }
+  PMS.auth.login("boss", "pw1234");
+  ok("admin session for the meetings/links suite", !!PMS.auth.currentUser() && PMS.auth.currentUser().role === "admin");
+  // seed data ships meetings + tasks that came out of them
+  ok("seed has meetings", PMS.repos.meetings.all().length === 2);
+  const seededMeeting = PMS.repos.meetings.all()[0];
+  ok("seeded meeting has agenda + attendees", seededMeeting.agenda.length > 0 && seededMeeting.attendees.length > 0);
+  ok("seeded meeting links to pillars", (seededMeeting.projectIds || []).length > 0);
+  ok("meeting tasks are normal tasks in the Tasks tab", PMS.repos.meetings.tasksOf(seededMeeting.id).every(t => !!t.id && !!t.title) && PMS.repos.tasks.forMeeting(seededMeeting.id).length > 0);
+  ok("meetings split into upcoming/past", PMS.repos.meetings.upcoming().length === 1 && PMS.repos.meetings.past().length === 1);
+
+  // the meetings view renders and its detail modal opens
+  errors.length = 0;
+  route("/meetings");
+  ok("/meetings view renders clean", errors.length === 0 && root().querySelectorAll(".meeting-card").length > 0);
+  ok("/meetings shows the new-meeting action for an admin", !!root().querySelector(".page-header .btn-primary"));
+  PMS.meetings.openDetail(seededMeeting.id);
+  ok("meeting detail modal opens with its task rows", PMS.modal.isOpen && !!PMS.modal.body.querySelector(".meeting-detail-body"));
+  ok("meeting detail lists the meeting tasks", PMS.modal.body.querySelectorAll(".project-tree-row").length > 0);
+  PMS.modal.close();
+
+  // creating a meeting through the editor
+  PMS.editors.openMeetingEditor(null, {});
+  ok("meeting editor opens", PMS.modal.isOpen);
+  const mform = PMS.modal.body.querySelector("form");
+  const mNew = PMS.repos.meetings.add({ title: "Temp meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  ok("meetings.add normalizes its arrays", Array.isArray(mNew.attendees) && Array.isArray(mNew.agenda) && mNew.status === "planned");
+  PMS.repos.meetings.update(mNew.id, { agenda: ["one", "two"] });
+  ok("meetings.update persists", PMS.repos.meetings.get(mNew.id).agenda.length === 2);
+
+  // a task created from a meeting: lives in the Tasks tab AND back-links
+  const pillar = PMS.repos.projects.all()[0];
+  const fromMeeting = PMS.repos.tasks.add({ title: "Action from meeting", projectId: pillar.id, status: "todo", meetingId: mNew.id });
+  ok("task keeps its meeting back-link", PMS.repos.tasks.get(fromMeeting.id).meetingId === mNew.id);
+  ok("meeting sees its new task", PMS.repos.meetings.tasksOf(mNew.id).length === 1);
+  const mtCount = PMS.repos.tasks.all().length;
+  PMS.repos.meetings.remove(mNew.id);
+  ok("deleting a meeting keeps its tasks in the Tasks tab", PMS.repos.tasks.get(fromMeeting.id) !== null && PMS.repos.tasks.get(fromMeeting.id).meetingId === null && PMS.repos.tasks.all().length === mtCount);
+
+  // the two meeting -> task flows straight from the meeting detail modal
+  const flowMtg = PMS.repos.meetings.add({ title: "Flow meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [pillar.id] });
+  PMS.meetings.openDetail(flowMtg.id);
+  const addTaskBtn = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ ") === 0);
+  addTaskBtn.click();
+  ok("+ new task from a meeting opens the task editor prefilled", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="projectId"]'));
+  const flowForm = PMS.modal.body.querySelector("form");
+  flowForm.querySelector('input').value = "Decided in the meeting";
+  const flowBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  flowBtns[flowBtns.length - 1].click();
+  const flowTask = PMS.repos.meetings.tasksOf(flowMtg.id)[0];
+  ok("task created from the meeting lands in the meeting AND the Tasks tab", !!flowTask && flowTask.title === "Decided in the meeting" && PMS.repos.tasks.get(flowTask.id) !== null);
+  ok("task created from the meeting inherits the first linked pillar", flowTask.projectId === pillar.id);
+  // editing that task again must not drop the meeting back-link
+  PMS.editors.openTaskEditor(PMS.repos.tasks.get(flowTask.id), {});
+  const againBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  againBtns[againBtns.length - 1].click();
+  ok("editing a meeting task keeps its back-link", PMS.repos.tasks.get(flowTask.id).meetingId === flowMtg.id);
+  // link an existing task to the meeting through the dropdown
+  PMS.meetings.openDetail(flowMtg.id);
+  const linkExistingBtn = Array.from(PMS.modal.body.querySelectorAll("button")).filter(b => b.textContent.indexOf("+ ") === 0)[1];
+  linkExistingBtn.click();
+  const ddItem = document.querySelector(".dropdown-menu.open .dropdown-item");
+  ok("link-existing dropdown lists tasks", !!ddItem);
+  const linkedTitle = ddItem ? ddItem.textContent.split("  ·  ")[0] : "";
+  ddItem.click();
+  const linked = PMS.repos.meetings.tasksOf(flowMtg.id).filter(t => t.title === linkedTitle);
+  ok("an existing task is attached to the meeting", linked.length === 1);
+  ok("the meeting now lists two tasks", PMS.repos.meetings.tasksOf(flowMtg.id).length === 2);
+  PMS.modal.close();
+  PMS.repos.meetings.remove(flowMtg.id);
+
+  // task <-> task links
+  const linkA = PMS.repos.tasks.add({ title: "Link A", projectId: pillar.id, status: "todo" });
+  const linkB = PMS.repos.tasks.add({ title: "Link B", projectId: pillar.id, status: "todo" });
+  ok("tasks.link is symmetric", PMS.repos.tasks.link(linkA.id, linkB.id) === true &&
+    PMS.repos.tasks.get(linkA.id).linkedTaskIds.indexOf(linkB.id) !== -1 &&
+    PMS.repos.tasks.get(linkB.id).linkedTaskIds.indexOf(linkA.id) !== -1);
+  ok("tasks.linksOf resolves the other side", PMS.repos.tasks.linksOf(linkA.id).length === 1 && PMS.repos.tasks.linksOf(linkA.id)[0].id === linkB.id);
+  ok("linking is idempotent", PMS.repos.tasks.link(linkA.id, linkB.id) && PMS.repos.tasks.get(linkA.id).linkedTaskIds.length === 1);
+  ok("a task cannot link to itself", PMS.repos.tasks.link(linkA.id, linkA.id) === false);
+  ok("tasks.unlink clears both sides", PMS.repos.tasks.unlink(linkA.id, linkB.id) === true &&
+    PMS.repos.tasks.get(linkA.id).linkedTaskIds.length === 0 && PMS.repos.tasks.get(linkB.id).linkedTaskIds.length === 0);
+  // deleting a task drops the links pointing at it
+  PMS.repos.tasks.link(linkA.id, linkB.id);
+  PMS.repos.tasks.remove(linkB.id);
+  ok("deleting a task clears links to it", PMS.repos.tasks.get(linkA.id).linkedTaskIds.length === 0);
+  // the link picker control
+  const linkCtl = PMS.forms.buildControl({ key: "linkedTaskIds", type: "linkedTask", excludeId: linkA.id }, [linkA.id]);
+  ok("linkedTask control prefills the picked ids", Array.isArray(linkCtl.getValue()) && linkCtl.getValue().length === 1);
+
+  // task editor round-trip: a link saved in the editor is mirrored on both sides
+  PMS.editors.openTaskEditor(linkA, {});
+  const tform = PMS.modal.body.querySelector("form");
+  ok("task editor exposes the linked-tasks field", !!tform.querySelector('.field[data-key="linkedTaskIds"]'));
+  const otherTask = PMS.repos.tasks.all().find(t => t.id !== linkA.id);
+  const searchBox = tform.querySelector('.field[data-key="linkedTaskIds"] .link-picker input');
+  searchBox.value = otherTask.title;
+  searchBox.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const hit = tform.querySelector('.field[data-key="linkedTaskIds"] .link-result');
+  if (hit) hit.click();
+  ok("link picker offers a matching task", !!hit);
+  const footerBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  footerBtns[footerBtns.length - 1].click(); // Save
+  ok("editor saved a symmetric link", PMS.repos.tasks.get(linkA.id).linkedTaskIds.indexOf(otherTask.id) !== -1 &&
+    PMS.repos.tasks.get(otherTask.id).linkedTaskIds.indexOf(linkA.id) !== -1);
+
+  // blank title is refused with a message
+  PMS.editors.openTaskEditor(null, {});
+  const nform = PMS.modal.body.querySelector("form");
+  nform.querySelector('input').value = "   ";
+  const nfBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  nfBtns[nfBtns.length - 1].click();
+  ok("an empty title cannot be saved", PMS.modal.isOpen && PMS.repos.tasks.all().every(t => t.title.trim() !== ""));
+  PMS.modal.close();
+
+  // the assignee + owner controls can create a person on the fly
+  const before = PMS.repos.people.all().length;
+  const creator = PMS.forms.personCreator(function (p) { creator.created = p; });
+  document.body.appendChild(creator.el);
+  const panel = creator.el.querySelector(".person-create-panel");
+  ok("person popup starts closed", panel.style.display === "none");
+  creator.el.querySelector(".btn").click();
+  ok("person popup opens on click", panel.style.display === "block");
+  const inputs = panel.querySelectorAll("input");
+  inputs[0].value = "Zaid New"; inputs[1].value = "zaid@example.com";
+  panel.querySelector(".btn-primary").click();
+  ok("person popup creates + returns the person", PMS.repos.people.all().length === before + 1 && !!creator.created && creator.created.name === "Zaid New");
+  const assigneeCtl = PMS.forms.buildControl({ key: "assignees", type: "multiselect", options: [{ label: "Zaid New", value: creator.created.id }], allowCreatePerson: true }, []);
+  ok("assignee control offers the +person popup", !!assigneeCtl.el.querySelector(".person-create"));
+  const ownerCtl = PMS.forms.buildControl({ key: "managerId", type: "select", options: [], allowCreatePerson: true }, null);
+  ok("owner select offers the +person popup", !!ownerCtl.el.querySelector(".person-create"));
+  // a duplicate-free, already-selected person is returned by the select control
+  const selCtl = PMS.forms.buildControl({ key: "managerId", type: "select", options: [{ label: "Omar Khalil", value: "p-omar" }], allowCreatePerson: true }, "p-omar");
+  ok("owner select keeps its current value", selCtl.getValue() === "p-omar");
+
+  // the tasks table: double click opens the FULL editor, assignees stay read-only
+  errors.length = 0;
+  route("/tasks");
+  const vtRow = root().querySelector(".vt-row");
+  const dbl = new window.MouseEvent("dblclick", { bubbles: true });
+  vtRow.dispatchEvent(dbl);
+  ok("double click on a task row opens the task editor", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="title"]'));
+  PMS.modal.close();
+  ok("assignee cell renders no editable control", !root().querySelector(".vt-assignees input, .vt-assignees select, .vt-assignees button"));
+  ok("row hint tells the user to double click", (vtRow.getAttribute("title") || "").length > 3);
 
   section("Forms + charts + dom");
   const f = PMS.forms.buildControl({ key: "title", type: "text" }, "hello");
@@ -586,8 +746,8 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   ok("manager cannot users.manage", !PMS.auth.can("users.manage"));
   ok("manager cannot settings", !PMS.auth.can("settings"));
 
-  // manager may change the STATUS of any task/subtask inside a project they
-  // manage (requested feature); members stay limited to assigned tasks
+  // managers own every pillar now: they can create tasks anywhere and change
+  // the status of ANY task — including an unassigned one nobody else can act on
   const mgrPerson = PMS.auth.currentPersonId() ? PMS.repos.people.get(PMS.auth.currentPersonId()) : null;
   const mgrProj = PMS.repos.projects.add({ name: "Mgr Status Project", status: "active", managerId: mgrPerson ? mgrPerson.id : null });
   const mgrTask = PMS.repos.tasks.add({ title: "Mgr status task", projectId: mgrProj.id, status: "todo" });
@@ -596,13 +756,18 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   const foreignTask = PMS.repos.tasks.add({ title: "Foreign status task", projectId: foreignProj.id, status: "todo" });
   ok("manager canChangeStatus task in own project", PMS.auth.canChangeStatus(mgrTask) === true);
   ok("manager canChangeStatus SUBTASK in own project", PMS.auth.canChangeStatus(mgrSub) === true);
-  ok("manager cannot change status of a foreign-project task", PMS.auth.canChangeStatus(foreignTask) === false);
+  ok("manager canChangeStatus an UNASSIGNED task in a foreign pillar", PMS.auth.canChangeStatus(foreignTask) === true);
   ok("manager may open status-only editor for own-project task", PMS.editors.canOpenTask(mgrTask) === true);
+  ok("manager canCreateTask in ANY pillar", PMS.auth.canCreateTask(foreignProj.id) === true && PMS.auth.canCreateTask(mgrProj.id) === true && PMS.auth.canCreateTask() === true);
+  ok("manager canCreateMeeting", PMS.auth.canCreateMeeting() === true);
   PMS.auth.login("lina", "newpass1");
   ok("member cannot change status of a task that is not assigned", PMS.auth.canChangeStatus(foreignTask) === false);
   ok("member stays denied opening unassigned task editor", PMS.editors.canOpenTask(foreignTask) === false);
+  ok("member cannot create a task in any pillar", PMS.auth.canCreateTask(foreignProj.id) === false && PMS.auth.canCreateTask() === false);
+  ok("member cannot create meetings", PMS.auth.canCreateMeeting() === false);
   PMS.auth.login("boss", "pw1234");
   ok("admin can change status of any task", PMS.auth.canChangeStatus(foreignTask) === true);
+  ok("admin canCreateTask in any pillar", PMS.auth.canCreateTask(foreignProj.id) === true);
   PMS.auth.login("omar", "omar1234");
   PMS.repos.projects.remove(mgrProj.id); // cascade deletes mgrTask + mgrSub
   PMS.repos.projects.remove(foreignProj.id); // cascade deletes foreignTask

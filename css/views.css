@@ -188,3 +188,19 @@ html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(
   .act-row { flex-wrap: wrap; }
   .act-meta { text-align: start; }
 }
+/* ============================ Meetings ============================ */
+.search-inline { max-width: 320px; margin-block-end: var(--space-4); }
+.meeting-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.meeting-card { cursor: pointer; }
+.meeting-card:hover { box-shadow: var(--shadow-md); }
+.meeting-card .meeting-date {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--primary);
+  white-space: nowrap;
+}
+.meeting-agenda { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; }
+.meeting-agenda li { font-size: 0.9rem; }
+.vt-assignees { cursor: default; }

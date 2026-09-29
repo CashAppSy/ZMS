@@ -11,6 +11,7 @@
       dashboard: "لوحة المعلومات",
       projects: "الركائز",
       tasks: "المهام",
+      meetings: "الاجتماعات",
       people: "الأشخاص والأقسام",
       reports: "التقارير",
       settings: "الإعدادات",
@@ -32,7 +33,8 @@
       noResults: "لا توجد نتائج", undo: "تراجع", redo: "إعادة", next: "التالي", prev: "السابق",
       today: "اليوم", selectAll: "تحديد الكل", selected: "المحدد",
       back: "رجوع", copy: "نسخ", remove: "إزالة", move: "نقل",
-      counting: "{count} عنصر", hour: "ساعة", hoursUnit: "س"
+      counting: "{count} عنصر", hour: "ساعة", hoursUnit: "س",
+      owner: "المالك", link: "ربط", unlink: "إلغاء الربط", saveAndNew: "حفظ + جديد"
     },
     confirm: {
       title: "هل أنت متأكد؟",
@@ -40,6 +42,7 @@
       deletePerson: "أرشفة الشخص «{name}»؟ سيتم الاحتفاظ بمهامه.",
       deleteProject: "حذف الركيزة «{name}» وكل ركائزها الفرعية ومهامها؟ لا يمكن التراجع.",
       deleteTask: "حذف المهمة «{title}» وكل مهامها الفرعية؟",
+      deleteMeeting: "حذف الاجتماع «{title}»؟ ستبقى مهامه في صفحة المهام.",
       deleteField: "حذف هذا الحقل المخصص؟ ستُفقد القيم الحالية.",
       restoreBackup: "استعادة النسخة الاحتياطية بتاريخ {date}؟ سيتم استبدال البيانات الحالية.",
       continue: "متابعة",
@@ -70,7 +73,8 @@
       deleteProject: "حذف الركيزة", subProjects: "الركائز الفرعية",
       tasks: "المهام", noSubProjects: "لا توجد ركائز فرعية",
       name: "اسم الركيزة", status: "الحالة", priority: "الأولوية",
-      manager: "المدير", members: "الأعضاء", startDate: "تاريخ البداية",
+      manager: "المالك", managerHint: "الشخص المسؤول عن هذه الركيزة.",
+      members: "الأعضاء", startDate: "تاريخ البداية",
       endDate: "تاريخ النهاية", budget: "الميزانية", weight: "الوزن",
       weightHint: "مدى تأثير هذه الركيزة في التقدم الكلي — كلما زاد الوزن زادت حصتها.",
       links: "روابط", progress: "الإنجاز",
@@ -98,7 +102,30 @@
       addComment: "إضافة تعليق", addDependency: "إضافة اعتماد",
       estimatedVsActual: "تقديري مقابل فعلي", plusNSubtasks: "{n} مهام فرعية",
       perPerson: "لكل شخص", groupBy: "تجميع حسب", columns: "الأعمدة",
-      statusChanged: "غيّر الحالة", moveHint: "اسحب البطاقات بين الأعمدة"
+      statusChanged: "غيّر الحالة", moveHint: "اسحب البطاقات بين الأعمدة",
+      doubleClickToEdit: "انقر مرتين على الصف لتعديل المهمة",
+      assigneesReadOnly: "الأشخاص المسند إليهم — تُعدَّل من نافذة تعديل المهمة (انقر مرتين على الصف)",
+      linkedTasks: "مهام مرتبطة", linkTask: "ربط مهمة", unlinkTask: "إلغاء ربط مهمة",
+      noLinkedTasks: "لا توجد مهام مرتبطة", linkedTasksHint: "اربط هذه المهمة بمهمة أخرى (عمل مرتبط، عائق، أو متابعة).",
+      fromMeeting: "من اجتماع", meeting: "اجتماع"
+    },
+    meetings: {
+      title: "الاجتماعات", newMeeting: "اجتماع جديد", editMeeting: "تعديل الاجتماع",
+      deleteMeeting: "حذف الاجتماع", meetingTitle: "العنوان",
+      date: "التاريخ", time: "الوقت", location: "المكان",
+      attendees: "الحضور", agenda: "جدول الأعمال", notes: "الملاحظات",
+      addAgenda: "إضافة بند", agendaPlaceholder: "اكتب البند ثم اضغط Enter",
+      addAttendee: "إضافة مشارك", noAttendees: "لا يوجد حضور بعد",
+      pillars: "الركائز", addPillar: "إضافة ركيزة", noPillars: "لا توجد ركائز مرتبطة",
+      tasks: "المهام", newTask: "مهمة جديدة", linkExistingTask: "ربط مهمة موجودة",
+      noTasks: "لا توجد مهام بعد", tasksCount: "{n} مهام", attendeesCount: "{n} حاضر",
+      empty: "لا توجد اجتماعات بعد — أنشئ أول اجتماع ثم أضف المهام الناتجة عنه.",
+      today: "اليوم", upcoming: "قادمة", past: "سابقة", all: "الكل",
+      detail: "تفاصيل الاجتماع", deleteIfEmpty: "لم يتبقَّ أي مهمة في هذا الاجتماع. هل تريد حذفه؟",
+      taskCreated: "تمت إضافة المهمة إلى الاجتماع وإلى صفحة المهام",
+      taskLinked: "تم ربط المهمة بالاجتماع",
+      onlyManagers: "إنشاء الاجتماعات متاح للأدمن والمديرين فقط.",
+      createdBy: "أنشأه"
     },
     kanban: { title: "كانبان", addCard: "إضافة", total: "الإجمالي", collapseCol: "طي" },
     gantt: {
@@ -131,7 +158,10 @@
       accountTempCopied: "تم نسخ كلمة المرور",
       emailSyncFail: "لا يمكن تغيير بريد تسجيل الدخول لحساب سحابي دون Cloud Functions (غير متاحة على الخطة المجانية)، لذا يبقى هذا الشخص مسجلاً بالبريد القديم.",
       onlyAdminCreatesAccount: "الأدمن فقط يمكنه إنشاء حسابات الدخول.",
-      resetPasswordMail: "إعادة تعيين كلمة المرور"
+      resetPasswordMail: "إعادة تعيين كلمة المرور",
+      newPerson: "شخص جديد",
+      personAdded: "تمت إضافة {name} وتحديده",
+      personCreateHint: "يُنشأ الشخص في صفحة الأشخاص ويُحدَّد هنا مباشرة."
     },
     reports: {
       title: "التقارير",
@@ -201,7 +231,8 @@
       required: "هذا الحقل مطلوب",
       invalidDate: "تاريخ غير صالح",
       endBeforeStart: "تاريخ النهاية قبل تاريخ البداية",
-      invalidEmail: "بريد إلكتروني غير صالح"
+      invalidEmail: "بريد إلكتروني غير صالح",
+      titleRequired: "يرجى إدخال عنوان (أو اسم) — لا يمكن حفظ عنوان فارغ."
     },
     statuses: {
       task: {
@@ -231,7 +262,7 @@
       cleared: "تم مسح سجل النشاطات",
       at: "متى", user: "المستخدم", entity: "الجهة", entityName: "العنصر",
       action: "الإجراء", detail: "التفاصيل",
-      entities: { task: "مهمة", project: "ركيزة", person: "شخص", department: "قسم" },
+      entities: { task: "مهمة", project: "ركيزة", person: "شخص", department: "قسم", meeting: "اجتماع" },
       actions: {
         created: "أنشأ", updated: "عدّل", status: "غيّر الحالة",
         progress: "غيّر الإنجاز", deleted: "حذف", archived: "أرشفة"

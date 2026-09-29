@@ -24,6 +24,7 @@
       people: [],
       projects: [],
       tasks: [],
+      meetings: [],
       users: [],
       customFieldDefs: [],
       activities: [],
@@ -61,5 +62,5 @@
     };
   }
 
-  PMS.schema = { VERSION: 1, defaultData: defaultData, stub: stub };
+  PMS.schema = { VERSION: 2, defaultData: defaultData, stub: stub };
 })(window.PMS);

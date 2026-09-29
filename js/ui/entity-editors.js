@@ -16,6 +16,7 @@
     if (entity === "project") return projectSchema();
     if (entity === "person") return personSchema();
     if (entity === "department") return departmentSchema();
+    if (entity === "meeting") return meetingSchema();
     return [];
   }
 
@@ -131,8 +132,9 @@
       { key: "parentId", label: t("projects.parent"), type: "select", options: parentOpts },
       { key: "status", label: t("projects.status"), type: "select", options: statuses },
       { key: "priority", label: t("projects.priority"), type: "select", options: prios },
-      { key: "managerId", label: t("projects.manager"), type: "select", options: managerOpts },
-      { key: "memberIds", label: t("projects.members"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }) },
+      // "Owner" — create a person on the fly if they are not in the system yet
+      { key: "managerId", label: t("projects.manager"), type: "select", options: managerOpts, allowCreatePerson: !managedOnly, hint: managedOnly ? "" : t("projects.managerHint") },
+      { key: "memberIds", label: t("projects.members"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }), allowCreatePerson: true },
       { key: "startDate", label: t("projects.startDate"), type: "date" },
       { key: "endDate", label: t("projects.endDate"), type: "date" },
       { key: "budget", label: t("projects.budget"), type: "number" },
@@ -143,7 +145,7 @@
     ];
   }
 
-  function taskSchema(projectFilter) {
+  function taskSchema(projectFilter, taskId) {
     var projects = PMS.repos.projects.all().filter(function (p) {
       return !projectFilter || projectFilter.indexOf(p.id) !== -1;
     });
@@ -162,13 +164,36 @@
       { key: "parentTaskId", label: t("tasks.parentTask"), type: "select", options: tasks.map(function (tk) { return { label: tk.title, value: tk.id }; }) },
       { key: "status", label: t("common.status"), type: "select", options: statuses },
       { key: "priority", label: t("common.priority"), type: "select", options: prios },
-      { key: "assignees", label: t("tasks.assignees"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }) },
+      // "+ person" popup: assign somebody who is not in the system yet
+      { key: "assignees", label: t("tasks.assignees"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }), allowCreatePerson: true },
       { key: "startDate", label: t("tasks.startDate"), type: "date" },
       { key: "dueDate", label: t("tasks.dueDate"), type: "date" },
       { key: "estimatedHours", label: t("tasks.estimated"), type: "number" },
       { key: "actualHours", label: t("tasks.actual"), type: "number" },
+      { key: "linkedTaskIds", label: t("tasks.linkedTasks"), type: "linkedTask", excludeId: taskId || null, full: true, hint: t("tasks.linkedTasksHint") },
       { key: "tags", label: t("common.tags"), type: "tags", full: true }
     ];
+  }
+
+  // ---------------- meetings ----------------
+  function meetingSchema() {
+    var people = PMS.repos.people.active();
+    var projects = PMS.repos.projects.all();
+    return [
+      { key: "title", label: t("meetings.meetingTitle"), type: "text", required: true, full: true },
+      { key: "date", label: t("meetings.date"), type: "date" },
+      { key: "time", label: t("meetings.time"), type: "text" },
+      { key: "location", label: t("meetings.location"), type: "text" },
+      { key: "attendees", label: t("meetings.attendees"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }), allowCreatePerson: true, full: true },
+      { key: "agenda", label: t("meetings.agenda"), type: "tags", placeholder: t("meetings.agendaPlaceholder"), full: true },
+      { key: "projectIds", label: t("meetings.pillars"), type: "multiselect", options: projects.map(function (p) { return { label: p.name, value: p.id }; }), full: true },
+      { key: "notes", label: t("meetings.notes"), type: "textarea", full: true }
+    ];
+  }
+
+  function canOpenMeeting(meeting) {
+    if (!PMS.auth) return true;
+    return PMS.auth.canEditMeeting ? PMS.auth.canEditMeeting(meeting) : true;
   }
 
   /* ---------- open editors ---------- */
@@ -432,19 +457,15 @@
     // Status-only editor for everyone who lacks full edit rights on this task:
     // members on assigned tasks, managers on tasks inside their own projects.
     var restricted = isEdit && !canFull;
+    // Managers own every pillar now, so no project list restriction is needed.
     var allowedProjects = null;
     if (!PMS.auth) { /* no auth: full access */ }
-    else if (PMS.auth.currentUser() && PMS.auth.currentUser().role === "manager" && !isEdit) {
-      allowedProjects = (PMS.store.data.projects || [])
-        .filter(function (p) { return PMS.auth.managesProject(p); })
-        .map(function (p) { return p.id; });
-    }
     PMS.modal.open({
       title: isEdit ? t("tasks.editTask") : t("tasks.newTask"),
       size: "lg",
       content: function () {
         return buildFormSafely(function () {
-          var sch = restricted ? statusOnlyTaskEditor() : taskSchema(allowedProjects);
+          var sch = restricted ? statusOnlyTaskEditor() : taskSchema(allowedProjects, task && task.id);
           PMS.repos.fields.forEntity("task").forEach(function (f) {
             sch.push({ key: "cf_" + f.id, label: PMS.i18n.trilingual(f.label)(f.label), fieldType: f.type, options: f.options, full: true });
           });
@@ -461,7 +482,12 @@
           onClick: function (_, body) {
             var form = body.querySelector("form");
             var v = form._getValues();
-            if (!v.title && !restricted) { form.querySelectorAll(".field")[0].querySelector("input").classList.add("invalid"); return; }
+            if (!v.title && !restricted) {
+              var firstInput = form.querySelectorAll(".field")[0].querySelector("input");
+              if (firstInput) firstInput.classList.add("invalid");
+              PMS.toast.show(t("validation.titleRequired"), "error");
+              return;
+            }
             var payload;
             if (restricted) {
               // status-only: never touch anything else
@@ -469,13 +495,16 @@
             } else {
               var cf = {};
               Object.keys(v).forEach(function (k) { if (k.indexOf("cf_") === 0) cf[k.slice(3)] = v[k]; });
+              // a task created from a meeting keeps the back-link (there is no
+              // meeting field in the editor, so it is carried over as-is)
+              var meetingId = (opts.defaults && opts.defaults.meetingId) || (task && task.meetingId) || null;
               payload = {
                 title: v.title, description: v.description, projectId: v.projectId || null,
                 parentTaskId: v.parentTaskId || null, status: v.status || "todo",
                 priority: v.priority || "medium", assignees: v.assignees || [],
                 startDate: v.startDate, dueDate: v.dueDate,
                 estimatedHours: v.estimatedHours || 0, actualHours: v.actualHours || 0,
-                tags: v.tags || [], customFields: cf
+                tags: v.tags || [], customFields: cf, meetingId: meetingId
               };
             }
             if (isEdit) {
@@ -486,10 +515,14 @@
               } else {
                 if (!PMS.auth || PMS.auth.canEditTask(task)) PMS.repos.tasks.update(task.id, payload);
                 else { deny(); return; }
+                // task-to-task links are stored on BOTH sides, so apply the diff
+                applyLinkDiff(task, v.linkedTaskIds || []);
               }
             } else {
-              if (!PMS.auth || PMS.auth.canCreateTask(payload.projectId)) PMS.repos.tasks.add(payload);
-              else { deny(); return; }
+              if (!PMS.auth || PMS.auth.canCreateTask(payload.projectId)) {
+                var created = PMS.repos.tasks.add(payload);
+                (v.linkedTaskIds || []).forEach(function (id) { PMS.repos.tasks.link(created.id, id); });
+              } else { deny(); return; }
             }
             PMS.modal.close();
             if (opts.onSaved) opts.onSaved(payload);
@@ -499,8 +532,64 @@
     });
   }
 
-  function parseLinks(str) {
-    if (Array.isArray(str)) return str;
+  // Keeps both sides of a task-to-task link in step after the editor saved
+  // the picked list (added links are mirrored, removed links are dropped).
+  function applyLinkDiff(task, nextIds) {
+    var prev = (task.linkedTaskIds || []).slice();
+    var next = nextIds.filter(function (id, i) { return id && id !== task.id && nextIds.indexOf(id) === i; });
+    next.forEach(function (id) {
+      if (prev.indexOf(id) === -1) PMS.repos.tasks.link(task.id, id);
+    });
+    prev.forEach(function (id) {
+      if (next.indexOf(id) === -1) PMS.repos.tasks.unlink(task.id, id);
+    });
+  }
+
+  function openMeetingEditor(meeting, opts) {
+    if (!canOpenMeeting(meeting)) { if (PMS.auth) deny(); return; }
+    opts = opts || {};
+    var isEdit = !!meeting;
+    PMS.modal.open({
+      title: isEdit ? t("meetings.editMeeting") : t("meetings.newMeeting"),
+      size: "lg",
+      content: function () {
+        return buildFormSafely(function () {
+          var vals = PMS.utils.deepClone(meeting || {});
+          if (opts.defaults) Object.assign(vals, opts.defaults);
+          if (!vals.date) vals.date = PMS.utils.todayISO();
+          return PMS.forms.build(meetingSchema(), vals);
+        });
+      },
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: t("common.save"), class: "btn-primary",
+          onClick: function (_, body) {
+            var form = body.querySelector("form");
+            var v = form._getValues();
+            if (!v.title) {
+              var firstInput = form.querySelectorAll(".field")[0].querySelector("input");
+              if (firstInput) firstInput.classList.add("invalid");
+              PMS.toast.show(t("validation.titleRequired"), "error");
+              return;
+            }
+            var payload = {
+              title: v.title, date: v.date || null, time: v.time || null, location: v.location || null,
+              attendees: v.attendees || [], agenda: v.agenda || [], projectIds: v.projectIds || [],
+              notes: v.notes || ""
+            };
+            var saved;
+            if (isEdit) { PMS.repos.meetings.update(meeting.id, payload); saved = PMS.repos.meetings.get(meeting.id); }
+            else saved = PMS.repos.meetings.add(payload);
+            PMS.modal.close();
+            if (opts.onSaved) opts.onSaved(saved, payload);
+          }
+        }
+      ]
+    });
+  }
+
+  function parseLinks(str) {    if (Array.isArray(str)) return str;
     return (str || "").split(/[\n,]/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (url) {
       return /^https?:\/\//.test(url) ? url : "https://" + url;
     });
@@ -548,6 +637,7 @@
     canOpenPerson: canOpenPerson,
     canOpenProject: canOpenProject,
     canOpenDepartment: canOpenDepartment,
+    canOpenMeeting: canOpenMeeting,
     loadSampleData: function () {
       if (PMS.seed && PMS.seed.load) return PMS.seed.load();
       return Promise.resolve();
@@ -556,11 +646,13 @@
     openPersonEditor: openPersonEditor,
     openProjectEditor: openProjectEditor,
     openTaskEditor: openTaskEditor,
+    openMeetingEditor: openMeetingEditor,
     parseLinks: parseLinks,
     fieldSchema: function (entity) {
       if (entity === "task") return taskSchema();
       if (entity === "project") return projectSchema();
       if (entity === "person") return personSchema();
+      if (entity === "meeting") return meetingSchema();
       return [];
     }
   };

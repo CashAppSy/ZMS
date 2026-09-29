@@ -362,6 +362,44 @@ table.tbl {
 .chip.removable { display: inline-flex; align-items: center; gap: 5px; }
 .chip .chip-x { cursor: pointer; color: var(--text-faint); }
 .chip .chip-x:hover { color: var(--danger); }
+.chip-meeting { cursor: pointer; border-color: var(--primary); color: var(--primary); }
+.chip-meeting:hover { background: var(--primary-soft); }
+
+/* ---------- Create-a-person popup (inline, inside any editor) ---------- */
+.control-with-create { display: flex; flex-direction: column; gap: var(--space-1); }
+.person-create { position: relative; }
+.person-create > .btn { align-self: flex-start; }
+.person-create-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  max-width: 320px;
+}
+.person-create-title { font-weight: 700; font-size: 0.85rem; }
+.person-create-error { font-size: 0.75rem; }
+
+/* ---------- Task-to-task link picker ---------- */
+.link-picker { display: flex; flex-direction: column; gap: var(--space-2); }
+.link-picker .input-sm { font-size: 0.85rem; padding: 6px 10px; }
+.link-results { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow: auto; }
+.link-result {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.link-result:hover { background: var(--primary-soft); }
 
 /* ---------- Avatar ---------- */
 .avatar {

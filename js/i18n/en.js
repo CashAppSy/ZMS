@@ -12,6 +12,7 @@
       dashboard: "Dashboard",
       projects: "Pillars",
       tasks: "Tasks",
+      meetings: "Meetings",
       people: "People & Departments",
       reports: "Reports",
       settings: "Settings",
@@ -33,7 +34,8 @@
       noResults: "No results found", undo: "Undo", redo: "Redo", next: "Next", prev: "Prev",
       today: "Today", selectAll: "Select all", selected: "Selected",
       back: "Back", copy: "Copy", remove: "Remove", move: "Move",
-      counting: "{count} items", hour: "Hour", hoursUnit: "h"
+      counting: "{count} items", hour: "Hour", hoursUnit: "h",
+      owner: "Owner", link: "Link", unlink: "Unlink", saveAndNew: "Save & new"
     },
     confirm: {
       title: "Are you sure?",
@@ -41,6 +43,7 @@
       deletePerson: "Archive person '{name}'? Their tasks will be preserved.",
       deleteProject: "Delete pillar '{name}' and all its sub-pillars and tasks? This cannot be undone.",
       deleteTask: "Delete task '{title}' and all its sub-tasks?",
+      deleteMeeting: "Delete the meeting '{title}'? Its tasks stay in the Tasks tab.",
       deleteField: "Delete this custom field? Existing values will be lost.",
       restoreBackup: "Restore backup from {date}? Current data will be replaced.",
       continue: "Continue",
@@ -71,7 +74,8 @@
       deleteProject: "Delete pillar", subProjects: "Sub-pillars",
       tasks: "Tasks", noSubProjects: "No sub-pillars",
       name: "Pillar name", status: "Status", priority: "Priority",
-      manager: "Manager", members: "Members", startDate: "Start date",
+      manager: "Owner", managerHint: "The person accountable for this pillar.",
+      members: "Members", startDate: "Start date",
       endDate: "Due date", budget: "Budget", weight: "Weight",
       weightHint: "How much this pillar counts toward Overall progress — the bigger the weight, the bigger its share.",
       links: "Links", progress: "Progress",
@@ -99,7 +103,30 @@
       addComment: "Add comment", addDependency: "Add dependency",
       estimatedVsActual: "Estimated vs actual", plusNSubtasks: "{n} subtasks",
       perPerson: "Per person", groupBy: "Group by", columns: "Columns",
-      statusChanged: "changed status", moveHint: "Drag cards between columns"
+      statusChanged: "changed status", moveHint: "Drag cards between columns",
+      doubleClickToEdit: "Double click the row to edit this task",
+      assigneesReadOnly: "Assigned people — change them in the task editor (double click the row)",
+      linkedTasks: "Linked tasks", linkTask: "Link task", unlinkTask: "Unlink task",
+      noLinkedTasks: "No linked tasks", linkedTasksHint: "Link this task to another task (related work, blocker, follow-up).",
+      fromMeeting: "From meeting", meeting: "Meeting"
+    },
+    meetings: {
+      title: "Meetings", newMeeting: "New meeting", editMeeting: "Edit meeting",
+      deleteMeeting: "Delete meeting", meetingTitle: "Title",
+      date: "Date", time: "Time", location: "Location",
+      attendees: "Attendees", agenda: "Agenda", notes: "Notes",
+      addAgenda: "Add agenda item", agendaPlaceholder: "Type the item and press Enter",
+      addAttendee: "Add attendee", noAttendees: "No attendees yet",
+      pillars: "Pillars", addPillar: "Add pillar", noPillars: "No pillars linked",
+      tasks: "Tasks", newTask: "New task", linkExistingTask: "Link existing task",
+      noTasks: "No tasks yet", tasksCount: "{n} tasks", attendeesCount: "{n} attendees",
+      empty: "No meetings yet — create the first one, then add the tasks that come out of it.",
+      today: "Today", upcoming: "Upcoming", past: "Past", all: "All",
+      detail: "Meeting details", deleteIfEmpty: "This meeting has no tasks left. Delete it?",
+      taskCreated: "Task added to the meeting and to the Tasks tab",
+      taskLinked: "Task linked to the meeting",
+      onlyManagers: "Only admins and managers can create meetings.",
+      createdBy: "Created by"
     },
     kanban: {
       title: "Kanban", addCard: "Add", total: "Total", collapseCol: "Collapse"
@@ -136,7 +163,10 @@
       accountTempCopied: "Password copied",
       emailSyncFail: "A Cloud account's sign-in email can't be changed without Cloud Functions (not available on the free plan), so this person keeps the old email for signing in.",
       onlyAdminCreatesAccount: "Only the admin can create login accounts.",
-      resetPasswordMail: "Reset password"
+      resetPasswordMail: "Reset password",
+      newPerson: "New person",
+      personAdded: "{name} was added and selected",
+      personCreateHint: "The person is created in People and selected here straight away."
     },
     reports: {
       title: "Reports",
@@ -206,7 +236,8 @@
       required: "This field is required",
       invalidDate: "Invalid date",
       endBeforeStart: "End date is before start date",
-      invalidEmail: "Invalid email address"
+      invalidEmail: "Invalid email address",
+      titleRequired: "Please enter a title (or a name) — an empty title cannot be saved."
     },
     statuses: {
       task: {
@@ -236,7 +267,7 @@
       cleared: "Activity log cleared",
       at: "When", user: "User", entity: "Entity", entityName: "Item",
       action: "Action", detail: "Details",
-      entities: { task: "Task", project: "Pillar", person: "Person", department: "Department" },
+      entities: { task: "Task", project: "Pillar", person: "Person", department: "Department", meeting: "Meeting" },
       actions: {
         created: "created", updated: "updated", status: "changed status",
         progress: "changed progress", deleted: "deleted", archived: "archived"

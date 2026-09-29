@@ -12,11 +12,15 @@
     migrations.push({ from: from, to: to, fn: fn });
   }
 
-  // Example future migration (kept as reference — do not run yet):
-  // register(1, 2, function (data) {
-  //   // e.g. data.settings.someNewFlag = false;
-  //   return data;
-  // });
+  // v1 -> v2: meetings collection + task meeting / task-link fields.
+  register(1, 2, function (data) {
+    if (!Array.isArray(data.meetings)) data.meetings = [];
+    (data.tasks || []).forEach(function (t) {
+      if (!Array.isArray(t.linkedTaskIds)) t.linkedTaskIds = [];
+      if (t.meetingId === undefined) t.meetingId = null;
+    });
+    return data;
+  });
 
   function migrate(data) {
     if (!data || typeof data !== "object") return null;

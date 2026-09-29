@@ -136,7 +136,7 @@
   }
 
   function ensureShape(d) {
-    var keys = ["departments", "people", "projects", "tasks", "users", "customFieldDefs",
+    var keys = ["departments", "people", "projects", "tasks", "meetings", "users", "customFieldDefs",
       "taskStatuses", "projectStatuses", "priorities", "savedFilters", "activities"];
     keys.forEach(function (k) {
       if (!Array.isArray(d[k])) d[k] = [];
@@ -163,6 +163,11 @@
     }
     if (!d.schemaVersion) d.schemaVersion = PMS.schema.VERSION;
     if (!d.meta) d.meta = { updatedAt: null };
+    // tasks: meeting backlink + task-to-task links are optional
+    (d.tasks || []).forEach(function (t) {
+      if (!Array.isArray(t.linkedTaskIds)) t.linkedTaskIds = [];
+      if (t.meetingId === undefined) t.meetingId = null;
+    });
   }
 
   function undo() {

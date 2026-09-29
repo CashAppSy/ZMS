@@ -291,8 +291,9 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("manager canEditProject(own)=true", PMS.auth.canEditProject(own) === true);
   ok("manager canEditProject(other)=false", PMS.auth.canEditProject(PMS.repos.projects.get(projSub.id)) === false);
   ok("manager canCreateTask(own)=true", PMS.auth.canCreateTask(projNew.id) === true);
-  ok("manager canCreateTask(other)=false", PMS.auth.canCreateTask(projSub.id) === false);
+  ok("manager canCreateTask(other)=true (managers own every pillar)", PMS.auth.canCreateTask(projSub.id) === true);
   ok("manager canCreateTask(any)=true", PMS.auth.canCreateTask() === true);
+  ok("manager canCreateMeeting=true", PMS.auth.canCreateMeeting() === true);
   ok("manager canEditProject(new)=true (creates projects)", PMS.auth.canEditProject(null) === true);
   PMS.modal.close();
   PMS.editors.openProjectEditor(PMS.repos.projects.get(projSub.id), {});
@@ -300,14 +301,14 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.editors.openProjectEditor(own, {});
   ok("manager can open own project editor", PMS.editors.canOpenProject(own) === true && PMS.modal.isOpen === true);
 
-  // manager may change the STATUS of tasks/subtasks inside their own project
-  // (even when not assigned), but not inside a project they do not manage
+  // manager may change the STATUS of ANY task/subtask, owned or not
+  // (managers own every pillar; members stay limited to assigned tasks)
   const mgrLeaf1 = PMS.repos.tasks.get(tLeaf1.id);               // projNew, assigned to Ada only
   const mgrChild = PMS.repos.tasks.children(tParent.id)[0];      // projNew subtask, no assignees
   const betaT = PMS.repos.tasks.add({ title: "E2E beta task", projectId: projSub.id, status: "todo" });
   ok("manager canChangeStatus unassigned task in own project", PMS.auth.canChangeStatus(mgrLeaf1) === true);
   ok("manager canChangeStatus unassigned SUBTASK in own project", PMS.auth.canChangeStatus(mgrChild) === true);
-  ok("manager cannot change status of a task in another project", PMS.auth.canChangeStatus(betaT) === false);
+  ok("manager canChangeStatus an unassigned task in a foreign pillar", PMS.auth.canChangeStatus(betaT) === true);
   ok("manager may open status-only editor for own-project task", PMS.editors.canOpenTask(mgrLeaf1) === true);
   PMS.repos.tasks.remove(betaT.id);
   PMS.modal.close();
@@ -322,7 +323,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   section("E.1 All views render (live bundle, admin, dummy data)");
   const routes = [
     "/", "/projects", "/projects/" + projNew.id, "/tasks", "/tasks/kanban",
-    "/tasks/gantt", "/tasks/calendar", "/people", "/reports", "/settings", "/activity"
+    "/tasks/gantt", "/tasks/calendar", "/meetings", "/people", "/reports", "/settings", "/activity"
   ];
   const timings = {};
   routes.forEach(r => {
@@ -345,6 +346,15 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.modal.close();
   PMS.editors.openTaskEditor(null, { defaults: { projectId: projNew.id } }); ok("task create editor opens", PMS.modal.isOpen === true);
   PMS.modal.close();
+  PMS.editors.openMeetingEditor(null, {}); ok("meeting create editor opens", PMS.modal.isOpen === true);
+  PMS.modal.close();
+  const e2eMeeting = PMS.repos.meetings.add({ title: "E2E meeting", date: PMS.utils.todayISO(), time: "10:00", attendees: [pA.id], agenda: ["item"], projectIds: [projNew.id] });
+  const e2eMtTask = PMS.repos.tasks.add({ title: "E2E meeting action", projectId: projNew.id, status: "todo", meetingId: e2eMeeting.id });
+  ok("task created from a meeting shows up in the meeting", PMS.repos.meetings.tasksOf(e2eMeeting.id).length === 1);
+  const e2eLinked = PMS.repos.tasks.add({ title: "E2E linked task", projectId: projNew.id, status: "todo" });
+  ok("tasks.link is symmetric", PMS.repos.tasks.link(e2eMtTask.id, e2eLinked.id) && PMS.repos.tasks.get(e2eLinked.id).linkedTaskIds.indexOf(e2eMtTask.id) !== -1);
+  PMS.repos.meetings.remove(e2eMeeting.id);
+  ok("deleting a meeting keeps its task in the Tasks tab", PMS.repos.tasks.get(e2eMtTask.id) !== null && PMS.repos.tasks.get(e2eMtTask.id).meetingId === null);
   PMS.repos.tasks.update(tLeaf2.id, { status: "done" });
   ok("repos.tasks.update persists status (logs entry)", PMS.repos.tasks.get(tLeaf2.id).status === "done");
 
@@ -527,8 +537,8 @@ function writeReport(pass, fail, bootMs, timings) {
   lines.push("- Deployment integrity: every live asset byte-identical to the committed repo.");
   lines.push("- Boot: modules load, zero window errors, bootstrap admin granted.");
   lines.push("- Dummy data: departments, people, projects(+subproject), tasks(+subtasks, assignees, custom fields, tags, saved filters).");
-  lines.push("- Roles: **member** (status-only on assigned tasks, everything else denied), **manager** (own projects only, create projects/tasks in own projects), **admin** (full).");
-  lines.push("- Features: all 11 routes, editors, derived progress engine, filters/sort/group, 8+ reports with real status-color donut, activity log, undo/redo, export/import (sanitized), backups, themes (light/dark) + RTL Arabic, cascade delete, persistence after reload.");
+  lines.push("- Roles: **member** (status-only on assigned tasks, everything else denied), **manager** (own projects, but creates tasks in any pillar and re-statuses any task), **admin** (full).");
+  lines.push("- Features: all 12 routes (incl. `/meetings`), editors, meetings (tasks + pillars per meeting), task-to-task links, inline person creation, derived progress engine, filters/sort/group, 8+ reports with real status-color donut, activity log, undo/redo, export/import (sanitized), backups, themes (light/dark) + RTL Arabic, cascade delete, persistence after reload.");
   lines.push("");
   lines.push("## Breakdown by section");
   lines.push("");

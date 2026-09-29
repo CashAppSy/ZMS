@@ -102,6 +102,7 @@
         return p;
       });
       mergeArray(d, "tasks", obj, function (x) { return PMS.dataMerge.taskDB(x); });
+      mergeArray(d, "meetings", obj, function (x) { return PMS.dataMerge.meetingDB(x); });
     }, "import-merge");
     PMS.toast.show(PMS.i18n.t("export.importOk_merge"), "success");
     return { ok: true, records: obj.tasks.length };
@@ -171,8 +172,19 @@
         actualHours: t.actualHours || 0, progress: t.progress != null ? t.progress : 0,
         tags: t.tags || [], checklist: t.checklist || [], comments: t.comments || [],
         activity: t.activity || [], dependencies: t.dependencies || [],
+        linkedTaskIds: t.linkedTaskIds || [], meetingId: t.meetingId || null,
         customFields: t.customFields || {},
         createdAt: t.createdAt || U.nowISO(), updatedAt: t.updatedAt || U.nowISO()
+      };
+    },
+    meetingDB: function (m) {
+      return {
+        id: m.id, title: m.title || m.name, date: m.date || null, time: m.time || null,
+        location: m.location || null, attendees: m.attendees || [],
+        agenda: m.agenda || [], projectIds: m.projectIds || [],
+        taskIds: m.taskIds || [], notes: m.notes || "", status: m.status || "planned",
+        createdBy: m.createdBy || null,
+        createdAt: m.createdAt || U.nowISO(), updatedAt: m.updatedAt || U.nowISO()
       };
     }
   };

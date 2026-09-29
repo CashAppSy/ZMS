@@ -25,7 +25,9 @@
   --z-modal: 1000;
   --z-loading: 1050;
   --z-toast: 1100;
-  --z-dropdown: 900;
+  /* menus must sit ABOVE the modal overlay: pickers are opened from inside
+     dialogs (link a task, pick people) and would be unclickable below it */
+  --z-dropdown: 1200;
 
   --transition: 0.15s ease;
 

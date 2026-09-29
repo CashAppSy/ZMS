@@ -65,32 +65,112 @@
         break;
 
       case "select":
-        self.el = h("select.select");
-        self.el.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
+        var selEl = h("select.select");
+        selEl.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
         (field.options || []).forEach(function (o) {
-          self.el.appendChild(h("option", { value: o.value || o, text: o.label || o }));
+          selEl.appendChild(h("option", { value: o.value || o, text: o.label || o }));
         });
         // set AFTER appending options so the current value is selected (and
         // so saving an edit cannot silently reset the field to the first option)
-        self.el.value = value !== undefined && value !== null ? String(value) : "";
-        self.getValue = function () { return self.el.value || null; };
+        selEl.value = value !== undefined && value !== null ? String(value) : "";
+        if (field.allowCreatePerson) {
+          // "+ person" popup: create somebody who does not exist yet and
+          // select them right away (assigning to a person not in the system)
+          self.el = h("div.control-with-create");
+          self.el.appendChild(selEl);
+          self.el.appendChild(personCreator(function (person) {
+            selEl.appendChild(h("option", { value: person.id, text: person.name }));
+            selEl.value = person.id;
+          }).el);
+        } else {
+          self.el = selEl;
+        }
+        self.getValue = function () { return selEl.value || null; };
         break;
 
       case "multiselect":
-        self.el = h("div");
+        var listEl = h("div");
         (field.options || []).forEach(function (o) {
           var val = o.value || o, lab = o.label || o;
           var box = h("label.checkbox-row", { style: { marginBlock: "2px" } });
           var cb = h("input", { type: "checkbox", value: val, checked: (value || []).indexOf(val) !== -1 });
           box.appendChild(cb);
           box.appendChild(h("span", { text: lab }));
-          self.el.appendChild(box);
+          listEl.appendChild(box);
         });
+        if (field.allowCreatePerson) {
+          self.el = h("div.control-with-create");
+          self.el.appendChild(listEl);
+          self.el.appendChild(personCreator(function (person) {
+            var box = h("label.checkbox-row", { style: { marginBlock: "2px" } });
+            var cb = h("input", { type: "checkbox", value: person.id, checked: true });
+            box.appendChild(cb);
+            box.appendChild(h("span", { text: person.name }));
+            listEl.appendChild(box);
+          }).el);
+        } else {
+          self.el = listEl;
+        }
         self.getValue = function () {
           var out = [];
           self.el.querySelectorAll("input:checked").forEach(function (c) { out.push(c.value); });
           return out;
         };
+        break;
+
+      case "linkedTask":
+        // task <-> task links: search + chips instead of a long checkbox list
+        self.el = h("div.link-picker");
+        (function () {
+          var exclude = field.excludeId || null;
+          var chips = h("div.u-flex", { style: { gap: "4px", flexWrap: "wrap" } });
+          var results = h("div.link-results");
+          var search = h("input.input.input-sm", { placeholder: t("search.placeholderTasks") || "Search..." });
+          var selected = Array.isArray(value) ? value.slice() : [];
+
+          function paintChips() {
+            PMS.dom.clear(chips);
+            selected.forEach(function (id) {
+              var task = PMS.repos.tasks.get(id);
+              if (!task) return;
+              var chip = h("span.chip.removable", { dataset: { val: id } });
+              chip.appendChild(h("span", { text: task.title }));
+              chip.appendChild(h("span.chip-x", { text: "✕", on: { click: function () {
+                selected = selected.filter(function (x) { return x !== id; });
+                paintChips();
+              } } }));
+              chips.appendChild(chip);
+            });
+          }
+          function paintResults() {
+            PMS.dom.clear(results);
+            var q = (search.value || "").trim().toLowerCase();
+            if (!q) return;
+            PMS.repos.tasks.all().filter(function (x) {
+              if (x.id === exclude) return false;
+              if (selected.indexOf(x.id) !== -1) return false;
+              return String(x.title || "").toLowerCase().indexOf(q) !== -1;
+            }).slice(0, 8).forEach(function (x) {
+              var p = PMS.repos.projects.get(x.projectId);
+              var row = h("div.link-result", {
+                on: { click: function () {
+                  selected.push(x.id);
+                  search.value = "";
+                  paintChips(); paintResults();
+                } }
+              });
+              row.appendChild(h("span.u-ellipsis", { text: x.title }));
+              row.appendChild(h("span.u-muted", { text: p ? p.name : "" }));
+              results.appendChild(row);
+            });
+          }
+          search.addEventListener("input", paintResults);
+          self.el.appendChild(chips);
+          self.el.appendChild(search);
+          self.el.appendChild(results);
+          paintChips();
+          self.getValue = function () { return selected.slice(); };
+        })();
         break;
 
       case "checkbox":
@@ -103,7 +183,7 @@
 
       case "tags":
         self.el = h("div.tag-input");
-        self.el.appendChild(buildTagInput(self.el, value || []));
+        self.el.appendChild(buildTagInput(self.el, value || [], field.placeholder));
         self.getValue = function () {
           var out = [];
           self.el.querySelectorAll(".tag-input .chip").forEach(function (ch) {
@@ -159,8 +239,8 @@
     return ft.render(field, value, h);
   }
 
-  function buildTagInput(container, initial) {
-    var input = h("input", { placeholder: t("common.placeholderTag") || "" });
+  function buildTagInput(container, initial, placeholder) {
+    var input = h("input", { placeholder: placeholder || t("common.placeholderTag") || "" });
     container.appendChild(input); // must be a child before chips are inserted before it
     initial.forEach(function (tag) { container.insertBefore(mkTagger(tag, container), input); });
     input.addEventListener("keydown", function (e) {
@@ -187,5 +267,84 @@
     return chip;
   }
 
-  PMS.forms = { build: build, buildControl: buildControl };
+  /* ---------------- create-a-person popup (inline, no nested modal) ----------
+     Used by every "assign / owner / members" control: when the person being
+     assigned does not exist yet, create them from the same screen instead of
+     opening the People page in another tab. A modal cannot be stacked (the
+     modal API replaces the open one), so the popup is an inline panel. */
+  function personCreator(onCreated) {
+    var wrap = h("div.person-create");
+    var panel = h("div.person-create-panel", { style: { display: "none" } });
+
+    var btn = h("button.btn.btn-sm.btn-ghost", {
+      type: "button",
+      text: "+ " + t("people.addPerson"),
+      on: { click: function () {
+        var open = panel.style.display === "none";
+        panel.style.display = open ? "block" : "none";
+        if (open) setTimeout(function () { nameInput.focus(); }, 20);
+      } }
+    });
+    wrap.appendChild(btn);
+
+    var nameInput = h("input.input", { placeholder: t("people.name"), required: true });
+    var emailInput = h("input.input", { type: "email", placeholder: t("people.email") });
+    var deptSel = h("select.select");
+    deptSel.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
+    PMS.repos.departments.all().forEach(function (d) {
+      deptSel.appendChild(h("option", { value: d.id, text: d.name }));
+    });
+
+    var err = h("div.hint.person-create-error", { style: { color: "var(--danger)", display: "none" } });
+    function showError(msg) { err.textContent = msg; err.style.display = "block"; }
+    function clearError() { err.textContent = ""; err.style.display = "none"; }
+
+    [nameInput, emailInput].forEach(function (el) {
+      el.addEventListener("input", clearError);
+    });
+
+    var saveBtn = h("button.btn.btn-sm.btn-primary", {
+      type: "button",
+      text: t("common.add"),
+      on: { click: function () {
+        var name = nameInput.value.trim();
+        var email = emailInput.value.trim();
+        if (!name) { showError(t("validation.required")); nameInput.classList.add("invalid"); return; }
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError(t("validation.invalidEmail")); return; }
+        var person = PMS.repos.people.add({
+          name: name,
+          email: email,
+          departmentId: deptSel.value || null,
+          jobTitle: "",
+          phone: "",
+          notes: "",
+          status: "active"
+        });
+        if (onCreated) onCreated(person);
+        nameInput.value = ""; emailInput.value = "";
+        panel.style.display = "none";
+        clearError();
+        PMS.toast.show(t("people.personAdded", { name: person.name }), "success");
+      } }
+    });
+    var cancelBtn = h("button.btn.btn-sm", {
+      type: "button", text: t("common.cancel"),
+      on: { click: function () { panel.style.display = "none"; clearError(); } }
+    });
+
+    panel.appendChild(h("div.person-create-title", { text: t("people.newPerson") }));
+    panel.appendChild(nameInput);
+    panel.appendChild(emailInput);
+    panel.appendChild(deptSel);
+    panel.appendChild(err);
+    panel.appendChild(h("div.hint", { text: t("people.personCreateHint") }));
+    var actions = h("div.u-flex", { style: { gap: "6px" } });
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    panel.appendChild(actions);
+    wrap.appendChild(panel);
+    return { el: wrap, panel: panel };
+  }
+
+  PMS.forms = { build: build, buildControl: buildControl, personCreator: personCreator };
 })(window.PMS);

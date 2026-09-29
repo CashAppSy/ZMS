@@ -392,13 +392,20 @@
     return !!(project && project.managerId && currentPersonId() && project.managerId === currentPersonId());
   }
 
-  // Full task CRUD (every field). Admins: every task. Managers and members:
-  // only the tasks assigned to them (enforced in the editors).
+  // Full task CRUD (every field). Admins: every task. Managers: their own
+  // assigned tasks, the tasks they created (in any pillar) and the tasks of the
+  // pillars they own. Members: only the tasks assigned to them.
   function canEditTask(task) {
     var u = currentUser();
     if (!u) return false;
     if (u.role === "admin") return true;
-    if (u.role === "manager" || u.role === "member") return isAssignee(task);
+    if (isAssignee(task)) return true;
+    if (u.role === "manager") {
+      if (task && task.createdBy === u.id) return true;
+      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === taskProjectId(task); });
+      return managesProject(p);
+    }
+    if (u.role === "member") return false;
     return false;
   }
 
@@ -419,33 +426,39 @@
   }
 
   // May the current user change the STATUS of this task/subtask?
-  // Admins: any. Managers: every task/subtask inside a project they manage,
-  // plus their own assigned tasks. Members: only their assigned tasks.
+  // Admins and managers: any task (managers own every pillar — including an
+  // UNASSIGNED task, which nobody else can act on). Members: their own tasks.
   function canChangeStatus(task) {
     var u = currentUser();
     if (!u || !task) return false;
     if (u.role === "admin") return true;
     if (isAssignee(task)) return true;
-    if (u.role === "manager") {
-      var pid = taskProjectId(task);
-      if (!pid) return false;
-      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === pid; });
-      return managesProject(p);
-    }
+    if (u.role === "manager") return true;
     return false;
   }
 
-  // May the current user create a task? Admins: any project. Managers: only the
-  // projects they manage (empty projectId is resolved by the caller).
+  // May the current user create a task? Admins: any pillar. Managers: any
+  // pillar too (an unassigned task belongs to nobody, so it must be
+  // assignable/reachable from every pillar). Members: never.
   function canCreateTask(projectId) {
     var u = currentUser();
     if (!u) return false;
-    if (u.role === "admin") return true;
-    if (u.role === "manager") {
-      if (!projectId) return true;
-      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === projectId; });
-      return managesProject(p);
-    }
+    if (u.role === "admin" || u.role === "manager") return true;
+    return false;
+  }
+
+  // Meetings are created/edited by admins and managers; members read them and
+  // may create the tasks that come out of them (if they may create tasks).
+  function canCreateMeeting() {
+    var u = currentUser();
+    if (!u) return false;
+    return u.role === "admin" || u.role === "manager";
+  }
+
+  function canEditMeeting(meeting) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin" || u.role === "manager") return true;
     return false;
   }
 
@@ -668,6 +681,8 @@ PMS.auth = {
     canEditTask: canEditTask,
     canChangeStatus: canChangeStatus,
     canCreateTask: canCreateTask,
+    canCreateMeeting: canCreateMeeting,
+    canEditMeeting: canEditMeeting,
     canEditProject: canEditProject,
     canDelete: canDelete,
     requireDelete: requireDelete,

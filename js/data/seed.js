@@ -114,6 +114,7 @@
         progress: o.status === "done" ? 100 : (o.prog !== undefined ? o.prog : 30),
         tags: o.tags || ["sample"], checklist: [], comments: [], activity: [],
         dependencies: o.deps || [], customFields: mapCf(o.cf || {}),
+        linkedTaskIds: o.links || [], meetingId: o.meetingId || null,
         createdAt: now, updatedAt: now
       };
       data.tasks.push(t);
@@ -155,6 +156,30 @@
       { id: PMS.ids.uuid(), text: "Type scale", done: true },
       { id: PMS.ids.uuid(), text: "Spacing grid", done: false }
     ];
+
+    // ------- meetings (with the tasks that came out of them) -------
+    var weekly = {
+      id: PMS.ids.uuid(), title: "Weekly team meeting", date: iso(-7), time: "10:00",
+      location: "Meeting room A", attendees: ["Sara Ahmed", "Omar Khalil", "Nour Salameh", "Khaled Mansour"].map(function (n) { return person(n).id; }),
+      agenda: ["Last week follow-up", "Sprint risks", "Next week plan"],
+      projectIds: [web.id, mobile.id], taskIds: [], notes: "Weekly sync of the delivery team.",
+      status: "done", createdAt: now, updatedAt: now
+    };
+    var review = {
+      id: PMS.ids.uuid(), title: "Product review", date: iso(3), time: "13:30",
+      location: "Main hall", attendees: ["Khaled Mansour", "Sara Ahmed", "Rania Barakat", "Ali Yousef"].map(function (n) { return person(n).id; }),
+      agenda: ["Demo of the new dashboard", "Open blockers", "Priorities for next month"],
+      projectIds: [ops.id], taskIds: [], notes: "Decisions are added as tasks.",
+      status: "planned", createdAt: now, updatedAt: now
+    };
+    data.meetings = [weekly, review];
+
+    var mt1 = addTask(ops, "Fix the metrics delay alert", { meetingId: weekly.id, status: "todo", priority: "urgent", assignees: ["Ali Yousef"], est: 6, dueOffset: 4, tags: ["meeting"] });
+    var mt2 = addTask(web, "Prepare the hero section mockup", { meetingId: review.id, status: "todo", priority: "high", assignees: ["Nour Salameh"], est: 8, dueOffset: 7, tags: ["meeting"] });
+    mt1.linkedTaskIds = [mt2.id];
+    mt2.linkedTaskIds = [mt1.id];
+    weekly.taskIds = [mt1.id];
+    review.taskIds = [mt2.id];
 
     // ------- settings -------
     data.settings.lang = PMS.i18n.getLang() || "en";

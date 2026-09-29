@@ -190,15 +190,21 @@
   }
 
   function renderRow(row, visible) {
-    var rowEl = h("div.vt-row");
+    var rowEl = h("div.vt-row", { attrs: { title: t("tasks.doubleClickToEdit") } });
     visible.forEach(function (col) {
       var cell = h("div.vt-td");
       if (col.render) cell.appendChild(col.render(row, rowEl));
       else cell.textContent = "";
       rowEl.appendChild(cell);
     });
-    // inline edit on double click of title
-    rowEl.addEventListener("dblclick", function () { PMS.taskDetail.open(row.id); });
+    // double click anywhere on the row -> open the FULL task editor
+    rowEl.addEventListener("dblclick", function () {
+      if (PMS.auth && !PMS.auth.canEditTask(row)) {
+        PMS.toast.show(t("auth.forbidden"), "error");
+        return;
+      }
+      PMS.editors.openTaskEditor(row, {});
+    });
     return rowEl;
   }
 
@@ -208,6 +214,22 @@
     titleWrap.appendChild(h("span.u-ellipsis", { text: row.title }));
     var subCount = PMS.repos.tasks.children(row.id).length;
     if (subCount) titleWrap.appendChild(h("span.badge", { text: "+" + subCount }));
+    var linkCount = (row.linkedTaskIds || []).length;
+    if (linkCount) {
+      titleWrap.appendChild(h("span.chip", {
+        text: "🔗" + linkCount,
+        attrs: { title: t("tasks.linkedTasks") },
+        on: { click: function (e) { e.stopPropagation(); } }
+      }));
+    }
+    if (row.meetingId) {
+      var mtg = PMS.repos.meetings.get(row.meetingId);
+      titleWrap.appendChild(h("span.chip.chip-meeting", {
+        text: "🗓" + (mtg ? " " + (mtg.title || "") : ""),
+        attrs: { title: t("tasks.fromMeeting") },
+        on: { click: function (e) { e.stopPropagation(); if (PMS.meetings) PMS.meetings.openDetail(row.meetingId); } }
+      }));
+    }
     if (row.tags && row.tags.length) titleWrap.appendChild(h("span.chip", { text: row.tags[0] }));
     cell.appendChild(titleWrap);
     if (PMS.auth ? PMS.auth.canEditTask(row) : true) {
@@ -260,8 +282,10 @@
 
   function cellPriority(row) { return PMS.vformat.priorityBadge(row.priority); }
 
+  // Assignees are READ-ONLY here: assignment is edited in the task editor
+  // (double click the row), never inline in the table.
   function cellAssignees(row) {
-    var wrap = h("span.u-flex", { style: { gap: "4px" } });
+    var wrap = h("span.u-flex.vt-assignees", { style: { gap: "4px" }, attrs: { title: t("tasks.assigneesReadOnly") } });
     (row.assignees || []).forEach(function (pid) {
       var p = PMS.repos.people.get(pid);
       if (p) wrap.appendChild(PMS.vformat.avatar(p));
