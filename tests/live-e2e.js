@@ -2,7 +2,10 @@
 /* ============================================================================
    ZMS Live-Site Full Automation Test.
    Runs the code that is ACTUALLY DEPLOYED at:
-        https://cashappsy.github.io/ZMS/
+        https://mtn-syr.github.io/ZMS/
+   (DEVELOPMENT build — cloud sync points at the zain-management-tool
+   Firestore project, separate from the live cashappsy.github.io/ZMS build
+   which uses test-d371d. Running the suite here NEVER touches live data.)
    by fetching the live index.html + js/css assets straight from GitHub Pages
    and executing them in a jsdom browser sandbox (the app is local-only until
    cloud sync is enabled, so no live Firestore writes are performed).
@@ -25,7 +28,7 @@ const path = require("path");
 const { JSDOM } = require("jsdom");
 
 const APP = path.resolve(__dirname, "..");
-const BASE = "https://cashappsy.github.io/ZMS/";
+const BASE = "https://mtn-syr.github.io/ZMS/";
 
 // ---------------- tiny async helpers ----------------
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -498,7 +501,7 @@ function writeReport(pass, fail, bootMs, timings) {
   lines.push("");
   lines.push("**Date:** " + new Date().toISOString());
   lines.push("");
-  lines.push("**Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)");
+  lines.push("**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)");
   lines.push("");
   lines.push("**Method:** fetched the *deployed* index.html + all js/css assets from GitHub Pages and executed them in a jsdom browser sandbox (the app is local-only until cloud sync is enabled, so no production data was touched).");
   lines.push("");

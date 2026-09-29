@@ -1,8 +1,8 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-28T14:27:17.340Z
+**Date:** 2026-09-29T19:47:37.987Z
 
-**Target:** https://cashappsy.github.io/ZMS/ (deployed main branch)
+**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
 **Method:** fetched the *deployed* index.html + all js/css assets from GitHub Pages and executed them in a jsdom browser sandbox (the app is local-only until cloud sync is enabled, so no production data was touched).
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 11 ms |
-| Mean route render | ~18 ms |
-| Slowest route | ~53 ms |
+| App boot (store init from live bundle) | 9 ms |
+| Mean route render | ~20 ms |
+| Slowest route | ~69 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 54 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (9ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -140,7 +140,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/c743a42f-3cff-43d5-86c9-19ca2914fff3 renders clean | PASS |
+| 3 | route /projects/2a724bc1-7354-453d-9915-3b8476a14296 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
