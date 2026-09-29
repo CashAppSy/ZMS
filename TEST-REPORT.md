@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-29T19:47:37.987Z
+**Date:** 2026-09-29T20:53:51.491Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 134 |
+| **Passed** | 140 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 9 ms |
-| Mean route render | ~20 ms |
-| Slowest route | ~69 ms |
+| App boot (store init from live bundle) | 13 ms |
+| Mean route render | ~18 ms |
+| Slowest route | ~54 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -28,8 +28,8 @@
 - Deployment integrity: every live asset byte-identical to the committed repo.
 - Boot: modules load, zero window errors, bootstrap admin granted.
 - Dummy data: departments, people, projects(+subproject), tasks(+subtasks, assignees, custom fields, tags, saved filters).
-- Roles: **member** (status-only on assigned tasks, everything else denied), **manager** (own projects only, create projects/tasks in own projects), **admin** (full).
-- Features: all 11 routes, editors, derived progress engine, filters/sort/group, 8+ reports with real status-color donut, activity log, undo/redo, export/import (sanitized), backups, themes (light/dark) + RTL Arabic, cascade delete, persistence after reload.
+- Roles: **member** (status-only on assigned tasks, everything else denied), **manager** (own projects, but creates tasks in any pillar and re-statuses any task), **admin** (full).
+- Features: all 12 routes (incl. `/meetings`), editors, meetings (tasks + pillars per meeting), task-to-task links, inline person creation, derived progress engine, filters/sort/group, 8+ reports with real status-color donut, activity log, undo/redo, export/import (sanitized), backups, themes (light/dark) + RTL Arabic, cascade delete, persistence after reload.
 
 ## Breakdown by section
 
@@ -39,8 +39,8 @@
 |---|---|---|
 | 1 | live index.html reachable (200) | PASS |
 | 2 | live index.html == repo index.html (line-endings normalized) | PASS |
-| 3 | all 54 live js assets fetched | PASS |
-| 4 | live js == committed js (byte-identical, 54/54) | PASS |
+| 3 | all 55 live js assets fetched | PASS |
+| 4 | live js == committed js (byte-identical, 55/55) | PASS |
 | 5 | all 8 live css assets fetched (200) | PASS |
 | 6 | live css set matches repo css set | PASS |
 
@@ -48,9 +48,9 @@
 
 | # | Check | Status |
 |---|---|---|
-| 1 | all 54 scripts evaluated without error | PASS |
+| 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (9ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -117,15 +117,16 @@
 | 8 | manager canEditProject(own)=true | PASS |
 | 9 | manager canEditProject(other)=false | PASS |
 | 10 | manager canCreateTask(own)=true | PASS |
-| 11 | manager canCreateTask(other)=false | PASS |
+| 11 | manager canCreateTask(other)=true (managers own every pillar) | PASS |
 | 12 | manager canCreateTask(any)=true | PASS |
-| 13 | manager canEditProject(new)=true (creates projects) | PASS |
-| 14 | manager cannot open project editor of another project | PASS |
-| 15 | manager can open own project editor | PASS |
-| 16 | manager canChangeStatus unassigned task in own project | PASS |
-| 17 | manager canChangeStatus unassigned SUBTASK in own project | PASS |
-| 18 | manager cannot change status of a task in another project | PASS |
-| 19 | manager may open status-only editor for own-project task | PASS |
+| 13 | manager canCreateMeeting=true | PASS |
+| 14 | manager canEditProject(new)=true (creates projects) | PASS |
+| 15 | manager cannot open project editor of another project | PASS |
+| 16 | manager can open own project editor | PASS |
+| 17 | manager canChangeStatus unassigned task in own project | PASS |
+| 18 | manager canChangeStatus unassigned SUBTASK in own project | PASS |
+| 19 | manager canChangeStatus an unassigned task in a foreign pillar | PASS |
+| 20 | manager may open status-only editor for own-project task | PASS |
 
 ### D.3 Role matrix — ADMIN (full)
 
@@ -140,16 +141,17 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/2a724bc1-7354-453d-9915-3b8476a14296 renders clean | PASS |
+| 3 | route /projects/d668be0a-f5a7-4b02-943c-011b2ffa11d8 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
 | 7 | route /tasks/calendar renders clean | PASS |
-| 8 | route /people renders clean | PASS |
-| 9 | route /reports renders clean | PASS |
-| 10 | route /settings renders clean | PASS |
-| 11 | route /activity renders clean | PASS |
-| 12 | dashboard includes all chart sections | PASS |
+| 8 | route /meetings renders clean | PASS |
+| 9 | route /people renders clean | PASS |
+| 10 | route /reports renders clean | PASS |
+| 11 | route /settings renders clean | PASS |
+| 12 | route /activity renders clean | PASS |
+| 13 | dashboard includes all chart sections | PASS |
 
 ### E.2 Editors open/save for every entity
 
@@ -160,7 +162,11 @@
 | 3 | person editor opens | PASS |
 | 4 | person create editor opens | PASS |
 | 5 | task create editor opens | PASS |
-| 6 | repos.tasks.update persists status (logs entry) | PASS |
+| 6 | meeting create editor opens | PASS |
+| 7 | task created from a meeting shows up in the meeting | PASS |
+| 8 | tasks.link is symmetric | PASS |
+| 9 | deleting a meeting keeps its task in the Tasks tab | PASS |
+| 10 | repos.tasks.update persists status (logs entry) | PASS |
 
 ### E.3 Derived progress engine
 
