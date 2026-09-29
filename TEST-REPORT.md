@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-29T20:53:51.491Z
+**Date:** 2026-09-29T21:47:16.550Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 140 |
+| **Passed** | 163 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 13 ms |
+| App boot (store init from live bundle) | 11 ms |
 | Mean route render | ~18 ms |
-| Slowest route | ~54 ms |
+| Slowest route | ~49 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/d668be0a-f5a7-4b02-943c-011b2ffa11d8 renders clean | PASS |
+| 3 | route /projects/32798fea-11c9-4159-88e2-6aceb9cda969 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -238,6 +238,34 @@
 | 4 | arabic text visible | PASS |
 | 5 | theme back to light | PASS |
 | 6 | back to en + light renders /reports | PASS |
+
+### E.9b Pillars cards, nested sub-tasks, meeting summaries (live UI)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live /projects renders pillar cards | PASS |
+| 2 | live pillars sorted by progress desc | PASS |
+| 3 | live pillar cards show an owner chip | PASS |
+| 4 | live pillar cards show a progress bar | PASS |
+| 5 | live /projects shows the sort hint | PASS |
+| 6 | live /tasks nests sub-tasks under their parent | PASS |
+| 7 | live sub-task rows are indented | PASS |
+| 8 | live parent rows expose a collapse chevron | PASS |
+| 9 | live collapsing a parent hides its sub-tasks | PASS |
+| 10 | live expanding the parent restores the sub-tasks | PASS |
+| 11 | live tasks toolbar has collapse/expand sub-task actions | PASS |
+| 12 | live /meetings opens on the All filter | PASS |
+| 13 | live All is the first filter option | PASS |
+| 14 | live meeting card renders | PASS |
+| 15 | live meeting card lists its task compactly | PASS |
+| 16 | live meeting card lists its pillar compactly | PASS |
+| 17 | live meeting chip opens the linked task | PASS |
+| 18 | live meeting card shows the time as HH:MM | PASS |
+| 19 | live meeting time field is an hours+minutes input | PASS |
+| 20 | live time control normalizes free text | PASS |
+| 21 | live meeting cleanup keeps its task | PASS |
+| 22 | live /people renders a card per person | PASS |
+| 23 | live person card shows name + email + phone | PASS |
 
 ### E.10 Workflow CRUD through UI repos
 
