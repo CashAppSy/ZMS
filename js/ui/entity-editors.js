@@ -182,7 +182,7 @@
     return [
       { key: "title", label: t("meetings.meetingTitle"), type: "text", required: true, full: true },
       { key: "date", label: t("meetings.date"), type: "date" },
-      { key: "time", label: t("meetings.time"), type: "text" },
+      { key: "time", label: t("meetings.time"), type: "time" },
       { key: "location", label: t("meetings.location"), type: "text" },
       { key: "attendees", label: t("meetings.attendees"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }), allowCreatePerson: true, full: true },
       { key: "agenda", label: t("meetings.agenda"), type: "tags", placeholder: t("meetings.agendaPlaceholder"), full: true },

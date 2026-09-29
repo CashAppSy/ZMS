@@ -11,29 +11,60 @@
 
   function buildTree(progressMap) {
     var projs = data().projects || [];
+    var pctOf = function (p) {
+      var v = progressMap && progressMap[p.id] !== undefined ? progressMap[p.id] : 0;
+      return typeof v === "number" && !isNaN(v) ? v : 0;
+    };
+    // Sorts pillars by progress (highest first) so parents and sub-pillars are
+    // always listed in the same, automatic order. Ties fall back to the name.
+    function byProgressDesc(a, b) {
+      var d = pctOf(b) - pctOf(a);
+      if (d) return d;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    }
+
     var childrenMap = {};
     projs.filter(function (p) { return p.parentId; }).forEach(function (p) {
       (childrenMap[p.parentId] = childrenMap[p.parentId] || []).push(p);
     });
-    var roots = projs.filter(function (p) { return !p.parentId; });
+    var roots = projs.filter(function (p) { return !p.parentId; }).sort(byProgressDesc);
     function node(p) {
       return {
         id: p.id,
-        children: (childrenMap[p.id] || []).map(node),
+        children: (childrenMap[p.id] || []).slice().sort(byProgressDesc).map(node),
         collapsed: false,
         raw: p,
         render: function (n) {
           var prog = progressMap && progressMap[n.raw.id] !== undefined ? progressMap[n.raw.id] : 0;
           var wrap = h("div.project-tree-item");
-          wrap.appendChild(h("span.u-ellipsis", { text: n.raw.name }));
+          var head = h("div.pillar-row-head");
+          head.appendChild(h("span.u-ellipsis.u-bold", { text: n.raw.name }));
           var color = statusColorOf(n.raw.status);
-          wrap.appendChild(h("span.badge", {
+          head.appendChild(h("span.badge", {
             text: t("projects.progress") + " " + PMS.utils.pct(prog),
             style: { background: PMS.vformat.hexToSoft(color), color: color }
           }));
-          var track = h("div.progress-track", { style: { width: "70px", height: "6px", marginInlineStart: "8px" } },
+          wrap.appendChild(head);
+
+          // progress bar
+          var track = h("div.progress-track", { style: { width: "100%", height: "8px" } },
             [h("div.progress-fill", { style: { width: Math.round(prog) + "%" } })]);
           wrap.appendChild(track);
+
+          // meta line: status, owner, dates, task count
+          var meta = h("div.pillar-row-meta");
+          meta.appendChild(PMS.vformat.statusBadge(n.raw.status, "project"));
+          meta.appendChild(PMS.vformat.priorityBadge(n.raw.priority));
+          meta.appendChild(ownerChip(n.raw.managerId));
+          var taskCount = PMS.repos.tasks.forProject(n.raw.id).length;
+          if (taskCount) meta.appendChild(h("span.chip", { text: "☑ " + taskCount }));
+          if (n.raw.endDate) {
+            meta.appendChild(h("span.chip", {
+              text: "📅 " + PMS.utils.formatDate(n.raw.endDate, PMS.i18n)
+            }));
+          }
+          wrap.appendChild(meta);
+
           if (PMS.auth ? PMS.auth.canEditProject(n.raw) : true) {
             var editBtn = h("button.btn.btn-sm.btn-icon.btn-ghost", {
               text: "✎",
@@ -49,6 +80,21 @@
     return roots.map(node);
   }
 
+  // Owner name next to every pillar (falls back to a muted dash when unset).
+  function ownerChip(managerId) {
+    var owner = managerId ? PMS.repos.people.get(managerId) : null;
+    var wrap = h("span.chip.chip-owner", { attrs: { title: t("projects.owner") } });
+    wrap.appendChild(h("span", { text: "👤 " + t("projects.owner") + ": " + (owner ? owner.name : t("common.none")) }));
+    if (owner) wrap.style.cursor = "pointer";
+    if (owner) {
+      wrap.addEventListener("click", function (e) {
+        e.stopPropagation();
+        PMS.editors.openPersonEditor(owner, function () {});
+      });
+    }
+    return wrap;
+  }
+
   function renderList(container) {
     container.innerHTML = "";
     var header = h("div.page-header");
@@ -62,15 +108,21 @@
     header.appendChild(actions);
     container.appendChild(header);
 
+    // Pillars are always listed highest progress first, so the pillars that
+    // need attention float to the top without the user re-sorting anything.
     var progressMap = PMS.progress.allProjectProgress(data());
     var treed = PMS.treeService.Tree;
-    var listEl = h("div.tree");
+    var listEl = h("div.pillar-grid");
     var tree = new treed({
       nodes: buildTree(progressMap),
       onNodeClick: function (node) { PMS.router.navigate("/projects/" + (node.raw ? node.raw.id : node.id)); }
     });
     listEl.appendChild(tree.el);
     container.appendChild(listEl);
+    container.appendChild(h("div.u-muted", {
+      text: t("projects.sortedByProgress"),
+      style: { fontSize: "0.78rem", marginBlockStart: "10px" }
+    }));
 
     // empty state
     if (!(data().projects || []).length) {

@@ -34,6 +34,41 @@
 
 /* ---------- Projects tree ---------- */
 .project-tree-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+
+/* ---------- Pillars list: one roomy card per pillar ---------- */
+.pillar-grid { margin-block-start: var(--space-2); }
+.pillar-grid .tree-node {
+  display: block;
+  padding: 0;
+  margin-block-end: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+.pillar-grid .tree-node:hover { border-color: var(--primary); }
+.pillar-grid .tree-node > .tree-toggle {
+  float: inline-start;
+  margin: 14px 0 0 10px;
+}
+.pillar-grid .tree ul { padding-inline-start: 18px; }
+.pillar-grid .tree ul .tree-node { border-style: dashed; }
+.pillar-grid .project-tree-item {
+  display: block;
+  padding: 12px 14px 12px 34px;
+}
+.pillar-row-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 0.98rem;
+}
+.pillar-row-head .u-ellipsis { flex: 1 1 auto; min-width: 120px; }
+.pillar-row-meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-block-start: 8px;
+}
+.pillar-grid .progress-track { margin-block-start: 10px; }
+.chip-owner { cursor: pointer; }
+.chip-owner:hover { background: var(--primary-soft); color: var(--primary); }
 .project-tree-row {
   display: flex;
   align-items: center;
@@ -143,6 +178,27 @@ html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(
 }
 .vt-row:hover { background: var(--bg-hover); }
 .vt-row.selected { background: var(--primary-soft); }
+
+/* Nested sub-tasks: indented under their parent with a guide rail, and a
+   slightly muted treatment so the hierarchy reads at a glance */
+.vt-row-sub {
+  background: var(--bg-subtle);
+  border-inline-start: 2px solid var(--border);
+}
+.vt-row-sub .vt-td { font-size: 0.85rem; }
+.vt-row-sub:hover { background: var(--bg-hover); }
+.vt-row-collapsed { background: var(--bg-elevated); }
+.vt-twisty {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 auto;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 0.7rem; line-height: 1; cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.vt-twisty:hover { background: var(--primary-soft); color: var(--primary); }
+.vt-twisty.collapsed { transform: rotate(-90deg); }
+.vt-twisty-leaf { border: none; background: none; color: var(--text-faint); cursor: default; }
 .vt-td { padding: 8px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .vt-td, .vt-td > * { min-width: 0; }
 .vt-group {
@@ -203,4 +259,30 @@ html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(
 }
 .meeting-agenda { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; }
 .meeting-agenda li { font-size: 0.9rem; }
+
+/* Tasks + pillars of a meeting, summarized on the card itself */
+.meeting-linked {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-block-start: 10px; padding-block-start: 8px;
+  border-block-start: 1px dashed var(--border);
+}
+.meeting-linked-row { display: flex; align-items: baseline; gap: 8px; }
+.meeting-linked-label {
+  flex: 0 0 auto; min-width: 74px;
+  font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.meeting-linked-items {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  min-width: 0;
+}
+.meeting-task-chip,
+.meeting-pillar-chip {
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-inline-start: 3px solid transparent;
+  cursor: pointer;
+}
+.meeting-task-chip:hover, .meeting-pillar-chip:hover { background: var(--primary-soft); color: var(--primary); }
+.meeting-pillar-chip { border-inline-start-color: var(--primary); }
 .vt-assignees { cursor: default; }

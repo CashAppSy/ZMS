@@ -62,7 +62,7 @@
       PMS.dom.clear(grid);
       q = (q || "").toLowerCase();
       people.forEach(function (p) {
-        if (q && p.name.toLowerCase().indexOf(q) === -1 && (p.jobTitle || "").toLowerCase().indexOf(q) === -1) return;
+        if (q && p.name.toLowerCase().indexOf(q) === -1 && (p.jobTitle || "").toLowerCase().indexOf(q) === -1 && (p.email || "").toLowerCase().indexOf(q) === -1 && (p.phone || "").indexOf(q) === -1) return;
         grid.appendChild(personCard(p));
       });
     }
@@ -85,11 +85,14 @@
     }));
     card.appendChild(top);
 
+    // The fields a person is identified by in the list: job title, department,
+    // email and phone — so somebody added from any screen is fully readable.
     var dept = PMS.repos.departments.get(person.departmentId);
-    if (dept || person.email) {
+    if (dept || person.email || person.phone) {
       var meta = h("div.u-muted", { style: { fontSize: "0.78rem" } });
       if (dept) meta.appendChild(h("div", { text: "🏢 " + PMS.i18n.trilingual(dept.name)(dept.name) }));
       if (person.email) meta.appendChild(h("div", { text: "✉ " + person.email }));
+      if (person.phone) meta.appendChild(h("div", { text: "☎ " + person.phone }));
       card.appendChild(meta);
     }
 

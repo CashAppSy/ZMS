@@ -39,6 +39,34 @@
     return form;
   }
 
+  // "14:05" / "2:30pm" / "9.15 am" / "14:30:00" / "2 pm" -> "HH:MM"
+  // ("" when it cannot be read as a time of day)
+  function normalizeTime(v) {
+    if (v === null || v === undefined) return "";
+    var s = String(v).trim().toLowerCase();
+    if (!s) return "";
+    var ampm = "";
+    var am = s.match(/(am|pm)\s*$/);
+    if (am) { ampm = am[1]; s = s.slice(0, am.index).trim(); }
+
+    var m = s.match(/^(\d{1,2})\s*[:.]\s*(\d{1,2})/);   // 14:05 | 2.30
+    var hh = m ? parseInt(m[1], 10) : parseInt(s, 10);
+    var mm = m ? parseInt(m[2], 10) : 0;
+    if (isNaN(hh) || (isNaN(mm))) return "";
+
+    if (ampm === "pm" && hh < 12) hh += 12;                 // 3.30pm -> 15:30
+    if (ampm === "am" && hh === 12) hh = 0;
+    if (hh > 23) hh = 23;
+    if (mm > 59) mm = 59;
+    return pad2(hh) + ":" + pad2(mm);
+  }
+  function pad2(n) {
+    n = parseInt(n, 10);
+    if (isNaN(n) || n < 0) n = 0;
+    if (n > 59) n = 59;
+    return (n < 10 ? "0" : "") + n;
+  }
+
   function buildControl(field, value) {
     var self = {};
     var props = { value: value !== undefined ? value : (field.default || "") };
@@ -62,6 +90,14 @@
       case "date":
         self.el = h("input.input", Object.assign({ type: "date" }, props));
         self.getValue = function () { return self.el.value || null; };
+        break;
+
+      // Time = hours and minutes only. Accepts a native picker value
+      // ("HH:MM") and also cleans up free text like "3.30pm" or "15:30:00".
+      case "time":
+        props.value = normalizeTime(value);
+        self.el = h("input.input", Object.assign({ type: "time" }, props));
+        self.getValue = function () { return normalizeTime(self.el.value); };
         break;
 
       case "select":
@@ -289,6 +325,7 @@
 
     var nameInput = h("input.input", { placeholder: t("people.name"), required: true });
     var emailInput = h("input.input", { type: "email", placeholder: t("people.email") });
+    var phoneInput = h("input.input", { type: "tel", placeholder: t("people.phone") });
     var deptSel = h("select.select");
     deptSel.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
     PMS.repos.departments.all().forEach(function (d) {
@@ -314,14 +351,14 @@
         var person = PMS.repos.people.add({
           name: name,
           email: email,
+          phone: phoneInput.value.trim(),
           departmentId: deptSel.value || null,
           jobTitle: "",
-          phone: "",
           notes: "",
           status: "active"
         });
         if (onCreated) onCreated(person);
-        nameInput.value = ""; emailInput.value = "";
+        nameInput.value = ""; emailInput.value = ""; phoneInput.value = "";
         panel.style.display = "none";
         clearError();
         PMS.toast.show(t("people.personAdded", { name: person.name }), "success");
@@ -335,6 +372,7 @@
     panel.appendChild(h("div.person-create-title", { text: t("people.newPerson") }));
     panel.appendChild(nameInput);
     panel.appendChild(emailInput);
+    panel.appendChild(phoneInput);
     panel.appendChild(deptSel);
     panel.appendChild(err);
     panel.appendChild(h("div.hint", { text: t("people.personCreateHint") }));
@@ -346,5 +384,5 @@
     return { el: wrap, panel: panel };
   }
 
-  PMS.forms = { build: build, buildControl: buildControl, personCreator: personCreator };
+  PMS.forms = { build: build, buildControl: buildControl, personCreator: personCreator, normalizeTime: normalizeTime };
 })(window.PMS);

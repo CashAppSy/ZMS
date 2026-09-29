@@ -10,7 +10,9 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
-  var state = { tab: "upcoming", query: "" };
+  // The list filter always starts (and resets) on "All" so every meeting is
+  // visible until the user narrows it down.
+  var state = { tab: "all", query: "" };
 
   /* ---------------- list ---------------- */
 
@@ -22,9 +24,17 @@
     var q = (state.query || "").trim().toLowerCase();
     if (!q) return all;
     return all.filter(function (m) {
+      var pillarNames = (m.projectIds || []).map(function (pid) {
+        var p = PMS.repos.projects.get(pid);
+        return p ? p.name : "";
+      }).join(" ");
+      var taskTitles = PMS.repos.meetings.tasksOf(m.id).map(function (tk) { return tk.title; }).join(" ");
       return String(m.title || "").toLowerCase().indexOf(q) !== -1 ||
         (m.agenda || []).join(" ").toLowerCase().indexOf(q) !== -1 ||
-        (m.notes || "").toLowerCase().indexOf(q) !== -1;
+        (m.notes || "").toLowerCase().indexOf(q) !== -1 ||
+        String(m.location || "").toLowerCase().indexOf(q) !== -1 ||
+        pillarNames.toLowerCase().indexOf(q) !== -1 ||
+        taskTitles.toLowerCase().indexOf(q) !== -1;
     });
   }
 
@@ -67,7 +77,7 @@
 
   function tabSwitcher() {
     var wrap = h("div.segmented");
-    [["upcoming", t("meetings.upcoming")], ["past", t("meetings.past")], ["all", t("meetings.all")]].forEach(function (m) {
+    [["all", t("meetings.all")], ["upcoming", t("meetings.upcoming")], ["past", t("meetings.past")]].forEach(function (m) {
       wrap.appendChild(h("button" + (state.tab === m[0] ? ".active" : ""), {
         text: m[1],
         on: { click: function () { state.tab = m[0]; PMS.router.handle(); } }
@@ -93,10 +103,53 @@
       var ag = h("div.u-muted", { text: "📋 " + m.agenda.slice(0, 3).join(" · ") + (m.agenda.length > 3 ? " …" : ""), style: { fontSize: "0.8rem" } });
       body.appendChild(ag);
     }
-    var foot = h("div.u-flex", { style: { gap: "12px", alignItems: "center", marginBlockStart: "8px" } });
+
+    // The tasks and pillars behind this meeting, listed compactly right on
+    // the card (next to the info above) so nothing needs to be opened.
     var tasks = PMS.repos.meetings.tasksOf(m.id);
+    var pillars = (m.projectIds || []).map(function (pid) { return PMS.repos.projects.get(pid); }).filter(Boolean);
+    var linked = h("div.meeting-linked");
+    if (tasks.length) {
+      var tl = h("div.meeting-linked-row");
+      tl.appendChild(h("span.meeting-linked-label", { text: "☑ " + t("meetings.tasks") }));
+      var tlWrap = h("div.meeting-linked-items");
+      tasks.slice(0, 4).forEach(function (task) {
+        var s = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === task.status; });
+        var chip = h("span.chip.meeting-task-chip", {
+          text: task.title,
+          attrs: { title: task.title + (s ? " · " + PMS.i18n.trilingual(s.name)(s.name) : "") }
+        });
+        chip.style.borderInlineStartColor = (s && s.color) || "transparent";
+        chip.addEventListener("click", function (e) {
+          e.stopPropagation();
+          openDetailTask(task.id);
+        });
+        tlWrap.appendChild(chip);
+      });
+      if (tasks.length > 4) tlWrap.appendChild(h("span.chip", { text: "+" + (tasks.length - 4) }));
+      tl.appendChild(tlWrap);
+      linked.appendChild(tl);
+    }
+    if (pillars.length) {
+      var pl = h("div.meeting-linked-row");
+      pl.appendChild(h("span.meeting-linked-label", { text: "🗀 " + t("meetings.pillars") }));
+      var plWrap = h("div.meeting-linked-items");
+      pillars.forEach(function (p) {
+        var chip = h("span.chip.meeting-pillar-chip", { text: p.name, attrs: { title: t("projects.openPillar", { name: p.name }) } });
+        chip.addEventListener("click", function (e) {
+          e.stopPropagation();
+          PMS.router.navigate("/projects/" + p.id);
+        });
+        plWrap.appendChild(chip);
+      });
+      pl.appendChild(plWrap);
+      linked.appendChild(pl);
+    }
+    if (linked.childNodes.length) body.appendChild(linked);
+
+    var foot = h("div.u-flex", { style: { gap: "12px", alignItems: "center", marginBlockStart: "8px" } });
     foot.appendChild(h("span.chip", { text: "☑ " + t("meetings.tasksCount", { n: tasks.length }) }));
-    foot.appendChild(h("span.chip", { text: t("meetings.pillars") + ": " + (m.projectIds || []).length }));
+    foot.appendChild(h("span.chip", { text: t("meetings.pillars") + ": " + pillars.length }));
     var atts = (m.attendees || []).map(function (pid) { return PMS.repos.people.get(pid); }).filter(Boolean);
     if (atts.length) {
       var av = h("span.u-flex", { style: { gap: "2px" } });
@@ -106,6 +159,15 @@
     body.appendChild(foot);
     card.appendChild(body);
     return card;
+  }
+
+  // a task chip on a card opens the task itself, never the meeting behind it
+  function openDetailTask(taskId) {
+    if (PMS.taskDetail) {
+      detailOpen = false;
+      PMS.modal.close();
+      PMS.taskDetail.open(taskId);
+    }
   }
 
   /* ---------------- detail ---------------- */

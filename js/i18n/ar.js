@@ -74,6 +74,7 @@
       tasks: "المهام", noSubProjects: "لا توجد ركائز فرعية",
       name: "اسم الركيزة", status: "الحالة", priority: "الأولوية",
       manager: "المالك", managerHint: "الشخص المسؤول عن هذه الركيزة.",
+      owner: "المالك",
       members: "الأعضاء", startDate: "تاريخ البداية",
       endDate: "تاريخ النهاية", budget: "الميزانية", weight: "الوزن",
       weightHint: "مدى تأثير هذه الركيزة في التقدم الكلي — كلما زاد الوزن زادت حصتها.",
@@ -84,11 +85,16 @@
       totalBudget: "إجمالي الميزانية", byStatus: "حسب الحالة",
       details: "تفاصيل الركيزة", createdOn: "أُنشئ في",
       completed: "مكتمل", late: "متأخر", onTrack: "في المسار",
-      membersCount: "{n} أعضاء", tasksCount: "{n} مهام"
+      membersCount: "{n} أعضاء", tasksCount: "{n} مهام",
+      sortedByProgress: "الركائز مرتبة دائماً حسب الإنجاز — الأعلى أولاً.",
+      openPillar: "فتح {name}"
     },
     tasks: {
       title: "المهام", newTask: "مهمة جديدة", editTask: "تعديل مهمة",
       title: "العنوان", project: "الركيزة", subTasks: "مهام فرعية",
+      subtasks: "مهام فرعية",
+      collapseSubtasks: "طي المهام الفرعية", expandSubtasks: "توسيع المهام الفرعية",
+      collapseAllSubtasks: "طي المهام الفرعية", expandAllSubtasks: "توسيع المهام الفرعية",
       assignees: "المُسنَد إليهم", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
       progress: "نسبة الإنجاز", checklist: "قائمة تحقق", comments: "تعليقات",
       progressFromStatus: "نسبة الإنجاز تُشتق من الحالة",

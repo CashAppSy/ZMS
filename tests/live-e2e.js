@@ -446,6 +446,86 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   route("/reports");
   ok("back to en + light renders /reports", errors.length === 0 && (root().textContent || "").length > 0);
 
+  section("E.9b Pillars cards, nested sub-tasks, meeting summaries (live UI)");
+  // ---- pillars: owner name + automatic progress ordering ---------------
+  errors.length = 0;
+  route("/projects");
+  const lvPillars = root().querySelectorAll(".pillar-grid > .tree > li > .tree-node");
+  ok("live /projects renders pillar cards", errors.length === 0 && lvPillars.length > 0);
+  const lvNames = Array.from(lvPillars).map(n => {
+    const el = n.querySelector(".pillar-row-head .u-ellipsis");
+    return el ? el.textContent : "";
+  });
+  const lvExpected = PMS.repos.projects.all().filter(p => !p.parentId)
+    .map(p => ({ p, prog: PMS.progress.projectProgress(PMS.store.data, p.id, 0) || 0 }))
+    .sort((a, b) => b.prog - a.prog).map(x => x.p.name);
+  ok("live pillars sorted by progress desc", lvNames.join("|") === lvExpected.join("|"), lvNames.join(",") + " vs " + lvExpected.join(","));
+  ok("live pillar cards show an owner chip", root().querySelectorAll(".chip-owner").length === root().querySelectorAll(".pillar-grid .tree-node").length);
+  ok("live pillar cards show a progress bar", root().querySelectorAll(".pillar-grid .progress-fill").length > 0);
+  ok("live /projects shows the sort hint", (root().textContent || "").indexOf(PMS.i18n.t("projects.sortedByProgress")) !== -1);
+
+  // ---- tasks: nested sub-tasks with collapse/expand ---------------------
+  errors.length = 0;
+  route("/tasks");
+  const lvSubRows = root().querySelectorAll(".vt-row-sub");
+  ok("live /tasks nests sub-tasks under their parent", errors.length === 0 && lvSubRows.length > 0, lvSubRows.length + " nested rows");
+  ok("live sub-task rows are indented", parseFloat((root().querySelector(".vt-row-sub") || {}).style && root().querySelector(".vt-row-sub").style.paddingInlineStart || 0) > 0);
+  const lvTwisty = root().querySelector(".vt-twisty:not(.vt-twisty-leaf)");
+  ok("live parent rows expose a collapse chevron", !!lvTwisty);
+  if (lvTwisty) {
+    const lvId = lvTwisty.closest(".vt-row").dataset.id;
+    const lvKids = PMS.repos.tasks.children(lvId).length;
+    const lvBefore = root().querySelectorAll(".vt-row-sub").length;
+    lvTwisty.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    route("/tasks");
+    const lvAfter = root().querySelectorAll(".vt-row-sub").length;
+    ok("live collapsing a parent hides its sub-tasks", lvAfter === lvBefore - lvKids, lvBefore + " -> " + lvAfter + " (kids " + lvKids + ")");
+    const lvAgain = root().querySelector('.vt-row[data-id="' + lvId + '"] .vt-twisty');
+    if (lvAgain) lvAgain.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    route("/tasks");
+    ok("live expanding the parent restores the sub-tasks", root().querySelectorAll(".vt-row-sub").length === lvBefore);
+  }
+  ok("live tasks toolbar has collapse/expand sub-task actions",
+    (root().textContent || "").indexOf(PMS.i18n.t("tasks.collapseAllSubtasks")) !== -1 &&
+    (root().textContent || "").indexOf(PMS.i18n.t("tasks.expandAllSubtasks")) !== -1);
+
+  // ---- meetings: default All + task/pillar summaries on each card ------
+  const lvMeeting = PMS.repos.meetings.add({ title: "LV summary meeting", date: PMS.utils.todayISO(), time: "10:00", attendees: [pA.id], agenda: ["a"], projectIds: [projNew.id] });
+  const lvMTask = PMS.repos.tasks.add({ title: "LV meeting action", projectId: projNew.id, status: "todo", meetingId: lvMeeting.id });
+  errors.length = 0;
+  route("/meetings");
+  const lvSegs = Array.from(root().querySelectorAll(".segmented button"));
+  ok("live /meetings opens on the All filter", lvSegs.length === 3 && lvSegs[0].classList.contains("active"), lvSegs.map(b => b.textContent).join("|"));
+  ok("live All is the first filter option", lvSegs.length && lvSegs[0].textContent === PMS.i18n.t("meetings.all"));
+  const lvCard = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf("LV summary meeting") !== -1);
+  ok("live meeting card renders", !!lvCard);
+  ok("live meeting card lists its task compactly", !!lvCard && lvCard.querySelectorAll(".meeting-task-chip").length === 1);
+  ok("live meeting card lists its pillar compactly", !!lvCard && lvCard.querySelectorAll(".meeting-pillar-chip").length === 1);
+  ok("live meeting chip opens the linked task", (function () {
+    lvCard.querySelector(".meeting-task-chip").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    return PMS.modal.isOpen && !!PMS.modal.body.querySelector(".task-detail-body");
+  })());
+  PMS.modal.close();
+  ok("live meeting card shows the time as HH:MM", (lvCard.textContent || "").indexOf("10:00") !== -1);
+
+  // ---- meeting time field is hours+minutes only ------------------------
+  PMS.editors.openMeetingEditor(null, {});
+  const lvTimeInput = PMS.modal.body.querySelector('.field[data-key="time"] input');
+  ok("live meeting time field is an hours+minutes input", !!lvTimeInput && lvTimeInput.type === "time");
+  ok("live time control normalizes free text", PMS.forms.normalizeTime("3.30pm") === "15:30" && PMS.forms.normalizeTime("2 pm") === "14:00" && PMS.forms.normalizeTime("9:5") === "09:05");
+  PMS.modal.close();
+  PMS.repos.meetings.remove(lvMeeting.id);
+  ok("live meeting cleanup keeps its task", PMS.repos.tasks.get(lvMTask.id) && PMS.repos.tasks.get(lvMTask.id).meetingId === null);
+
+  // ---- people cards show the identifying fields ------------------------
+  const lvPerson = PMS.repos.people.add({ name: "LV Phone Person", email: "lvphone@test", phone: "+962 7 123 4567", departmentId: qa.id, status: "active" });
+  errors.length = 0;
+  route("/people");
+  const lvPCard = Array.from(root().querySelectorAll(".person-card")).find(c => (c.textContent || "").indexOf("LV Phone Person") !== -1);
+  ok("live /people renders a card per person", errors.length === 0 && !!lvPCard);
+  ok("live person card shows name + email + phone", !!lvPCard && /lvphone@test/.test(lvPCard.textContent) && /\+962 7 123 4567/.test(lvPCard.textContent));
+  PMS.repos.people.update(lvPerson.id, { status: "inactive" });
+
   section("E.10 Workflow CRUD through UI repos");
   const before = PMS.repos.tasks.all().length;
   PMS.repos.tasks.remove(tLeaf1.id);

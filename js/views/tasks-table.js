@@ -14,7 +14,10 @@
     sortKey: "due",
     sortDir: "asc",
     group: "none",
-    columns: null
+    columns: null,
+    // collapsed task ids (their subtask block is hidden)
+    collapsed: {},
+    subtasksExpanded: true
   };
 
   function defaultColumns() {
@@ -105,6 +108,16 @@
     toolbar.appendChild(groupSel);
 
     toolbar.appendChild(columnDropdown());
+    toolbar.appendChild(h("button.btn.btn-sm.btn-ghost", {
+      text: t("tasks.collapseAllSubtasks"),
+      attrs: { title: t("tasks.collapseAllSubtasks") },
+      on: { click: function () { setAllSubtasks(true); } }
+    }));
+    toolbar.appendChild(h("button.btn.btn-sm.btn-ghost", {
+      text: t("tasks.expandAllSubtasks"),
+      attrs: { title: t("tasks.expandAllSubtasks") },
+      on: { click: function () { setAllSubtasks(false); } }
+    }));
     toolbar.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("reports.exportCsv"), on: { click: exportCsv } }));
     toolbar.appendChild(h("span.grow"));
     toolbar.appendChild(h("span.u-muted", { text: t("common.savedFilters") + ":" }));
@@ -137,14 +150,51 @@
     var body = h("div.vt-body");
     scroll.appendChild(body);
 
-    var rowHeight = 44;
+    var ROW_H = 44;      // a main task row
+    var SUB_H = 34;      // a nested sub-task row
+    var GROUP_H = 34;    // a group header
     var dataRows = rows;
 
-    // Build a flat visual list: rows or group-header rows
+    // true when the user narrowed the list down: sub-tasks then follow the
+    // SAME filter instead of dumping every child of a matching parent.
+    function filtering() {
+      var q = state.query || {};
+      return !!(q.search || q.projectId || q.statusKey || q.priorityKey || q.assigneeId || q.lateOnly);
+    }
+    function matchesQuery(task) {
+      if (!filtering()) return true;
+      return dataRows.some(function (r) { return r.id === task.id; });
+    }
+    function childrenOf(parentId) {
+      return PMS.repos.tasks.children(parentId).slice().sort(function (a, b) {
+        var byStatus = String(a.status || "").localeCompare(String(b.status || ""));
+        if (byStatus) return byStatus;
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      });
+    }
+
+    // Flattens the list into absolutely-positionable items. Sub-tasks are
+    // emitted right under their parent so they read as a nested block; every
+    // task that has children gets a chevron to collapse/expand that block.
     function buildVisual() {
       var visual = [];
+      function push(task, depth) {
+        var kids = childrenOf(task.id).filter(matchesQuery);
+        var isCollapsed = !!state.collapsed[task.id];
+        visual.push({
+          type: "row", row: task, depth: depth,
+          height: depth === 0 ? ROW_H : SUB_H,
+          hasKids: kids.length > 0, isCollapsed: isCollapsed, kidCount: kids.length
+        });
+        if (isCollapsed) return;
+        kids.forEach(function (k) { push(k, depth + 1); });
+      }
       if (!state.group || state.group === "none") {
-        dataRows.forEach(function (r) { visual.push({ type: "row", row: r }); });
+        dataRows.filter(function (r) { return !r.parentTaskId; }).forEach(function (r) { push(r, 0); });
+        // orphans (parent filtered out) still need to be visible
+        dataRows.filter(function (r) { return !!r.parentTaskId; }).forEach(function (r) {
+          if (!visual.some(function (v) { return v.row.id === r.id; })) push(r, 0);
+        });
       } else {
         var groups = {};
         dataRows.forEach(function (r) {
@@ -152,22 +202,35 @@
           (groups[g] = groups[g] || []).push(r);
         });
         Object.keys(groups).forEach(function (g) {
-          visual.push({ type: "group", label: g });
-          groups[g].forEach(function (r) { visual.push({ type: "row", row: r }); });
+          visual.push({ type: "group", label: g, height: GROUP_H });
+          groups[g].filter(function (r) { return !r.parentTaskId; }).forEach(function (r) { push(r, 0); });
+          groups[g].filter(function (r) { return !!r.parentTaskId; }).forEach(function (r) {
+            if (!visual.some(function (v) { return v.row.id === r.id; })) push(r, 0);
+          });
         });
       }
+      // cumulative offsets (rows have different heights)
+      var top = 0;
+      visual.forEach(function (item) { item.top = top; top += item.height; });
       return visual;
     }
 
     function paint() {
       var visual = buildVisual();
       body.innerHTML = "";
-      body.style.height = (visual.length * rowHeight) + "px";
+      var total = visual.length ? visual[visual.length - 1].top + visual[visual.length - 1].height : 0;
+      body.style.height = total + "px";
 
       var scrollTop = scroll.scrollTop || 0;
       var viewH = scroll.clientHeight || 500;
-      var start = Math.max(0, Math.floor(scrollTop / rowHeight) - 8);
-      var end = Math.min(visual.length, Math.ceil((scrollTop + viewH) / rowHeight) + 8);
+      // rows are 34-44px tall, so average to pick a safe window, then overscan
+      // by 8 items so scrolling never shows a gap
+      var avg = visual.length ? total / visual.length : ROW_H;
+      var start = 0, end = visual.length;
+      if (avg > 0) {
+        start = Math.max(0, Math.floor(scrollTop / avg) - 8);
+        end = Math.min(visual.length, Math.ceil((scrollTop + viewH) / avg) + 8);
+      }
 
       for (var i = start; i < end; i++) {
         var item = visual[i];
@@ -175,11 +238,11 @@
         if (item.type === "group") {
           el = h("div.vt-group", { text: item.label });
         } else {
-          el = renderRow(item.row, visible);
+          el = renderRow(item.row, visible, item);
           el.style.gridTemplateColumns = template;
         }
-        el.style.top = (i * rowHeight) + "px";
-        el.style.height = rowHeight + "px";
+        el.style.top = item.top + "px";
+        el.style.height = item.height + "px";
         body.appendChild(el);
       }
     }
@@ -189,11 +252,19 @@
     return scroll;
   }
 
-  function renderRow(row, visible) {
-    var rowEl = h("div.vt-row", { attrs: { title: t("tasks.doubleClickToEdit") } });
+  function renderRow(row, visible, item) {
+    var depth = item ? item.depth : 0;
+    var rowEl = h("div.vt-row" + (depth ? ".vt-row-sub" : "") + (item && item.isCollapsed ? ".vt-row-collapsed" : ""), {
+      dataset: { id: row.id, depth: depth },
+      attrs: { title: t("tasks.doubleClickToEdit") }
+    });
+    if (depth) {
+      // guide rail that makes the nesting obvious at a glance
+      rowEl.style.paddingInlineStart = (8 + (depth - 1) * 18) + "px";
+    }
     visible.forEach(function (col) {
       var cell = h("div.vt-td");
-      if (col.render) cell.appendChild(col.render(row, rowEl));
+      if (col.render) cell.appendChild(col.render(row, rowEl, item));
       else cell.textContent = "";
       rowEl.appendChild(cell);
     });
@@ -208,12 +279,34 @@
     return rowEl;
   }
 
-  function cellTitle(row, tr) {
+  // collapse/expand chevron for a task that owns sub-tasks
+  function subtaskToggle(row, item) {
+    var btn = h("button.vt-twisty" + (item.isCollapsed ? ".collapsed" : ""), {
+      text: "▾",
+      attrs: { title: item.isCollapsed ? t("tasks.expandSubtasks") : t("tasks.collapseSubtasks"), "aria-label": t("tasks.subtasks") },
+      on: {
+        click: function (e) {
+          e.stopPropagation();
+          state.collapsed[row.id] = !state.collapsed[row.id];
+          PMS.router.handle();
+        }
+      }
+    });
+    return btn;
+  }
+
+  function cellTitle(row, tr, item) {
     var cell = h("span.u-flex", { style: { gap: "8px" } });
     var titleWrap = h("span.u-flex", { style: { gap: "6px", minWidth: "0" } });
+    // collapse/expand control for the sub-task block of this task
+    if (item && item.hasKids) titleWrap.appendChild(subtaskToggle(row, item));
+    else if (item && item.depth) titleWrap.appendChild(h("span.vt-twisty.vt-twisty-leaf", { text: "•" }));
     titleWrap.appendChild(h("span.u-ellipsis", { text: row.title }));
-    var subCount = PMS.repos.tasks.children(row.id).length;
-    if (subCount) titleWrap.appendChild(h("span.badge", { text: "+" + subCount }));
+    if (item && item.hasKids) {
+      titleWrap.appendChild(h("span.badge", {
+        text: (item.isCollapsed ? "▸ " : "▾ ") + item.kidCount
+      }));
+    }
     var linkCount = (row.linkedTaskIds || []).length;
     if (linkCount) {
       titleWrap.appendChild(h("span.chip", {
@@ -241,6 +334,16 @@
       cell.appendChild(editBtn);
     }
     return cell;
+  }
+
+  function setAllSubtasks(collapsed) {
+    state.collapsed = {};
+    if (collapsed) {
+      PMS.repos.tasks.all().forEach(function (tk) {
+        if (PMS.repos.tasks.children(tk.id).length) state.collapsed[tk.id] = true;
+      });
+    }
+    render(currentContainer());
   }
 
   function cellProject(row) {

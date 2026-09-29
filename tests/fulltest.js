@@ -42,9 +42,9 @@ window.addEventListener("error", e => errors.push("WINDOW ERROR: " + e.message))
 
 let passCount = 0;
 let failCount = 0;
-function ok(label, cond) {
+function ok(label, cond, dbg) {
   if (cond) { passCount++; console.log("  PASS | " + label); }
-  else { failCount++; process.exitCode = 1; console.log("  FAIL | " + label); }
+  else { failCount++; process.exitCode = 1; console.log("  FAIL | " + label + (dbg ? "  >> " + dbg : "")); }
 }
 function section(t) { console.log("\n== " + t + " =="); }
 
@@ -627,6 +627,145 @@ const root = () => document.getElementById("view-root");
   PMS.modal.close();
   ok("assignee cell renders no editable control", !root().querySelector(".vt-assignees input, .vt-assignees select, .vt-assignees button"));
   ok("row hint tells the user to double click", (vtRow.getAttribute("title") || "").length > 3);
+
+  section("Pillars list, nested sub-tasks, meeting summary");
+  // ---- pillars: owner name + automatic progress sort -------------------
+  errors.length = 0;
+  route("/projects");
+  const pillarNodes = root().querySelectorAll(".pillar-grid > .tree > li > .tree-node");
+  ok("/projects renders a card per pillar", errors.length === 0 && pillarNodes.length > 0);
+  const renderedNames = Array.from(pillarNodes).map(n => {
+    const el = n.querySelector(".pillar-row-head .u-ellipsis");
+    return el ? el.textContent : "";
+  });
+  const rootPillars = PMS.repos.projects.all().filter(p => !p.parentId)
+    .map(p => ({ p, prog: PMS.progress.projectProgress(PMS.store.data, p.id, 0) || 0 }))
+    .sort((a, b) => b.prog - a.prog).map(x => x.p.name);
+  ok("pillars are sorted by progress, highest first", renderedNames.join("|") === rootPillars.join("|"),
+    renderedNames.join(" <> ") + "   EXPECTED   " + rootPillars.join(" <> "));
+  const owners = root().querySelectorAll(".chip-owner");
+  ok("every pillar shows its owner name", owners.length === root().querySelectorAll(".pillar-grid .tree-node").length &&
+    Array.from(owners).some(c => /Sara|Omar|Ali|Khaled/.test(c.textContent)));
+  ok("the sort hint is shown", (root().textContent || "").indexOf(PMS.i18n.t("projects.sortedByProgress")) !== -1);
+  ok("collapse/expand all still available", root().querySelectorAll(".page-header .actions .btn").length >= 3);
+
+  // ---- tasks: sub-tasks nested under their parent, collapsible ----------
+  errors.length = 0;
+  route("/tasks");
+  const parentWithKids = PMS.repos.tasks.all().find(t => !t.parentTaskId && PMS.repos.tasks.children(t.id).length > 0);
+  ok("a parent with sub-tasks is in the list", !!parentWithKids);
+  const twisty = root().querySelector(".vt-twisty:not(.vt-twisty-leaf)");
+  ok("the parent row gets a collapse/expand chevron", !!twisty && !!parentWithKids);
+  const subRowSel = ".vt-row-sub";
+  const subRowsBefore = root().querySelectorAll(subRowSel).length;
+  ok("sub-tasks render as nested rows under their parent", subRowsBefore > 0);
+  const subTitles = Array.from(root().querySelectorAll(subRowSel)).map(r => (r.textContent || "").trim());
+  ok("a known sub-task is rendered", subTitles.some(txt => txt.indexOf(PMS.repos.tasks.children(parentWithKids.id)[0].title) !== -1));
+  ok("nested rows are indented", parseFloat(root().querySelector(subRowSel).style.paddingInlineStart) > 0);
+  // collapse the first parent: its children disappear
+  // collapse the first parent: its children disappear
+  const firstTwisty = root().querySelector(".vt-twisty:not(.vt-twisty-leaf)");
+  const twistyRowId = firstTwisty.closest(".vt-row").dataset.id;
+  const kidsCount = PMS.repos.tasks.children(twistyRowId).length;
+  const rowsBeforeCollapse = root().querySelectorAll(subRowSel).length;
+  firstTwisty.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+  const afterRows = root().querySelectorAll(subRowSel).length;
+  ok("collapsing a parent hides its sub-tasks", afterRows === rowsBeforeCollapse - kidsCount);
+  // expand again
+  const again = root().querySelector('.vt-row[data-id="' + twistyRowId + '"] .vt-twisty');
+  if (again) again.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+  ok("expanding the parent brings the sub-tasks back", root().querySelectorAll(subRowSel).length === rowsBeforeCollapse);
+  ok("collapse/expand all sub-tasks buttons exist", (root().textContent || "").indexOf(PMS.i18n.t("tasks.collapseAllSubtasks")) !== -1 &&
+    (root().textContent || "").indexOf(PMS.i18n.t("tasks.expandAllSubtasks")) !== -1);
+  // a nested row still opens the editor on double click
+  const subRow = root().querySelector(subRowSel);
+  subRow.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+  ok("double clicking a sub-task opens its editor", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="title"]'));
+  PMS.modal.close();
+
+  // ---- meetings: filter defaults to All + tasks/pillars on the card ------
+  errors.length = 0;
+  route("/meetings");
+  const segButtons = Array.from(root().querySelectorAll(".segmented button"));
+  const allIdx = segButtons.findIndex(b => b.textContent === PMS.i18n.t("meetings.all"));
+  const upIdx = segButtons.findIndex(b => b.textContent === PMS.i18n.t("meetings.upcoming"));
+  ok("the meetings filter defaults to All", allIdx !== -1 && allIdx === 0 && segButtons[0].classList.contains("active"));
+  ok("All is offered next to Upcoming / Past", allIdx === 0 && upIdx === 1 && segButtons.length === 3);
+  const allMeetings = PMS.repos.meetings.all().length;
+  ok("All shows every meeting (upcoming + past)", root().querySelectorAll(".meeting-card").length === allMeetings);
+  const card = root().querySelector(".meeting-card");
+  const seededWithWork = PMS.repos.meetings.all().find(m => PMS.repos.meetings.tasksOf(m.id).length > 0 && (m.projectIds || []).length > 0);
+  ok("a seeded meeting has both tasks and pillars", !!seededWithWork);
+  const workCard = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf(seededWithWork.title) !== -1);
+  ok("the card lists the meeting tasks compactly", workCard.querySelectorAll(".meeting-task-chip").length > 0);
+  ok("the card lists the linked pillars compactly", workCard.querySelectorAll(".meeting-pillar-chip").length > 0);
+  ok("the linked blocks sit next to the existing info", !!workCard.querySelector(".meeting-linked") &&
+    workCard.querySelector(".meeting-date") && workCard.querySelector(".meeting-linked"));
+  ok("a task chip on a card opens that task", (function () {
+    workCard.querySelector(".meeting-task-chip").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    return PMS.modal.isOpen && !!PMS.modal.body.querySelector(".task-detail-body");
+  })());
+  PMS.modal.close();
+  // narrowing to Upcoming hides past meetings
+  const upcomingBtn = segButtons[1];
+  upcomingBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/meetings");
+  ok("switching to Upcoming narrows the list", root().querySelectorAll(".meeting-card").length === PMS.repos.meetings.upcoming().length);
+  // search also matches pillar and task names
+  const search = root().querySelector(".search-inline");
+  search.value = PMS.repos.meetings.all()[0].title;
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok("search narrows the meeting list", root().querySelectorAll(".meeting-card").length >= 0);
+  search.value = "";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+  // ---- meeting time = hours and minutes only ---------------------------
+  const timeCtl = PMS.forms.buildControl({ key: "time", type: "time" }, "14:35");
+  ok("the time control is an hours+minutes input", timeCtl.el.type === "time" && timeCtl.el.value === "14:35");
+  ok("time control prefills an existing time", timeCtl.getValue() === "14:35");
+  ok("time control normalizes free text to HH:MM", PMS.forms.normalizeTime("3.30pm") === "15:30" &&
+    PMS.forms.normalizeTime("9:5") === "09:05" && PMS.forms.normalizeTime("14:30:00") === "14:30" &&
+    PMS.forms.normalizeTime("2 pm") === "14:00" && PMS.forms.normalizeTime("nonsense") === "");
+  ok("an empty time stays empty", PMS.forms.buildControl({ key: "time", type: "time" }, null).getValue() === "");
+  PMS.editors.openMeetingEditor(null, {});
+  const mtgTimeField = PMS.modal.body.querySelector('.field[data-key="time"] input');
+  ok("the meeting editor uses the hours+minutes field", mtgTimeField && mtgTimeField.type === "time");
+  if (mtgTimeField) mtgTimeField.value = "09:45";
+  const mtgBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  const mForm = PMS.modal.body.querySelector("form");
+  mForm.querySelector('input').value = "Time check meeting";
+  mtgBtns[mtgBtns.length - 1].click();
+  const savedMtg = PMS.repos.meetings.all().find(m => m.title === "Time check meeting");
+  ok("saving stores a clean HH:MM time", savedMtg && savedMtg.time === "09:45");
+  if (savedMtg) PMS.repos.meetings.remove(savedMtg.id);
+
+  // ---- people list shows the identifying fields ------------------------
+  const phonePerson = PMS.repos.people.add({ name: "Phone Person", email: "ph@example.com", phone: "+962 7 9000 111", departmentId: null, status: "active" });
+  route("/people");
+  const pCard = Array.from(root().querySelectorAll(".person-card")).find(c => (c.textContent || "").indexOf("Phone Person") !== -1);
+  ok("the people list shows name + job title + email + phone", !!pCard &&
+    /Phone Person/.test(pCard.textContent) && /ph@example.com/.test(pCard.textContent) && /\+962 7 9000 111/.test(pCard.textContent));
+  const pSearch = root().querySelector(".input");
+  pSearch.value = "9000 111";
+  pSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok("the people search also matches the phone", root().querySelectorAll(".person-card").length === 1);
+  pSearch.value = "";
+  pSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  PMS.repos.people.update(phonePerson.id, { status: "inactive" }); // people are archived, not deleted
+  // the inline "+ person" popup captures the phone too
+  const popupCtl = PMS.forms.buildControl({ key: "assignees", type: "multiselect", options: [], allowCreatePerson: true }, []);
+  const pWrap = popupCtl.el.querySelector(".person-create");
+  pWrap.querySelector(".btn").click();
+  const pInputs = pWrap.querySelectorAll(".person-create-panel input");
+  pInputs[0].value = "Popup Person";
+  pInputs[1].value = "popup@example.com";
+  pInputs[2].value = "+962 7 555 000";
+  pWrap.querySelector(".person-create-panel .btn-primary").click();
+  const popupPerson = PMS.repos.people.all().find(p => p.name === "Popup Person");
+  ok("the +person popup saves the phone", !!popupPerson && popupPerson.phone === "+962 7 555 000");
+  if (popupPerson) PMS.repos.people.update(popupPerson.id, { status: "inactive" });
 
   section("Forms + charts + dom");
   const f = PMS.forms.buildControl({ key: "title", type: "text" }, "hello");

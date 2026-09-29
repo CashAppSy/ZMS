@@ -75,6 +75,7 @@
       tasks: "Tasks", noSubProjects: "No sub-pillars",
       name: "Pillar name", status: "Status", priority: "Priority",
       manager: "Owner", managerHint: "The person accountable for this pillar.",
+      owner: "Owner",
       members: "Members", startDate: "Start date",
       endDate: "Due date", budget: "Budget", weight: "Weight",
       weightHint: "How much this pillar counts toward Overall progress — the bigger the weight, the bigger its share.",
@@ -85,11 +86,16 @@
       totalBudget: "Total budget", byStatus: "By status",
       details: "Pillar details", createdOn: "Created on",
       completed: "Completed", late: "Overdue", onTrack: "On track",
-      membersCount: "{n} members", tasksCount: "{n} tasks"
+      membersCount: "{n} members", tasksCount: "{n} tasks",
+      sortedByProgress: "Pillars are always sorted by progress — highest first.",
+      openPillar: "Open {name}"
     },
     tasks: {
       title: "Tasks", newTask: "New task", editTask: "Edit task",
       title: "Title", project: "Pillar", subTasks: "Sub-tasks",
+      subtasks: "Sub-tasks",
+      collapseSubtasks: "Collapse sub-tasks", expandSubtasks: "Expand sub-tasks",
+      collapseAllSubtasks: "Collapse sub-tasks", expandAllSubtasks: "Expand sub-tasks",
       assignees: "Assignees", estimated: "Estimated hours", actual: "Actual hours",
       progress: "Progress", checklist: "Checklist", comments: "Comments",
       progressFromStatus: "Progress is derived from status",
