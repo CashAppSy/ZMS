@@ -14,11 +14,12 @@
 (function (PMS) {
   "use strict";
   PMS.cloudConfig = {
-    projectId: "test-d371d",
-    apiKey: "AIzaSyDeQqbytuAjm7qQpHwSfeXIUmYuXobeQgg",
-    authDomain: "test-d371d.firebaseapp.com",
-    storageBucket: "test-d371d.firebasestorage.app",
-    messagingSenderId: "549208423494",
-    appId: "1:549208423494:web:32cfaa0026f8c7e1ef1e47"
+    projectId: "zain-management-tool",
+    apiKey: "AIzaSyCSHOLGz3uqlWB4kVUWJ1-HKvNcFickwKI",
+    authDomain: "zain-management-tool.firebaseapp.com",
+    storageBucket: "zain-management-tool.firebasestorage.app",
+    messagingSenderId: "1052847513214",
+    appId: "1:1052847513214:web:4b790a6a07579e9590c22f",
+    measurementId: "G-4QY26NZXF8"
   };
 })(window.PMS);
