@@ -422,37 +422,21 @@
     return false;
   }
 
-  // Full task CRUD (every field). Admins: every task. Managers: their own
-  // assigned tasks, the tasks they created (in any pillar) and the tasks of the
-  // pillars they own. Members: only the tasks assigned to them.
+  // Full task CRUD (every field). Admins and managers: EVERY task. Members:
+  // only the tasks assigned to them.
+  //
+  // A manager may edit any task, in a pillar they do not manage, for the same
+  // reason they may create one anywhere (canCreateTask): a task is shared team
+  // work, and a manager who cannot correct someone else's task can only report
+  // the problem. Deletion stays deliberately narrower — a manager may remove
+  // only what they created (canDeleteRecord) — so this widens editing without
+  // handing anyone the power to destroy another manager's data.
   function canEditTask(task) {
     var u = currentUser();
     if (!u) return false;
-    if (u.role === "admin") return true;
+    if (u.role === "admin" || u.role === "manager") return true;
     if (isAssignee(task)) return true;
-    if (u.role === "manager") {
-      if (task && task.createdBy === u.id) return true;
-      var p = (PMS.store.data.projects || []).find(function (x) { return x.id === taskProjectId(task); });
-      return managesProject(p);
-    }
-    if (u.role === "member") return false;
     return false;
-  }
-
-  // Resolve the project a task belongs to. Subtasks may carry their own
-  // projectId; otherwise the parent chain is walked up until one is found.
-  function taskProjectId(task) {
-    if (!task) return null;
-    var cur = task;
-    var seen = {};
-    while (cur) {
-      if (cur.projectId) return cur.projectId;
-      if (seen[cur.id]) return null;
-      seen[cur.id] = true;
-      var parent = (PMS.store.data.tasks || []).find(function (x) { return x.id === cur.parentTaskId; });
-      cur = parent || null;
-    }
-    return null;
   }
 
   // May the current user change the STATUS of this task/subtask?
@@ -526,10 +510,36 @@
   // signed-in user has.
   function canDelete() { return role() === "admin"; }
 
+  // Who made this record? Compared by account id first, then by linked person
+  // so the check still holds on another device, where the local account id is
+  // not the one that stamped the record.
+  function createdByCurrentUser(rec) {
+    if (!rec) return false;
+    var u = currentUser();
+    if (!u) return false;
+    if (rec.createdBy && u.id && rec.createdBy === u.id) return true;
+    if (rec.createdByPersonId && currentPersonId() && rec.createdByPersonId === currentPersonId()) return true;
+    return false;
+  }
+
+  // May this user delete THIS record? Admins may delete anything. A manager may
+  // delete only what they created themselves — a task, pillar or meeting they
+  // authored, not one inherited from another manager or the admin. A member
+  // may never delete. Callers must pass the record: the old argument-less
+  // canDelete() stays the broad "admin only" answer for the global destructive
+  // actions (erase all data, restore, definitions) that have no single owner.
+  function canDeleteRecord(rec) {
+    var r = role();
+    if (r === "admin") return true;
+    if (r === "manager") return createdByCurrentUser(rec);
+    return false;
+  }
+
   // Gate used by delete entry points: returns true for the admin, otherwise
-  // explains via a toast and returns false.
-  function requireDelete() {
-    if (canDelete()) return true;
+  // explains via a toast and returns false. When a record is passed, a manager
+  // is allowed through for a record they created (canDeleteRecord).
+  function requireDelete(rec) {
+    if (canDeleteRecord(rec)) return true;
     if (PMS.toast && PMS.toast.show) {
       var msg = (PMS.i18n && PMS.i18n.t) ? PMS.i18n.t("auth.deleteForbidden") : "Only the admin can delete data.";
       PMS.toast.show(msg, "error");
@@ -718,6 +728,8 @@ PMS.auth = {
     canEditProject: canEditProject,
     canDelete: canDelete,
     requireDelete: requireDelete,
+    canDeleteRecord: canDeleteRecord,
+    createdByCurrentUser: createdByCurrentUser,
     reauthenticateAdmin: reauthenticateAdmin,
     // ZMS-R16: sensitive-action gate (local + cloud admin password).
     confirmSensitive: confirmSensitive,

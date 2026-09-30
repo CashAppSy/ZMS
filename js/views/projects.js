@@ -175,10 +175,13 @@
     var isAdminWrite = PMS.auth ? PMS.auth.can("projects.write") : true;
     var canEdit = PMS.auth ? PMS.auth.canEditProject(proj) : true;
     var canDetailWrite = canEdit || isAdminWrite;
+    // Deletion is narrower than write access: an admin always, and a manager
+    // only for a pillar they created themselves.
+    var canDeletePillar = PMS.auth ? PMS.auth.canDeleteRecord(proj) : true;
     if (canEdit) {
       actions.appendChild(h("button.btn", { text: t("common.edit"), on: { click: function () { PMS.editors.openProjectEditor(proj, { onSaved: function () {} }); } } }));
     }
-    if (isAdminWrite) {
+    if (canDeletePillar) {
       actions.appendChild(h("button.btn.btn-soft-danger", {
         text: t("common.delete"),
         on: { click: function () { deleteProject(proj); } }
@@ -296,7 +299,7 @@
   }
 
   function deleteProject(proj) {
-    if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
+    if (PMS.auth.requireDelete && !PMS.auth.requireDelete(proj)) return;
     PMS.modal.open({
       title: t("confirm.title"),
       content: h("p", { text: t("confirm.deleteProject", { name: proj.name }) }),

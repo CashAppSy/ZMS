@@ -14,14 +14,19 @@ rules_version = '2';
 //     - the assignees of a task (caller's personId in assignees)
 //       may change ONLY the status of THAT task (status, progress,
 //       activity, updatedAt — the exact fields the status UI writes);
-//     - everything else on tasks/projects stays admin-only, and
-//       deleting a project/task record is ALWAYS admin-only.
+//     - everything else on tasks/projects stays admin-only;
+//     - a task may be CREATED by a manager in ANY pillar (auth.js
+//       canCreateTask: an unassigned task belongs to nobody);
+//     - DELETING a task/pillar/meeting is admin-only OR the manager who
+//       CREATED that record (canDeleteRecord). Being able to create a task
+//       in a pillar you do not manage does not let you destroy it.
 //   The global activity log (zms_activities, round 6) is an append-only
 //   per-record collection: any ACTIVE team member may create an entry,
 //   everyone may read, only admins may delete (clearing the log).
 //   MEETINGS are per record too (zms_meetings/<meetingId>), written by admins
-//   and managers (the roles that may create/edit a meeting) and deleted by
-//   admins only. They were added because the app was storing them per-device
+//   and managers (the roles that may create/edit a meeting) and deleted by an
+//   admin or the manager who created that meeting. They were added because the
+//   app was storing them per-device
 //   in localStorage, which meant a meeting never reached any other user.
 //   The other collections (departments, people, statuses,
 //   priorities, custom field defs, saved filters) stay in the
@@ -115,6 +120,30 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/zms_projects/$(projId)).data.managerId == myPersonId();
     }
 
+    // Did the caller create `docData`? creatorOf is the resolved creator
+    // personId, or null when the record was never attributed to a person.
+    // Returns null for "unknown", because a caller with no linked person must
+    // not match an unattributed record.
+    function creatorOf(docData) {
+      return docData != null && 'createdByPersonId' in docData
+        ? docData.createdByPersonId
+        : null;
+    }
+    function isCreatorOf(uid, docData) {
+      return isActiveUser(uid)
+        && myPersonId() != null
+        && creatorOf(docData) == myPersonId();
+    }
+
+    // Deletion. An admin may delete anything. A MANAGER may delete only a record
+    // they created themselves — mirrored by auth.js canDeleteRecord(). A member
+    // may never delete. This is deliberately narrower than write access: being
+    // able to create a task in a pillar you do not manage does not let you
+    // destroy that pillar's manager's data.
+    function canDeleteRecord(uid, docData) {
+      return isAdmin(uid) || (isManagerOrAdmin(uid) && isCreatorOf(uid, docData));
+    }
+
     // A task can be fully managed when its project is managed by `uid`.
     function isTaskProjectManaged(uid, taskData) {
       return isActiveUser(uid)
@@ -175,7 +204,7 @@ service cloud.firestore {
             && request.resource.data.managerId == myPersonId());
       allow update: if isAdmin(request.auth.uid)
         || isProjectManagerOf(request.auth.uid, projId);
-      allow delete: if isAdmin(request.auth.uid);
+      allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
     // ---- per-record: tasks ----
@@ -190,7 +219,7 @@ service cloud.firestore {
       allow update: if isAdmin(request.auth.uid)
         || isTaskProjectManaged(request.auth.uid, resource.data)
         || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());
-      allow delete: if isAdmin(request.auth.uid);
+      allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
     // ---- per-record: meetings ----
@@ -203,12 +232,13 @@ service cloud.firestore {
     //               like tasks; it is not a write-level restriction.
     // create/update : admin or manager, mirroring auth.js canCreateMeeting /
     //               canEditMeeting. Members are read-only for meetings.
-    // delete      : admin only, consistent with the per-record collections.
+    // delete      : an admin, or a manager who created this meeting
+    //               (canDeleteRecord, same as tasks/projects).
     match /zms_meetings/{meetingId} {
       allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
       allow create: if isManagerOrAdmin(request.auth.uid);
       allow update: if isManagerOrAdmin(request.auth.uid);
-      allow delete: if isAdmin(request.auth.uid);
+      allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
     // ---- append-only global activity log (round 6) ----

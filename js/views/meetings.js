@@ -207,6 +207,24 @@
 
   /* ---------------- detail ---------------- */
 
+  // The delete button is shown only to someone who may actually delete this
+  // meeting: an admin always, or a manager who created it. A manager gets no
+  // button at all for a meeting authored by someone else, instead of a button
+  // that opens and then refuses.
+  function meetingFooter(m) {
+    var canDelete = PMS.auth ? PMS.auth.canDeleteRecord(m) : true;
+    var out = [];
+    if (canDelete) {
+      out.push({ label: t("common.delete"), class: "btn-soft-danger", onClick: function () { confirmDelete(m); } });
+    }
+    out.push({
+      label: "+ " + t("meetings.newTask"), class: "btn-primary",
+      onClick: function () { newTaskFromMeeting(m); }
+    });
+    out.push({ label: t("common.close"), onClick: function () { detailOpen = false; PMS.modal.close(); } });
+    return out;
+  }
+
   function openDetail(meetingId) {
     var m = PMS.repos.meetings.get(meetingId);
     if (!m) return;
@@ -215,14 +233,7 @@
       title: m.title,
       size: "lg",
       content: function () { return detailBody(m); },
-      footer: [
-        { label: t("common.delete"), class: "btn-soft-danger", onClick: function () { confirmDelete(m); } },
-        {
-          label: "+ " + t("meetings.newTask"), class: "btn-primary",
-          onClick: function () { newTaskFromMeeting(m); }
-        },
-        { label: t("common.close"), onClick: function () { detailOpen = false; PMS.modal.close(); } }
-      ]
+      footer: meetingFooter(m)
     });
   }
 
@@ -474,7 +485,7 @@
   }
 
   function confirmDelete(m) {
-    if (PMS.auth && PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
+    if (PMS.auth && PMS.auth.requireDelete && !PMS.auth.requireDelete(m)) return;
     var tasks = PMS.repos.meetings.tasksOf(m.id);
     PMS.modal.open({
       title: t("confirm.title"),

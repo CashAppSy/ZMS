@@ -1463,8 +1463,80 @@ section("Cloud sync (offline-safe API)");
       /match \/zms_meetings\/\{meetingId\}/.test(mtgRules));
     ok("only an admin or manager may create or edit a meeting in the cloud",
       /match \/zms_meetings\/\{meetingId\}[\s\S]{0,500}allow create: if isManagerOrAdmin[\s\S]{0,160}allow update: if isManagerOrAdmin/.test(mtgRules));
-    ok("only an admin may delete a meeting record",
-      /match \/zms_meetings\/\{meetingId\}[\s\S]{0,600}allow delete: if isAdmin/.test(mtgRules));
+    ok("deleting a meeting needs an admin, or the manager who created it",
+      /match \/zms_meetings\/\{meetingId\}[\s\S]{0,600}allow delete: if canDeleteRecord\(request\.auth\.uid, resource\.data\)/.test(mtgRules) &&
+      /function canDeleteRecord\(uid, docData\)[\s\S]{0,200}isAdmin\(uid\) \|\| \(isManagerOrAdmin\(uid\) && isCreatorOf\(uid, docData\)\)/.test(mtgRules));
+  }
+  // --- a manager may edit any task, and may delete only what they created ---
+  {
+    const rulesSrc = fs.readFileSync(path.join(APP, "firestore.rules"), "utf8");
+    const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    const authSrc = fs.readFileSync(path.join(APP, "js", "core", "auth.js"), "utf8");
+
+    ok("canEditTask lets a manager edit ANY task, not just their own pillar's",
+      /function canEditTask[\s\S]{0,700}if \(u\.role === "manager"\) return true;/.test(authSrc));
+
+    ok("auth exposes a per-record delete right for the manager",
+      /function canDeleteRecord\(rec\)[\s\S]{0,300}if \(r === "manager"\) return createdByCurrentUser\(rec\)/.test(authSrc) &&
+      /canDeleteRecord: canDeleteRecord/.test(authSrc));
+    ok("a member may never delete, and the broad canDelete() stays admin-only",
+      /function canDelete\(\) \{ return role\(\) === "admin"; \}/.test(authSrc) &&
+      /function canDeleteRecord\(rec\)[\s\S]{0,300}if \(r === "manager"\)[\s\S]{0,120}return false;/.test(authSrc));
+    ok("the creator is matched by person id so it survives another device",
+      /createdByPersonId && currentPersonId\(\) && rec\.createdByPersonId === currentPersonId\(\)/.test(authSrc));
+
+    // The push engine reads the creator from the MIRROR: by the time it runs,
+    // the local record is gone, so there is nothing left to read it from.
+    ok("the mirror keeps createdByPersonId so a deletion can be authorized",
+      /function recordTrack[\s\S]{0,700}createdByPersonId: \(rec && rec\.createdByPersonId\) \|\| null/.test(syncSrc));
+    ok("a manager may delete a record they created, and only that one",
+      /if \(idn\.role !== "manager" \|\| !idn\.personId\) return;[\s\S]{0,200}creator !== idn\.personId\) return;/.test(syncSrc));
+
+    // the UI must not offer a delete it will refuse
+    ok("the task detail hides delete for a manager on someone else's task",
+      /canDeleteTask\(task\) \? \{[\s\S]{0,200}confirmTaskDelete/.test(fs.readFileSync(path.join(APP, "js", "ui", "task-detail.js"), "utf8")));
+    ok("the pillar view gates delete on canDeleteRecord",
+      /var canDeletePillar = PMS\.auth \? PMS\.auth\.canDeleteRecord\(proj\)/.test(fs.readFileSync(path.join(APP, "js", "views", "projects.js"), "utf8")));
+    ok("the meeting view gates delete on canDeleteRecord",
+      /PMS\.auth\.canDeleteRecord\(m\)/.test(fs.readFileSync(path.join(APP, "js", "views", "meetings.js"), "utf8")));
+    ok("all three delete confirmations pass the record to the gate",
+      /requireDelete\(task\)/.test(fs.readFileSync(path.join(APP, "js", "ui", "task-detail.js"), "utf8")) &&
+      /requireDelete\(proj\)/.test(fs.readFileSync(path.join(APP, "js", "views", "projects.js"), "utf8")) &&
+      /requireDelete\(m\)/.test(fs.readFileSync(path.join(APP, "js", "views", "meetings.js"), "utf8")));
+  }
+  {
+    // behaviour, not just shape: a manager owns what they created and nothing else
+    const saved2 = PMS.utils.deepClone(PMS.store.data);
+    // createUser always mints a "member"; an admin promotes it, which is the
+    // only path to the manager role (ZMS-R02).
+    const created = PMS.auth.createUser({ username: "mara@z", password: "pw12345", name: "Mara" });
+    const mgr = created.user;
+    ok("a new account starts as a member and is promoted by an admin",
+      mgr && mgr.role === "member" && PMS.auth.updateUser(mgr.id, { role: "manager", personId: "person-mgr-1" }).ok === true);
+    // no other manager may hold a person link, so the record under test is
+    // unambiguously owned by someone else
+    const recs = PMS.utils.deepClone(PMS.store.data);
+    recs.users.forEach(function (u) { if (u.role === "manager" && u.id !== mgr.id) u.personId = null; });
+    PMS.store.setData(recs);
+    PMS.auth.login("mara@z", "pw12345");
+    ok("signed in as the promoted manager", PMS.auth.currentUser().role === "manager" && PMS.auth.currentUser().personId === "person-mgr-1");
+    const mine = { id: "t-mine", title: "Mine", projectId: "p-foreign", assignees: [], createdBy: mgr.id, createdByPersonId: "person-mgr-1" };
+    const theirs = { id: "t-theirs", title: "Theirs", projectId: "p-foreign", assignees: [], createdBy: "someone-else", createdByPersonId: "person-other" };
+    ok("a manager may edit any task, including one in a pillar they do not manage",
+      PMS.auth.canEditTask(theirs) === true && PMS.auth.canEditTask(mine) === true);
+    ok("a manager may delete a task they created",
+      PMS.auth.canDeleteRecord(mine) === true && PMS.auth.requireDelete(mine) === true);
+    ok("a manager may NOT delete a task created by someone else",
+      PMS.auth.canDeleteRecord(theirs) === false);
+    ok("the same holds for a pillar and a meeting",
+      PMS.auth.canDeleteRecord({ id: "p1", createdByPersonId: "person-mgr-1" }) === true &&
+      PMS.auth.canDeleteRecord({ id: "m1", createdByPersonId: "person-other" }) === false);
+    ok("an unattributed record is not deletable by a manager",
+      PMS.auth.canDeleteRecord({ id: "x1" }) === false);
+    PMS.auth.login("boss", "pw1234");
+    ok("an admin may still delete any record, and canDelete() stays admin-only",
+      PMS.auth.canDeleteRecord(theirs) === true && PMS.auth.canDelete() === true && PMS.auth.requireDelete(theirs) === true);
+    PMS.store.setData(saved2);
   }
   PMS.auth.login("lina", "newpass1");
   ok("member canDelete/requireDelete returns false",

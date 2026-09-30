@@ -815,9 +815,17 @@
   // fields (for the assignee status-only path); a MEETING has no status,
   // progress or activity, so tracking them would store meaningless nulls and
   // make the mirror misleading — its updatedAt alone decides changed/not.
+  // createdByPersonId is kept in the mirror on purpose: once a record is deleted
+  // locally there is no record left to read the creator from, and the mirror is
+  // the only place that can still tell whether this account may delete it in
+  // the cloud (auth.js canDeleteRecord).
   function recordTrack(cname, rec) {
-    if (cname === "meetings") return { updatedAt: (rec && rec.updatedAt) || null };
-    return statusTrack(rec);
+    if (cname === "meetings") {
+      return { updatedAt: (rec && rec.updatedAt) || null, createdByPersonId: (rec && rec.createdByPersonId) || null };
+    }
+    var t = statusTrack(rec);
+    t.createdByPersonId = (rec && rec.createdByPersonId) || null;
+    return t;
   }
 
   // Serialized equality for a single status field (activity is an array).
@@ -856,10 +864,17 @@
     var have = {};
     local.forEach(function (rec) { if (rec && rec.id) have[rec.id] = true; });
 
-    // deletions: admin only (rules forbid anyone else)
+    // Deletions. An admin may delete any record; a manager may delete only a
+    // record they created (rules: canDeleteRecord). The creator is read from
+    // the MIRROR, because the local record is already gone by the time this
+    // runs — and the mirror carries createdByPersonId exactly for this reason.
     Object.keys(mirror).forEach(function (id) {
       if (have[id]) return;
-      if (!idn.isAdmin) return;
+      if (!idn.isAdmin) {
+        if (idn.role !== "manager" || !idn.personId) return;
+        var creator = (mirror[id] && mirror[id].createdByPersonId) || null;
+        if (creator !== idn.personId) return;
+      }
       ops.push(recordRef(cname, id).delete());
       mirrorUpdates[id] = null;
     });

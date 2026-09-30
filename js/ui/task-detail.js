@@ -122,15 +122,17 @@
         return node;
       },
       footer: [
-        {
+        // No delete button for a manager on a task they did not create: the
+        // option is absent rather than present-then-refused.
+        canDeleteTask(task) ? {
           label: t("common.delete"), class: "btn-soft-danger",
           onClick: function (m, body) {
             markClosed();
             PMS.confirmTaskDelete(task);
           }
-        },
+        } : null,
         { label: t("common.close"), onClick: function () { markClosed(); PMS.modal.close(); } }
-      ]
+      ].filter(Boolean)
     });
   }
 
@@ -292,8 +294,12 @@
     return (task.activity || []).concat([{ id: PMS.ids.uuid(), action: action, at: new Date().toISOString() }]);
   }
 
+  function canDeleteTask(task) {
+    return PMS.auth ? PMS.auth.canDeleteRecord(task) : true;
+  }
+
   PMS.confirmTaskDelete = function (task) {
-    if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;
+    if (PMS.auth.requireDelete && !PMS.auth.requireDelete(task)) return;
     PMS.modal.open({
       title: t("confirm.title"),
       content: h("p", { text: t("confirm.deleteTask", { title: task.title }) }),
