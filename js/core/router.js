@@ -122,18 +122,20 @@
     currentView = resolved.view;
     currentParams = Object.assign({}, resolved.params, resolved.query || {});
 
-    // admin-only routes: non-admins are bounced to the dashboard
-    if (resolved.view.adminOnly) {
-      var allowed = PMS.auth && PMS.auth.can("settings");
-      if (!allowed) {
-        if (PMS.auth && PMS.auth.currentUser() && PMS.toast) {
-          PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error");
-        }
-        resolved = { viewId: "dashboard", params: {}, query: {}, view: PMS.registry.getView("dashboard") };
-        currentView = resolved.view;
-        currentParams = Object.assign({}, resolved.params, resolved.query || {});
-        currentPath = "/";
+    // routes this role may not open: an adminOnly view (settings, activity) or
+    // a path outside the role's tabs (a member gets tasks + meetings only)
+    if (!PMS.registry.viewAllowed(resolved.view) || !PMS.registry.pathAllowed(clean)) {
+      if (PMS.auth && PMS.auth.currentUser() && PMS.toast) {
+        PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error");
       }
+      var home = PMS.registry.homeRoute();
+      if (clean !== home) {
+        // fix the URL, then re-resolve so the home view paints right away
+        // instead of waiting for the hashchange to come back round
+        if (window.location.hash !== "#" + home) window.location.hash = "#" + home;
+        return handle();
+      }
+      return;
     }
 
     document.title = PMS.i18n.t(currentView.titleKey || "app.name") + " — " + PMS.i18n.t("app.name");

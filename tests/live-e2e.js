@@ -745,6 +745,52 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live tasks and meetings stamp the creator identically", /stampCreator\(obj\);\s*return add\("tasks", obj\);/.test(fs.readFileSync(path.join(APP, "js", "data", "repositories.js"), "utf8")));
   ok("live an imported task keeps its creator", PMS.dataMerge.taskDB({ id: "i1", title: "I", createdBy: "u1", createdByName: "Imp", createdByPersonId: "p1" }).createdByName === "Imp");
 
+  section("E.9b5 A member only gets the Tasks and Meetings tabs (live UI)");
+  const liveMember = (function () {
+    const existing = PMS.auth.users().find(u => u.role === "member" && u.personId);
+    if (existing) { PMS.auth.resetPassword(existing.id, "lvnav1234"); return existing; }
+    const p = PMS.repos.people.all()[0];
+    return PMS.auth.createUser({ username: "lvnav", password: "lvnav1234", personId: p.id, role: "member" }).user;
+  })();
+  ok("live the test member is a member", liveMember && liveMember.role === "member", liveMember && liveMember.role);
+  ok("live the test member signs in", !PMS.auth.login(liveMember.username, "lvnav1234").error && PMS.auth.role() === "member");
+  PMS.app.init();
+  const liveMemberNav = Array.from(document.querySelectorAll(".nav-item")).map(el => el.dataset.route);
+  ok("live a member sees exactly two tabs", liveMemberNav.length === 2, liveMemberNav.join(", "));
+  ok("live the member tabs are Tasks and Meetings", liveMemberNav.indexOf("/tasks") !== -1 && liveMemberNav.indexOf("/meetings") !== -1, liveMemberNav.join(", "));
+  ok("live the member has no dashboard", liveMemberNav.indexOf("/") === -1);
+  ok("live the member has no projects, people or reports", liveMemberNav.indexOf("/projects") === -1 && liveMemberNav.indexOf("/people") === -1 && liveMemberNav.indexOf("/reports") === -1, liveMemberNav.join(", "));
+  ok("live the member has no settings or activity", liveMemberNav.indexOf("/settings") === -1 && liveMemberNav.indexOf("/activity") === -1, liveMemberNav.join(", "));
+  ok("live the member's home is Tasks", PMS.registry.homeRoute() === "/tasks", PMS.registry.homeRoute());
+  ok("live the member lands on Tasks after init", PMS.router.current === "/tasks", PMS.router.current);
+  ["/", "/projects", "/people", "/reports", "/settings", "/activity"].forEach(p => {
+    ok("live a member cannot open " + p, PMS.registry.pathAllowed(p) === false);
+    PMS.router.navigate(p);
+    PMS.router.handle();
+    ok("live routing a member to " + p + " lands on Tasks", PMS.router.current === "/tasks", PMS.router.current);
+  });
+  ok("live the blocked URL was corrected", window.location.hash === "#/tasks", window.location.hash);
+  ["/tasks", "/meetings", "/tasks/kanban", "/tasks/gantt", "/tasks/calendar"].forEach(p => {
+    ok("live a member can open " + p, PMS.registry.pathAllowed(p) === true);
+  });
+  PMS.router.navigate("/tasks/kanban"); PMS.router.handle();
+  ok("live a member can still switch the tasks view to kanban", PMS.router.current === "/tasks/kanban", PMS.router.current);
+  PMS.router.navigate("/tasks/calendar"); PMS.router.handle();
+  ok("live a member can still switch the tasks view to calendar", PMS.router.current === "/tasks/calendar", PMS.router.current);
+  PMS.router.navigate("/tasks"); PMS.router.handle();
+  ok("live a member sees the tasks table", document.querySelectorAll(".vt-row").length > 0, document.querySelectorAll(".vt-row").length + " rows");
+  PMS.router.navigate("/meetings"); PMS.router.handle();
+  ok("live a member sees the meetings view", (document.getElementById("view-root").textContent || "").length > 0);
+
+  // managers and admins keep the full nav
+  PMS.auth.login("boss", "pw1234");
+  PMS.app.init();
+  const liveAdminNav = Array.from(document.querySelectorAll(".nav-item")).map(el => el.dataset.route);
+  ok("live an admin keeps every tab", ["/", "/projects", "/people", "/reports", "/settings", "/activity", "/tasks", "/meetings"].every(r => liveAdminNav.indexOf(r) !== -1), liveAdminNav.join(", "));
+  ok("live an admin's home is the dashboard", PMS.registry.homeRoute() === "/", PMS.registry.homeRoute());
+  PMS.router.navigate("/reports"); PMS.router.handle();
+  ok("live an admin can still open reports", PMS.router.current === "/reports", PMS.router.current);
+
   section("E.9c Blank-screen guard (live bundle)");
   // Reported bug: after signing in the interface stayed empty until the page
   // was refreshed by hand. A view that throws must report itself in place and

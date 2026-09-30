@@ -1708,6 +1708,95 @@ section("Meeting card leads with the creator, logo + favicon");
   PMS.sync.stop();
   ok("sync.tick safe when unbound", true);
 
+  section("A member only gets the Tasks and Meetings tabs");
+  // a real member account, linked to a person so the scoped views have data
+  const navMember = (function () {
+    const existing = PMS.auth.users().find(u => u.role === "member" && u.personId);
+    if (existing) { PMS.auth.resetPassword(existing.id, "nav1234"); return existing; }
+    const p = PMS.repos.people.all()[0];
+    const acc = PMS.auth.createUser({ username: "navmember", password: "nav1234", personId: p.id, role: "member" });
+    return acc.user;
+  })();
+  ok("the test member account is a member", navMember && navMember.role === "member", navMember && navMember.role);
+  ok("the test member signs in", !PMS.auth.login(navMember.username, "nav1234").error && PMS.auth.role() === "member");
+  PMS.app.init(); // rebuild the shell so the sidebar reflects this role
+
+  // ---- the sidebar -------------------------------------------------------
+  const memberNav = Array.from(root().querySelectorAll(".nav-item")).concat(Array.from(document.querySelectorAll(".nav-item")));
+  const memberNavRoutes = memberNav.map(el => el.dataset.route);
+  const memberNavLabels = memberNav.map(el => (el.textContent || "").trim());
+  ok("a member sees exactly two tabs", memberNavRoutes.length === 2, memberNavRoutes.join(", "));
+  ok("the two tabs are Tasks and Meetings", memberNavRoutes.indexOf("/tasks") !== -1 && memberNavRoutes.indexOf("/meetings") !== -1, memberNavRoutes.join(", "));
+  ok("the member has no dashboard tab", memberNavRoutes.indexOf("/") === -1);
+  ok("the member has no projects tab", memberNavRoutes.indexOf("/projects") === -1);
+  ok("the member has no people tab", memberNavRoutes.indexOf("/people") === -1);
+  ok("the member has no reports tab", memberNavRoutes.indexOf("/reports") === -1);
+  ok("the member has no activity tab", memberNavRoutes.indexOf("/activity") === -1);
+  ok("the member has no settings tab", memberNavRoutes.indexOf("/settings") === -1);
+  ok("the member tab labels are Tasks and Meetings", memberNavLabels.length === 2 && memberNavLabels.some(l => l.indexOf(PMS.i18n.t("nav.tasks")) !== -1) && memberNavLabels.some(l => l.indexOf(PMS.i18n.t("nav.meetings")) !== -1), memberNavLabels.join(" | "));
+
+  // ---- hiding a tab is not enough: the URL must be blocked too ----------
+  ok("the member's home is Tasks, not the dashboard", PMS.registry.homeRoute() === "/tasks", PMS.registry.homeRoute());
+  ok("the member lands on Tasks after signing in", (function () { PMS.app.init(); return PMS.router.current === "/tasks"; })(), PMS.router.current);
+  ["/", "/projects", "/projects/" + PMS.repos.projects.all()[0].id, "/people", "/reports", "/activity", "/settings"].forEach(p => {
+    ok("a member cannot open " + p, !PMS.registry.pathAllowed(p));
+  });
+  ["/tasks", "/meetings", "/tasks/kanban", "/tasks/gantt", "/tasks/calendar"].forEach(p => {
+    ok("a member can open " + p, PMS.registry.pathAllowed(p));
+  });
+  // typing a blocked URL must actually land on Tasks, not render the page
+  ["/", "/projects", "/people", "/reports", "/settings"].forEach(p => {
+    route(p);
+    ok("a member routed to " + p + " ends up on Tasks", PMS.router.current === "/tasks", PMS.router.current);
+  });
+  ok("the blocked route was corrected in the URL too", window.location.hash === "#/tasks", window.location.hash);
+  // the task sub-views stay reachable: they are part of the Tasks tab
+  ["/tasks/kanban", "/tasks/gantt", "/tasks/calendar"].forEach(p => {
+    route(p);
+    ok("a member can still switch to " + p, PMS.router.current === p, PMS.router.current);
+  });
+  route("/tasks");
+  ok("a member sees the tasks table", root().querySelectorAll(".vt-row").length > 0);
+  route("/meetings");
+  ok("a member sees the meetings view", root().textContent.length > 0);
+  ok("a member sees the meetings tab content", (function () {
+    route("/meetings");
+    return !!root().querySelector(".meeting-card, .empty-state, .tabs");
+  })());
+
+  // ---- managers and admins keep everything ------------------------------
+  const navManager = PMS.auth.users().find(u => u.username === "mona");
+  if (navManager) {
+    PMS.auth.resetPassword(navManager.id, "mona1234");
+    PMS.auth.login("mona", "mona1234");
+    PMS.app.init();
+    const mgrRoutes = Array.from(document.querySelectorAll(".nav-item")).map(el => el.dataset.route);
+    ok("a manager keeps the dashboard", mgrRoutes.indexOf("/") !== -1, mgrRoutes.join(", "));
+    ok("a manager keeps projects, people and reports", mgrRoutes.indexOf("/projects") !== -1 && mgrRoutes.indexOf("/people") !== -1 && mgrRoutes.indexOf("/reports") !== -1, mgrRoutes.join(", "));
+    ok("a manager keeps every non-admin tab", ["/", "/projects", "/people", "/reports", "/tasks", "/meetings"].every(r => mgrRoutes.indexOf(r) !== -1), mgrRoutes.join(", "));
+    ok("a manager still cannot open settings (adminOnly)", PMS.registry.viewAllowed(PMS.registry.getView("settings")) === false);
+    ok("a manager still cannot open activity (adminOnly)", PMS.registry.viewAllowed(PMS.registry.getView("activity")) === false);
+    route("/settings");
+    ok("a manager routed to /settings is bounced", PMS.router.current !== "/settings", PMS.router.current);
+    route("/reports");
+    ok("a manager can still open reports", PMS.router.current === "/reports", PMS.router.current);
+  }
+  PMS.auth.login("boss", "pw1234");
+  PMS.app.init();
+  const adminRoutes = Array.from(document.querySelectorAll(".nav-item")).map(el => el.dataset.route);
+  ok("an admin keeps every tab", ["/", "/projects", "/people", "/reports", "/settings", "/activity", "/tasks", "/meetings"].every(r => adminRoutes.indexOf(r) !== -1), adminRoutes.join(", "));
+  ok("an admin's home is the dashboard", PMS.registry.homeRoute() === "/", PMS.registry.homeRoute());
+  route("/");
+  ok("an admin can still open the dashboard", PMS.router.current === "/", PMS.router.current);
+  route("/reports");
+  ok("an admin can still open reports", PMS.router.current === "/reports", PMS.router.current);
+  // the shared helpers must be a no-op when nobody is signed in
+  PMS.auth.logout();
+  ok("with nobody signed in every path is allowed", PMS.registry.pathAllowed("/reports") && PMS.registry.pathAllowed("/settings"));
+  ok("with nobody signed in the home is the root", PMS.registry.homeRoute() === "/");
+  PMS.auth.login("boss", "pw1234");
+  PMS.app.init();
+
   section("Tasks show who created them, and every action syncs");
   PMS.auth.login("boss", "pw1234");
   // ---- the write side stamps the creator like meetings already did -------

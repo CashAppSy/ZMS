@@ -64,8 +64,9 @@
     brand.appendChild(h("span.brand-name", { text: t("app.name") }));
     sidebar.appendChild(brand);
     var nav = h("nav.sidebar-nav", { attrs: { "aria-label": "Main" } });
-    PMS.registry.allViews().filter(function (v) { return v.nav; }).forEach(function (v) {
-      if (v.adminOnly && (!PMS.auth || !PMS.auth.can("settings"))) return;
+    // only the tabs the signed-in role may open (a member gets tasks +
+    // meetings and nothing else)
+    PMS.registry.navViews().forEach(function (v) {
       var item = h("button.nav-item", {
         dataset: { route: v.path },
         html: (v.icon ? "<span class='nav-icon'>" + PMS.utils.escapeHtml(v.icon) + "</span>" : "") + "<span>" + PMS.utils.escapeHtml(t(v.titleKey)) + "</span>"
@@ -374,7 +375,8 @@
     step("lang", function () { PMS.i18n.setLang(PMS.store.data.settings.lang || "en"); });
     step("sidebar", buildSidebar);
     step("topbar", buildTopbar);
-    step("route", function () { if (PMS.router) { PMS.router.navigate("/"); PMS.router.handle(); } });
+    // land on the tab this role's home is (a member has no dashboard)
+    step("route", function () { if (PMS.router) { PMS.router.navigate(PMS.registry.homeRoute()); PMS.router.handle(); } });
     ensurePainted();
   }
 
