@@ -1533,6 +1533,32 @@ section("Cloud sync (offline-safe API)");
       PMS.auth.canDeleteRecord({ id: "m1", createdByPersonId: "person-other" }) === false);
     ok("an unattributed record is not deletable by a manager",
       PMS.auth.canDeleteRecord({ id: "x1" }) === false);
+
+    // The task editor is how a task opens from the table (double click /
+    // pencil), so it must offer the same gated delete as the detail modal.
+    // Regression: the button only existed in task-detail, so a manager using
+    // the table never saw a delete option at all.
+    const edSrc = fs.readFileSync(path.join(APP, "js", "ui", "entity-editors.js"), "utf8");
+    ok("the task editor footer routes through the delete gate",
+      /footer: taskEditorFooter\(isEdit, restricted, task, \[/.test(edSrc) &&
+      /function taskEditorFooter[\s\S]{0,300}canDeleteRecord\(task\)/.test(edSrc));
+    const edMine = PMS.repos.tasks.add({ projectId: "p-foreign", title: "Editor mine", status: "todo", assignees: [] });
+    PMS.repos.tasks.update(edMine.id, { createdBy: mgr.id, createdByPersonId: "person-mgr-1", createdByName: "Mara" });
+    const deleteLabel = PMS.i18n.t("common.delete");
+    PMS.editors.openTaskEditor(PMS.repos.tasks.get(edMine.id), {});
+    var edFooter = document.querySelector(".modal-footer");
+    ok("the task editor offers delete on a task the manager created",
+      !!edFooter && edFooter.textContent.indexOf(deleteLabel) !== -1);
+    PMS.modal.close();
+    const edTheirs = PMS.repos.tasks.add({ projectId: "p-foreign", title: "Editor theirs", status: "todo", assignees: [] });
+    PMS.repos.tasks.update(edTheirs.id, { createdBy: "someone-else", createdByPersonId: "person-other", createdByName: "Other" });
+    PMS.editors.openTaskEditor(PMS.repos.tasks.get(edTheirs.id), {});
+    edFooter = document.querySelector(".modal-footer");
+    ok("the task editor hides delete on a task the manager did not create",
+      !!edFooter && edFooter.textContent.indexOf(deleteLabel) === -1);
+    PMS.modal.close();
+    PMS.repos.tasks.remove(edMine.id);
+    PMS.repos.tasks.remove(edTheirs.id);
     PMS.auth.login("boss", "pw1234");
     ok("an admin may still delete any record, and canDelete() stays admin-only",
       PMS.auth.canDeleteRecord(theirs) === true && PMS.auth.canDelete() === true && PMS.auth.requireDelete(theirs) === true);

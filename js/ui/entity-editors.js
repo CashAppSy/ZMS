@@ -448,6 +448,22 @@
     });
   }
 
+  // The task editor is how a task opens from the table (double click / pencil),
+  // so the delete affordance must live here too — gated exactly like the detail
+  // modal: an admin any task, a manager only a task they created themselves.
+  function taskEditorFooter(isEdit, restricted, task, footer) {
+    if (!isEdit || restricted || !task) return footer;
+    if (PMS.auth && PMS.auth.canDeleteRecord && !PMS.auth.canDeleteRecord(task)) return footer;
+    footer.unshift({
+      label: t("common.delete"), class: "btn-soft-danger",
+      onClick: function () {
+        PMS.modal.close();
+        if (PMS.confirmTaskDelete) PMS.confirmTaskDelete(task);
+      }
+    });
+    return footer;
+  }
+
   function openTaskEditor(task, opts) {
     if (!canOpenTask(task, opts)) return;
     opts = opts || {};
@@ -476,7 +492,7 @@
           return PMS.forms.build(sch, vals);
         });
       },
-      footer: [
+      footer: taskEditorFooter(isEdit, restricted, task, [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
         {
           label: t("common.save"), class: "btn-primary",
@@ -529,7 +545,7 @@
             if (opts.onSaved) opts.onSaved(payload);
           }
         }
-      ]
+      ])
     });
   }
 

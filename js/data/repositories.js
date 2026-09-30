@@ -34,6 +34,13 @@
     if (!obj.createdBy) obj.createdBy = u.id;
     if (!obj.createdByName) obj.createdByName = u.name || u.username || u.email || "";
     if (!obj.createdByPersonId && u.personId) obj.createdByPersonId = u.personId;
+    // The Firebase uid is the ONLY creator identity that is the same on every
+    // device. `createdBy` is a local account id and `createdByPersonId` is
+    // absent when the account was never linked to a person, so a manager who
+    // created a record on one device could not be recognized as its creator on
+    // another — which is why auth.js canDeleteRecord() found nothing to delete
+    // and the button never appeared.
+    if (!obj.createdByCloudUid && u.cloudUid) obj.createdByCloudUid = u.cloudUid;
     return obj;
   }
 
@@ -250,6 +257,11 @@
       get: function (id) { return find("projects", id); },
       add: function (obj) {
         obj.parentId = obj.parentId || null;
+        // Pillars need an owner for the same reason tasks and meetings do:
+        // auth.js canDeleteRecord() lets a manager delete a pillar they
+        // created, and it can only answer that if the creator was stamped.
+        // Without this a manager who created a pillar could never delete it.
+        stampCreator(obj);
         return add("projects", obj);
       },
       update: function (id, patch) { return update("projects", id, patch); },

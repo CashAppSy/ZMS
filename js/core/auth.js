@@ -510,13 +510,15 @@
   // signed-in user has.
   function canDelete() { return role() === "admin"; }
 
-  // Who made this record? Compared by account id first, then by linked person
-  // so the check still holds on another device, where the local account id is
-  // not the one that stamped the record.
+  // Who made this record? Three identities are compared, most stable first.
+  // The Firebase uid is the same on every device; the local account id is only
+  // meaningful on the device that created the record; the linked person id
+  // covers a local-only account. Any one of them matching means "mine".
   function createdByCurrentUser(rec) {
     if (!rec) return false;
     var u = currentUser();
     if (!u) return false;
+    if (rec.createdByCloudUid && u.cloudUid && rec.createdByCloudUid === u.cloudUid) return true;
     if (rec.createdBy && u.id && rec.createdBy === u.id) return true;
     if (rec.createdByPersonId && currentPersonId() && rec.createdByPersonId === currentPersonId()) return true;
     return false;
