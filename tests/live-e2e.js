@@ -621,12 +621,20 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
     errors.length = 0;
     route("/tasks");
     ok("live the member's task view renders", errors.length === 0, errors.join(" | "));
-    ok("live the member's dashboard counts only visible tasks", (root().textContent || "").length > 0);
+    // a member has no dashboard/reports tab any more, so the scoping is now
+    // verified on the tabs they do have - and the old URLs must bounce
+    ok("live the member's task list only holds the tasks they may see", (function () {
+      const rows = Array.from(root().querySelectorAll(".vt-row"));
+      if (!rows.length) return true;
+      const ids = rows.map(r => r.dataset.id);
+      const allowed = lvVisTasks.map(t => t.id);
+      return ids.every(id => allowed.indexOf(id) !== -1);
+    })(), "rows " + root().querySelectorAll(".vt-row").length + " of " + lvVisTasks.length);
     route("/dashboard");
-    ok("live the member's dashboard shows the visible count", (root().textContent || "").indexOf(String(lvVisTasks.length)) !== -1, "expected " + lvVisTasks.length);
+    ok("live a member routed to the dashboard lands on Tasks", PMS.router.current === "/tasks", PMS.router.current);
     errors.length = 0;
     route("/reports");
-    ok("live the member's reports render on narrowed data", errors.length === 0, errors.join(" | "));
+    ok("live a member routed to reports lands on Tasks", PMS.router.current === "/tasks", PMS.router.current);
     if (lvForeignTask && lvForeignTask.title) {
       ok("live a foreign task title never reaches the member's screen", (root().textContent || "").indexOf(lvForeignTask.title) === -1);
     }
