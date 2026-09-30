@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T07:50:55.068Z
+**Date:** 2026-09-30T08:44:45.993Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 173 |
+| **Passed** | 212 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~17 ms |
-| Slowest route | ~53 ms |
+| App boot (store init from live bundle) | 11 ms |
+| Mean route render | ~18 ms |
+| Slowest route | ~50 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/97408736-6aff-4361-833e-ec5e3f25ef6c renders clean | PASS |
+| 3 | route /projects/551c8242-e46a-43eb-8871-e8294b355bfb renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -266,6 +266,50 @@
 | 21 | live meeting cleanup keeps its task | PASS |
 | 22 | live /people renders a card per person | PASS |
 | 23 | live person card shows name + email + phone | PASS |
+
+### E.9b2 Meeting creator, file links, member scope, people sections (live UI)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live meeting.add stamps the signed-in user as creator | PASS |
+| 2 | live meeting stores the creator name for display | PASS |
+| 3 | live meeting card shows the creator by name | PASS |
+| 4 | live meeting detail shows the creator by name | PASS |
+| 5 | live a meeting with no creator still opens | PASS |
+| 6 | live a new meeting starts with no attachments | PASS |
+| 7 | live a Drive link attaches to the meeting | PASS |
+| 8 | live the attachment keeps its name and kind | PASS |
+| 9 | live a link without a scheme is upgraded to https | PASS |
+| 10 | live the same file is not attached twice | PASS |
+| 11 | live a javascript: link is not stored | PASS |
+| 12 | live the meeting detail lists the attached file | PASS |
+| 13 | live the attached file is a real link | PASS |
+| 14 | live the attachment count shows on the card | PASS |
+| 15 | live an attachment can be removed | PASS |
+| 16 | live /people renders the new card layout | PASS |
+| 17 | live people has section filter chips | PASS |
+| 18 | live people cards show a department chip | PASS |
+| 19 | live the departments tab lists section members | PASS |
+| 20 | live switching back to people works | PASS |
+| 21 | live the person detail opens | PASS |
+| 22 | live the person detail lists the meetings attended | PASS |
+| 23 | live signed in as a member for the scope check | PASS |
+| 24 | live tasks.all() is narrowed for the member | PASS |
+| 25 | live there is hidden work for the member to be shielded from | PASS |
+| 26 | live scopedData narrows tasks for the member | PASS |
+| 27 | live scopedData narrows meetings for the member | PASS |
+| 28 | live a task assigned to somebody else is hidden | PASS |
+| 29 | live meetings.all() is narrowed for the member | PASS |
+| 30 | live a meeting they never attended is hidden | PASS |
+| 31 | live a meeting records the member creator's person id | PASS |
+| 32 | live the member can see the meeting they created | PASS |
+| 33 | live the member's task view renders | PASS |
+| 34 | live the member's dashboard counts only visible tasks | PASS |
+| 35 | live the member's dashboard shows the visible count | PASS |
+| 36 | live the member's reports render on narrowed data | PASS |
+| 37 | live a foreign task title never reaches the member's screen | PASS |
+| 38 | live the member's meetings view renders | PASS |
+| 39 | live the admin is signed back in | PASS |
 
 ### E.9c Blank-screen guard (live bundle)
 
