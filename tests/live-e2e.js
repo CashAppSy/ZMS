@@ -673,19 +673,30 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   const lcBrandImgs = document.querySelectorAll(".brand-logo-img img");
   ok("live the brand renders both logo variants", lcBrandImgs.length === 2, lcBrandImgs.length + " images");
   ok("live the brand logo points at the real logo files", lcBrandImgs.length === 2 && /logo-light\.png$/.test(lcBrandImgs[0].getAttribute("src") || "") && /logo-dark\.png$/.test(lcBrandImgs[1].getAttribute("src") || ""));
-  ok("live the app name is still announced to screen readers", document.querySelectorAll(".sidebar-brand .u-sr-only").length === 1);
-  ["favicon.ico", "favicon-16.png", "favicon-32.png", "favicon-16-dark.png", "favicon-32-dark.png", "apple-touch-icon.png"].forEach(f => {
-    const p = path.join(APP, "assets", f);
-    ok("live tab icon " + f + " is deployed", fs.existsSync(p) && fs.statSync(p).size > 100);
-  });
-  const lcIco = fs.readFileSync(path.join(APP, "assets", "favicon.ico"));
-  ok("live the tab icon is a real ICONDIR", lcIco[0] === 0 && lcIco[1] === 0 && lcIco[2] === 1 && lcIco[3] === 0);
-  ok("live the tab icon has several sizes", (lcIco[4] | (lcIco[5] << 8)) >= 3);
+  const lcBrandName = document.querySelector(".sidebar-brand .brand-name");
+  ok("live the app name is visible under the logo", !!lcBrandName, lcBrandName ? (lcBrandName.textContent || "") : "missing");
+  ok("live the app name reads Digital Program", !!lcBrandName && (lcBrandName.textContent || "").indexOf("Digital Program") !== -1);
+  ok("live the app name is not hidden from sighted users", !lcBrandName || !/u-sr-only/.test(lcBrandName.className || ""));
+  const lcBrandBox = document.querySelector(".sidebar-brand");
+  ok("live the brand holds the logo and the name", !!lcBrandBox && lcBrandBox.querySelectorAll(".brand-logo-img, .brand-name").length === 2);
+
+  // ---- the people grid shows at most 3 per row --------------------------
+  const lcPeopleCss = fs.readFileSync(path.join(APP, "css", "components.css"), "utf8");
+  const lcGridRule = (lcPeopleCss.split(".grid-3 {")[1] || "").split("}")[0];
+  ok("live the people grid is capped at 3 columns", /repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(lcGridRule), lcGridRule.replace(/\s+/g, " ").trim());
+  ok("live the people grid no longer grows with the window", /auto-fit/.test(lcGridRule) === false);
+  ok("live the people grid narrows on small windows", /@media \(max-width: 1100px\) \{ \.grid-3 \{ grid-template-columns: repeat\(2/.test(lcPeopleCss));
+  route("/people");
+  const lcPeopleTab = Array.from(document.querySelectorAll(".tabs .tab")).find(b => (b.textContent || "") === PMS.i18n.t("people.people"));
+  if (lcPeopleTab) lcPeopleTab.click();
+  ok("live the people grid renders", document.querySelectorAll(".grid-3").length === 1);
+  ok("live the people grid holds the person cards", document.querySelectorAll(".grid-3 > *").length > 0, document.querySelectorAll(".grid-3 > *").length + " cards");
+
+  // ---- the tab icon is the original inline SVG again --------------------
   const lcPage = fs.readFileSync(path.join(APP, "index.html"), "utf8");
-  ok("live index.html links the ico", /rel="icon"[^>]*favicon\.ico/.test(lcPage));
-  ok("live index.html links the apple touch icon", /rel="apple-touch-icon"/.test(lcPage));
-  ok("live index.html serves a favicon per colour scheme", /favicon-32-dark\.png[^>]*prefers-color-scheme:\s*dark/.test(lcPage));
-  ok("live the tab icon is a real file, not a data URI", !/rel="icon"[^>]*href="data:/.test(lcPage));
+  ok("live the tab icon is the original inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(lcPage));
+  ok("live the tab icon is not a PNG file", !/rel="icon"[^>]*href="assets\//.test(lcPage));
+  ok("live the generated favicon files are gone", !fs.existsSync(path.join(APP, "assets", "favicon.ico")) && !fs.existsSync(path.join(APP, "assets", "favicon-32.png")) && !fs.existsSync(path.join(APP, "assets", "apple-touch-icon.png")));
 
   section("E.9c Blank-screen guard (live bundle)");
   // Reported bug: after signing in the interface stayed empty until the page

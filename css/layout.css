@@ -19,16 +19,31 @@
   overflow-y: auto;
 }
 
+/* The logo is a 3.6:1 wordmark, so a 250px sidebar cannot fit it beside the
+   app name (the name would truncate to "Digital P..."). The name therefore
+   goes UNDER the logo, which needs no horizontal room. The vertical padding is
+   trimmed to 12px so the block stays close to its previous height and the nav
+   barely moves. */
 .sidebar-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  font-weight: 800;
-  font-size: 1.15rem;
+  gap: 3px;
+  padding: var(--space-2) var(--space-4);
   color: var(--primary);
   border-block-end: 1px solid var(--border);
+}
+
+.sidebar-brand .brand-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  color: var(--primary);
+  text-align: center;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .sidebar-brand .brand-logo {
@@ -55,7 +70,7 @@
   max-width: 100%;
 }
 .sidebar-brand .brand-logo-img img {
-  height: 44px;
+  height: 40px;
   width: auto;
   max-width: 100%;
   object-fit: contain;

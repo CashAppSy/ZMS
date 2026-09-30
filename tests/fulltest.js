@@ -1659,37 +1659,41 @@ section("Meeting card leads with the creator, logo + favicon");
   ok("the sidebar logo may shrink rather than overflow", /flex:\s*0 1 auto/.test(layoutCss.split(".sidebar-brand .brand-logo-img")[1] || ""));
   // the sidebar itself must not grow
   ok("the sidebar width is still fixed", /--sidebar-width:\s*250px/.test(fs.readFileSync(path.join(APP, "css", "variables.css"), "utf8")));
-  // the visible name is kept for screen readers
-  ok("the app name is still available to screen readers", fs.readFileSync(path.join(APP, "js", "core", "app.js"), "utf8").indexOf("u-sr-only") !== -1);
-  ok("a screen-reader-only utility exists", fs.readFileSync(path.join(APP, "css", "base.css"), "utf8").indexOf(".u-sr-only") !== -1);
+  // the app name is shown under the logo, so it must be visible, not sr-only
+  ok("the app name is shown under the logo", fs.readFileSync(path.join(APP, "js", "core", "app.js"), "utf8").indexOf("brand-name") !== -1);
+  ok("the app name is not hidden from sighted users", fs.readFileSync(path.join(APP, "js", "core", "app.js"), "utf8").indexOf("u-sr-only") === -1);
+  const brandCss = layoutCss.split(".sidebar-brand {")[1] || "";
+  ok("the brand stacks the logo over the name", /flex-direction:\s*column/.test(brandCss), brandCss.replace(/\s+/g, " ").trim().slice(0, 60));
+  ok("the brand name is centred", /\.sidebar-brand \.brand-name\s*\{[^}]*text-align:\s*center/.test(layoutCss));
+  // the name under the logo means the logo gives up 4px of height, keeping the
+  // brand block within a few px of what it was before the name was added back
+  const logoH = parseInt((layoutCss.split(".sidebar-brand .brand-logo-img img")[1] || "").match(/height:\s*(\d+)px/)[1], 10);
+  const brandPadY = (layoutCss.split(".sidebar-brand {")[1] || "").match(/padding:\s*var\(--space-2\)/) ? 8 : 16;
+  const brandHeight = brandPadY * 2 + logoH + 3 + Math.round(0.95 * 16 * 1.15);
+  ok("the brand block is exactly as tall as before the name came back", brandHeight === 76, brandHeight + "px (was 76px)");
+  ok("the sidebar width is still fixed", /--sidebar-width:\s*250px/.test(fs.readFileSync(path.join(APP, "css", "variables.css"), "utf8")));
 
-  // the browser tab icon
-  ["favicon.ico", "favicon-16.png", "favicon-32.png", "favicon-16-dark.png", "favicon-32-dark.png", "apple-touch-icon.png"].forEach(f => {
-    const p = path.join(APP, "assets", f);
-    ok("favicon asset " + f + " exists and is not empty", fs.existsSync(p) && fs.statSync(p).size > 100);
-  });
-  const ico = fs.readFileSync(path.join(APP, "assets", "favicon.ico"));
-  ok("favicon.ico is a real ICONDIR", ico[0] === 0 && ico[1] === 0 && ico[2] === 1 && ico[3] === 0);
-  const icoCount = ico[4] | (ico[5] << 8);
-  ok("favicon.ico holds several sizes", icoCount >= 3, icoCount + " sizes");
-  const icoSizes = [];
-  for (let i = 0; i < icoCount; i++) {
-    const o = 6 + i * 16;
-    icoSizes.push(ico[o] || 256);
-    const len = ico.readUInt32LE(o + 8);
-    const off = ico.readUInt32LE(o + 12);
-    ok("favicon.ico entry " + ico[o] + " payload is inside the file", off + len <= ico.length, off + "+" + len + " of " + ico.length);
-  }
-  ok("favicon.ico covers 16/32/48", [16, 32, 48].every(s => icoSizes.indexOf(s) !== -1), icoSizes.join(","));
-  const apple = pngSize(fs.readFileSync(path.join(APP, "assets", "apple-touch-icon.png")));
-  ok("the apple touch icon is 180x180", apple.w === 180 && apple.h === 180, apple.w + "x" + apple.h);
-  // index.html must actually reference them
+  // the people grid shows at most 3 people per row
+  const compCss = fs.readFileSync(path.join(APP, "css", "components.css"), "utf8");
+  const gridRule = (compCss.split(".grid-3 {")[1] || "").split("}")[0];
+  ok("the people grid is capped at 3 columns", /repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(gridRule), gridRule.replace(/\s+/g, " ").trim());
+  ok("the people grid no longer grows with the window", /auto-fit/.test(gridRule) === false);
+  ok("the people grid narrows on small windows", /@media \(max-width: 1100px\) \{ \.grid-3 \{ grid-template-columns: repeat\(2/.test(compCss) && /@media \(max-width: 640px\) \{ \.grid-3 \{ grid-template-columns: 1fr/.test(compCss));
+  ok("only the people view uses this grid", (fs.readFileSync(path.join(APP, "js", "views", "people.js"), "utf8").indexOf("grid-3") !== -1) && !/["'](view|route|path)["']\s*[=:,]\s*["'][^"']*grid-3/.test(compCss));
+  route("/people");
+  // the view remembers which sub-tab was last open, so pick the people tab by name
+  const peopleTab = Array.from(root().querySelectorAll(".tabs .tab")).find(b => (b.textContent || "") === PMS.i18n.t("people.people"));
+  ok("the people view renders its tabs", !!peopleTab);
+  if (peopleTab) peopleTab.click();
+  ok("the people grid renders", root().querySelectorAll(".grid-3").length === 1);
+  const gridCards = root().querySelectorAll(".grid-3 > *");
+  ok("the people grid holds the person cards", gridCards.length > 0, gridCards.length + " cards");
+
+  // the browser tab icon is the old inline SVG again
   const pageHtml = fs.readFileSync(path.join(APP, "index.html"), "utf8");
-  ok("index.html links the ico", /rel="icon"[^>]*favicon\.ico/.test(pageHtml));
-  ok("index.html links the apple touch icon", /rel="apple-touch-icon"[^>]*apple-touch-icon\.png/.test(pageHtml));
-  ok("index.html links a favicon per colour scheme", /favicon-32-dark\.png[^>]*prefers-color-scheme:\s*dark/.test(pageHtml));
-  ok("the old inline SVG favicon is gone", pageHtml.indexOf("data:image/svg+xml") === -1);
-  ok("the tab icon is a real file, not a data URI", !/rel="icon"[^>]*href="data:/.test(pageHtml));
+  ok("the tab icon is the original inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(pageHtml));
+  ok("the tab icon is not a PNG file", !/rel="icon"[^>]*href="assets\//.test(pageHtml));
+  ok("the generated favicon files are gone", !fs.existsSync(path.join(APP, "assets", "favicon.ico")) && !fs.existsSync(path.join(APP, "assets", "favicon-32.png")) && !fs.existsSync(path.join(APP, "assets", "apple-touch-icon.png")));
   ok("the page title is still the new name", /<title>\s*Digital Program/.test(pageHtml));
 
   PMS.sync.tick();
