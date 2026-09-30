@@ -96,7 +96,7 @@
       subtasks: "مهام فرعية",
       collapseSubtasks: "طي المهام الفرعية", expandSubtasks: "توسيع المهام الفرعية",
       collapseAllSubtasks: "طي المهام الفرعية", expandAllSubtasks: "توسيع المهام الفرعية",
-      assignees: "المُسنَد إليهم", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
+      assignees: "إسناد إلى", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
       createdBy: "أنشأها",
       progress: "نسبة الإنجاز", checklist: "قائمة تحقق", comments: "تعليقات",
       progressFromStatus: "نسبة الإنجاز تُشتق من الحالة",
@@ -231,6 +231,8 @@
       autoBackupEvery: "كل", minutes: "دقيقة", backups: "النسخ الاحتياطية",
       restore: "استعادة", backupCreated: "تم إنشاء النسخة الاحتياطية",
       noBackups: "لا توجد نسخ احتياطية بعد",
+      backupsSharedHint: "تُخزَّن النسخ في السحابة المشتركة، فيستطيع أي مدير استعادتها من أي جهاز.",
+      backupLocalOnly: "هذا الجهاز فقط",
       bindFile: "ربط بملف", openFile: "فتح من ملف", unbind: "إلغاء الربط", saveToFile: "حفظ في الملف",
       fileStatus: "التخزين: {status}", fileBound: "مرتبط بملف",
       fileLocal: "تخزين محلي في المتصفح (IndexedDB)", bindFail: "فشل ربط الملف",
@@ -294,10 +296,16 @@
       cleared: "تم مسح سجل النشاطات",
       at: "متى", user: "المستخدم", entity: "الجهة", entityName: "العنصر",
       action: "الإجراء", detail: "التفاصيل",
-      entities: { task: "مهمة", project: "ركيزة", person: "شخص", department: "قسم", meeting: "اجتماع" },
+      entities: { task: "مهمة", project: "ركيزة", person: "شخص", department: "قسم", meeting: "اجتماع", account: "حساب" },
       actions: {
         created: "أنشأ", updated: "عدّل", status: "غيّر الحالة",
-        progress: "غيّر الإنجاز", deleted: "حذف", archived: "أرشفة"
+        progress: "غيّر الإنجاز", deleted: "حذف", archived: "أرشفة",
+        signedIn: "سجّل الدخول", signedOut: "سجّل الخروج", "signin.failed": "محاولة دخول فاشلة",
+        "account.created": "أنشأ حساباً", "account.deleted": "حذف حساباً",
+        "account.role": "غيّر دوراً", "account.person": "ربط شخصاً",
+        "account.email": "غيّر بريداً", "account.active": "غيّر حالة حساب",
+        "account.password": "إجراء على كلمة المرور", "account.signin": "سجّل الدخول",
+        "account.signout": "سجّل الخروج", "account.signin.failed": "محاولة دخول فاشلة"
       }
     },
     auth: {
@@ -345,7 +353,7 @@
       namePlaceholder: "اسمك الكامل",
       cloudTitle: "تسجيل الدخول",
       cloudSetupTitle: "مرحبًا — أنشئ حساب المدير المشترك",
-      cloudDesc: "بريد وكلمة مرور واحد يعملان على كل جهاز. أول حساب يصبح المدير.",
+      cloudDesc: "",
       cloudEmail: "البريد الإلكتروني",
       cloudCreate: "إنشاء حساب مدير سحابي",
       cloudSignIn: "تسجيل الدخول",

@@ -97,7 +97,7 @@
       subtasks: "Sub-tasks",
       collapseSubtasks: "Collapse sub-tasks", expandSubtasks: "Expand sub-tasks",
       collapseAllSubtasks: "Collapse sub-tasks", expandAllSubtasks: "Expand sub-tasks",
-      assignees: "Assignees", estimated: "Estimated hours", actual: "Actual hours",
+      assignees: "Assign to", estimated: "Estimated hours", actual: "Actual hours",
     createdBy: "Created by",
       progress: "Progress", checklist: "Checklist", comments: "Comments",
       progressFromStatus: "Progress is derived from status",
@@ -236,6 +236,8 @@
       autoBackupEvery: "Every", minutes: "min", backups: "Backups",
       restore: "Restore", backupCreated: "Backup created",
       noBackups: "No backups yet",
+      backupsSharedHint: "Backups are stored in the shared cloud, so any admin can restore them on any device.",
+      backupLocalOnly: "This device only",
       bindFile: "Bind to file", openFile: "Open from file", unbind: "Unbind", saveToFile: "Save to file",
       fileStatus: "Storage: {status}", fileBound: "Bound to file",
       fileLocal: "Local browser storage (IndexedDB)", bindFail: "File binding failed",
@@ -299,10 +301,16 @@
       cleared: "Activity log cleared",
       at: "When", user: "User", entity: "Entity", entityName: "Item",
       action: "Action", detail: "Details",
-      entities: { task: "Task", project: "Pillar", person: "Person", department: "Department", meeting: "Meeting" },
+      entities: { task: "Task", project: "Pillar", person: "Person", department: "Department", meeting: "Meeting", account: "Account" },
       actions: {
         created: "created", updated: "updated", status: "changed status",
-        progress: "changed progress", deleted: "deleted", archived: "archived"
+        progress: "changed progress", deleted: "deleted", archived: "archived",
+        signedIn: "signed in", signedOut: "signed out", "signin.failed": "failed sign-in",
+        "account.created": "created an account", "account.deleted": "deleted an account",
+        "account.role": "changed a role", "account.person": "linked a person",
+        "account.email": "changed an email", "account.active": "changed account status",
+        "account.password": "password action", "account.signin": "signed in",
+        "account.signout": "signed out", "account.signin.failed": "failed sign-in"
       }
     },
     auth: {
@@ -350,7 +358,7 @@
       namePlaceholder: "Your full name",
       cloudTitle: "Sign in",
       cloudSetupTitle: "Welcome — create the shared admin account",
-      cloudDesc: "One email + password works on every device. The first account becomes the admin.",
+      cloudDesc: "",
       cloudEmail: "Email",
       cloudCreate: "Create cloud admin account",
       cloudSignIn: "Sign in",

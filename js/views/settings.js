@@ -452,6 +452,15 @@
     row.appendChild(aSwitch);
     b.appendChild(row);
 
+    // Inherit the shared history: a fresh device (or one whose cache was
+    // cleared) must not start with an empty list.
+    if (PMS.backup.refresh) {
+      PMS.backup.refresh().then(function () {
+        if (PMS.router && PMS.router.current && PMS.router.current !== "/settings") return;
+        render(document.getElementById("view-root"));
+      });
+    }
+
     var btnRow = h("div.u-flex", { style: { marginTop: "12px" } });
     btnRow.appendChild(h("button.btn.btn-primary", { text: "🗘 " + t("settings.backupNow"), on: { click: function () { PMS.backup.create(); PMS.toast.show(t("settings.backupCreated"), "success"); render(document.getElementById("view-root")); } } }));
     b.appendChild(btnRow);
@@ -459,11 +468,15 @@
     // list backups
     var backups = PMS.backup.list();
     b.appendChild(h("div.section-title", [txt(t("settings.backups"))]));
+    b.appendChild(h("div.u-muted", { text: t("settings.backupsSharedHint") }));
     if (!backups.length) b.appendChild(h("div.u-muted", { text: t("settings.noBackups") }));
     backups.forEach(function (bk) {
       var r = h("div.setting-row");
       r.appendChild(h("span", { text: "🗄" }));
       r.appendChild(h("span.u-grow.u-bold", { text: PMS.utils.formatDate(bk.createdAt, PMS.i18n, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) }));
+      // A snapshot that only exists in this browser (upload still pending, or
+      // made while offline) is flagged so nobody mistakes it for a shared one.
+      if (bk.localOnly) r.appendChild(h("span.badge", { text: t("settings.backupLocalOnly") }));
       r.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("settings.restore"), on: { click: function () { restoreBackup(bk); } } }));
       r.appendChild(h("button.btn.btn-sm.btn-icon.btn-soft-danger", { text: "✕", on: { click: function () {
         if (PMS.auth.requireDelete && !PMS.auth.requireDelete()) return;

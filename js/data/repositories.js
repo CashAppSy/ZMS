@@ -499,18 +499,56 @@
     }
   };
 
+  // Account/security events (sign-in, sign-out, role changes, account
+  // create/delete/enable/disable, password resets) are NOT part of this array:
+  // accounts live in Firebase Auth and never pass through PMS.store, so there
+  // is nothing to append to locally. They are written straight to
+  // zms_account_events by the sync layer and arrive here as a cloud-only cache,
+  // so the admin timeline covers BOTH kinds of action in one list.
+  function accountEventRows() {
+    var cached = (PMS.store.data && PMS.store.data.accountEvents) || [];
+    return cached.map(function (e) {
+      var c = U.deepClone(e || {});
+      c.entity = c.entity || "account";
+      // entityName is the SUBJECT of the action (the account that was changed),
+      // while actor is who performed it.
+      c.entityName = c.target || c.entityName || c.detail || c.entity;
+      c.action = c.action || c.kind || "";
+      if (!c.action) c.action = c.detail || "updated";
+      c.accountEvent = true;
+      return c;
+    });
+  }
+
   PMS.activity = {
+    // Admin sees the full timeline: project records AND account events,
+    // merged newest-first. A member still only sees entries about records they
+    // may view, and never any account event (the cloud rules deny them those
+    // documents as well, so the client filter is a second line, not the only).
     entries: function () {
       var all = (PMS.store.data && PMS.store.data.activities) || [];
-      // a member only sees history about records they may see
       if (!PMS.auth || !PMS.auth.currentUser) return all;
       var u = PMS.auth.currentUser();
-      if (!u || u.role !== "member") return all;
+      // No session at all (first paint / signed out): show everything, exactly
+      // as before. Only an actual "member" is narrowed — treating a null user
+      // as a member would hide entries before anyone has signed in.
+      if (!u) return all;
+      if (u.role !== "member") {
+        return all.concat(accountEventRows()).sort(function (a, b) {
+          return String(b.at || b.updatedAt || "").localeCompare(String(a.at || a.updatedAt || ""));
+        });
+      }
       return all.filter(function (e) {
         if (e.entity === "task") return canViewRecord("tasks", find("tasks", e.entityId)) || !e.entityId;
         if (e.entity === "meeting") return canViewRecord("meetings", find("meetings", e.entityId)) || !e.entityId;
         return e.entity !== "task" && e.entity !== "meeting";
       });
+    },
+    // Refresh the cloud-only account-event cache. Safe to call anywhere: it
+    // resolves with the current list (local cache included) and never throws.
+    refreshAccountEvents: function () {
+      if (PMS.cloudsync && PMS.cloudsync.accountEvents) return PMS.cloudsync.accountEvents();
+      return Promise.resolve(accountEventRows());
     },
     clear: function () {
       PMS.store.commit(function (d) { d.activities = []; }, "clear-activities");

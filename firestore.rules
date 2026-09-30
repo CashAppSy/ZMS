@@ -299,6 +299,40 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---- shared backups (zms_backups) ----
+    // Snapshots used to live in localStorage only, so each device had a
+    // private history, clearing the browser erased it, and a new device
+    // inherited nothing. One shared, admin-only history is kept here.
+    // read   : admin only (a snapshot contains the whole dataset)
+    // create : admin only
+    // update : admin only (retention prune re-writes nothing; kept for a
+    //          future re-snapshot rather than silently forbidding it)
+    // delete : admin only (deleting a snapshot is destructive)
+    match /zms_backups/{id} {
+      allow read: if isAdmin(request.auth.uid);
+      allow create, update: if isAdmin(request.auth.uid);
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- account audit trail ----
+    // Written DIRECTLY by the client (never through PMS.store, so the local
+    // `activities` array cannot carry these): an account lives in Firebase
+    // Auth and no account change passes through the synced datasets. Without
+    // this collection an admin cannot see who created, demoted, disabled or
+    // deleted an account, or who failed to sign in.
+    // read  : ADMIN ONLY — these entries name accounts, roles and failed
+    //         sign-in attempts, which no member should be able to enumerate.
+    // create: any ACTIVE user, because a user records their OWN sign-in /
+    //         sign-out / password-reset even with no elevated rights.
+    // update: never (append-only, exactly like zms_activities)
+    // delete: admin only (clearing the log)
+    match /zms_account_events/{id} {
+      allow read: if isAdmin(request.auth.uid);
+      allow create: if isActiveUser(request.auth.uid);
+      allow update: if false;
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
     // ---- cloud account directory ----
     match /zms_auth_users/{uid} {
       // privacy: a user may read their OWN profile; only admins may read the

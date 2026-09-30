@@ -143,6 +143,150 @@
   function isConfigured() { return !!config(); }
   function isEnabled() { return enabled; }
 
+  /* ---------------- shared backups (zms_backups) ---------------------
+     Admin-only, per record. The app used to keep snapshots in localStorage
+     only, so every device had a private history that a cleared browser erased
+     and a new device could not inherit. saveBackup/loadBackup/deleteBackup
+     mirror PMS.backup, which keeps a local cache for offline restores and
+     treats the cloud as the shared source of truth.
+     -------------------------------------------------------------------- */
+  function backupsCol() { return firestore.collection("zms_backups"); }
+  function backupRef(id) { return firestore.collection("zms_backups").doc(id); }
+
+  // The snapshot must survive on the shared side even if the generic push
+  // fails, so this is intentionally independent of push().
+  function saveBackup(b) {
+    if (!b || !b.id || !cloudUidIsAdminish()) return Promise.resolve(false);
+    return waitForSignedIn().then(function (ok) { return ok ? ensureReady() : null; })
+      .then(function () {
+        if (!firestore) return false;
+        return backupRef(b.id).set({
+          id: b.id,
+          createdAt: b.createdAt || now(),
+          updatedAt: now(),
+          data: b.data || {}
+        }).then(function () { return true; });
+      })
+      .catch(function (e) {
+        console.warn("[cloudsync] saveBackup failed:", e);
+        return false;
+      });
+  }
+
+  function listBackups() {
+    if (!cloudUidIsAdminish()) return Promise.resolve([]);
+    return waitForSignedIn().then(function (ok) { return ok ? ensureReady() : null; })
+      .then(function () {
+        if (!firestore) return [];
+        return backupsCol().get().then(function (qs) {
+          var rows = [];
+          qs.forEach(function (ds) { if (ds.exists) rows.push(ds.data() || {}); });
+          return rows.sort(function (a, b) { return String(b.createdAt || "").localeCompare(String(a.createdAt || "")); });
+        });
+      })
+      .catch(function (e) {
+        console.warn("[cloudsync] listBackups failed:", e);
+        return [];
+      });
+  }
+
+  function loadBackup(id) {
+    if (!id || !cloudUidIsAdminish()) return Promise.resolve(null);
+    return waitForSignedIn().then(function (ok) { return ok ? ensureReady() : null; })
+      .then(function () {
+        if (!firestore) return null;
+        return backupRef(id).get().then(function (s) { return s.exists ? (s.data() || null) : null; });
+      })
+      .catch(function (e) {
+        console.warn("[cloudsync] loadBackup failed:", e);
+        return null;
+      });
+  }
+
+  function deleteBackup(id) {
+    if (!id || !cloudUidIsAdminish()) return Promise.resolve(false);
+    return waitForSignedIn().then(function (ok) { return ok ? ensureReady() : null; })
+      .then(function () {
+        if (!firestore) return false;
+        return backupRef(id).delete().then(function () { return true; });
+      })
+      .catch(function (e) {
+        console.warn("[cloudsync] deleteBackup failed:", e);
+        return false;
+      });
+  }
+
+  // Keep only the newest `max` snapshots in the shared history. Deleting the
+  // rest is what makes retention a real limit instead of unbounded growth.
+  function trimBackups(max) {
+    if (!cloudUidIsAdminish()) return Promise.resolve(false);
+    var keep = Math.max(1, Number(max) || 10);
+    return listBackups().then(function (rows) {
+      if (rows.length <= keep) return false;
+      var drop = rows.slice(keep).map(function (r) { return r.id; }).filter(Boolean);
+      return Promise.all(drop.map(function (id) { return backupRef(id).delete(); }))
+        .then(function () { return true; });
+    }).catch(function (e) {
+      console.warn("[cloudsync] trimBackups failed:", e);
+      return false;
+    });
+  }
+
+  // Backups and the audit trail are admin-only by design; the Firestore rules
+  // enforce it, and this keeps a member from even issuing the read.
+  function cloudUidIsAdminish() {
+    var u = (PMS.auth && PMS.auth.currentUser) ? PMS.auth.currentUser() : null;
+    return !!(u && u.role === "admin");
+  }
+
+  /* ---------------- account audit trail: read side --------------------
+     The Activity log view (admin-only) shows the local `activities` array AND
+     these account events, so an admin sees one timeline covering project data
+     and account/security data. They are read straight from the cloud and
+     CACHED in PMS.store.data.accountEvents (never pushed back by the generic
+     push, which does not know this collection) so the view has something to
+     render immediately and offline.
+     -------------------------------------------------------------------- */
+  var accountEventsFetched = false;
+
+  function isAdminReader() {
+    var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    return !!(u && u.role === "admin");
+  }
+
+  function cacheAccountEvents(rows) {
+    if (!PMS.store || !PMS.store.data) return;
+    PMS.store.data.accountEvents = rows || [];
+    // flush() does NOT emit "store:changed", so this can never be mistaken
+    // for a user edit and echo itself back to the cloud.
+    if (PMS.store.flush) { try { PMS.store.flush(); } catch (e) {} }
+  }
+
+  // Resolves with the newest-first event list. Admin-only by design: the rules
+  // deny these documents to everyone else, and a non-admin simply gets the
+  // local cache rather than a failed read.
+  function accountEvents() {
+    if (!enabled || !isAdminReader()) {
+      return Promise.resolve((PMS.store.data && PMS.store.data.accountEvents) || []);
+    }
+    return waitForSignedIn().then(function (ok) {
+      if (!ok) return (PMS.store.data && PMS.store.data.accountEvents) || [];
+      return ensureReady();
+    }).then(function () {
+      return accountEventsCol().get();
+    }).then(function (qs) {
+      var rows = [];
+      qs.forEach(function (ds) { if (ds.exists) rows.push(ds.data() || {}); });
+      rows.sort(function (a, b) { return String(b.at || "").localeCompare(String(a.at || "")); });
+      accountEventsFetched = true;
+      cacheAccountEvents(rows);
+      return rows;
+    }).catch(function (e) {
+      console.warn("[cloudsync] account events unavailable:", e);
+      return (PMS.store.data && PMS.store.data.accountEvents) || [];
+    });
+  }
+
   /* ---------------- Firebase SDK loader (dynamic) ---------------- */
   function injectScript(url) {
     return new Promise(function (resolve, reject) {
@@ -216,6 +360,49 @@
   }
   function bootRef() { return docRef("zms_auth/bootstrap"); }
   function cloudUserRef(uid) { return docRef("zms_auth_users/" + uid); }
+
+  /* ---------------- account audit trail (admin visibility) -------------
+     Everything that touches an ACCOUNT (not a project record) has to be
+     visible to an admin on every device. These events are not part of the
+     local `activities` array: the accounts themselves live in Firebase Auth
+     and never pass through PMS.store, so there is no local record to append
+     to and nothing would reach the other devices. They are written straight
+     to zms_account_events/<id> instead.
+
+     Each document carries the ACTING user (who did it) and, when relevant, the
+     AFFECTED user (whose account it was). That distinction matters: an admin
+     demoting a member, and a member changing their own password, both have to
+     be attributable.
+     -------------------------------------------------------------------- */
+  function accountEventsCol() { return firestore.collection("zms_account_events"); }
+
+  // Never throws and never rejects: an audit write must not break the action
+  // the user actually asked for. A failed event is logged loudly instead.
+  function recordAccountEvent(kind, target, detail) {
+    try {
+      if (!firestore) return Promise.resolve(false);
+      var idn = identity();
+      var rec = {
+        id: PMS.ids.uuid(),
+        at: now(), updatedAt: now(), ts: Date.now(),
+        kind: kind,
+        actor: idn.user ? (idn.user.name || idn.user.username || idn.user.email || "") : "",
+        actorId: idn.user ? idn.user.id : null,
+        actorUid: idn.cloudUid || null,
+        actorRole: idn.role || null,
+        target: target || null,
+        detail: detail || ""
+      };
+      return accountEventsCol().doc(rec.id).set(rec).then(function () { return true; },
+        function (e) {
+          console.error("[cloudsync] account event \"" + kind + "\" not recorded:", e);
+          return false;
+        });
+    } catch (e) {
+      console.error("[cloudsync] account event \"" + kind + "\" not recorded:", e);
+      return Promise.resolve(false);
+    }
+  }
 
   // The hardened rules require a SIGNED-IN Firebase user (with an active
   // profile) for every read/write. Firebase Auth restores the session
@@ -353,7 +540,9 @@
           return { uid: uid, email: opts.email, role: role, displayName: opts.name || "", isAdmin: role === "admin" };
         });
       });
-    }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
+      }).then(function (res) {
+        return recordAccountEvent("account.created", opts.email, "created " + res.role).then(function () { return res; });
+      }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
   }
 
   function signInWithPassword(opts) {
@@ -373,16 +562,37 @@
           active: d.active !== false
         };
       });
-    }).catch(function (e) { e.userCode = authErrorMessage(e); throw e; });
+    }).then(function (res) {
+      // Identity is not adopted into PMS.auth yet at this point, so the event
+      // is attributed to the account being signed into rather than to
+      // "unknown". If the local session is already the same user, identity()
+      // resolves the real name anyway.
+      return recordAccountEvent("account.signin", res.uid, "signed in as " + res.role)
+        .then(function () { return res; });
+    }).catch(function (e) {
+      // A FAILED sign-in is recorded too: repeated failures against one account
+      // are exactly what an admin needs to see. Only the target email and the
+      // reason are written — never the attempted password.
+      if (!e || e.userCode !== "invalid") { e.userCode = authErrorMessage(e); throw e; }
+      return recordAccountEvent("account.signin.failed", opts.email, "rejected: wrong credentials or unknown account")
+        .then(function () { throw e; }, function () { throw e; });
+    });
   }
 
   function signOut() {
-    return authx().then(function (a) { return a.signOut(); }).catch(function () { return null; });
+    return recordAccountEvent("account.signout", (PMS.auth && PMS.auth.currentUser) ? (PMS.auth.currentUser() || {}).username : null, "signed out")
+      .then(function () { return authx(); })
+      .then(function (a) { return a.signOut(); })
+      .catch(function () { return null; });
   }
 
   function resetPassword(email) {
     if (!email) return Promise.reject(new Error("bad-input"));
-    return authx().then(function (a) { return a.sendPasswordResetEmail(email); }).then(function () { return true; });
+    return authx().then(function (a) { return a.sendPasswordResetEmail(email); })
+      .then(function () {
+        return recordAccountEvent("account.password", email, "password reset email sent");
+      })
+      .then(function () { return true; });
   }
 
   // Keep role changes made in Settings mirrored to the cloud so the next
@@ -405,12 +615,21 @@
   function setCloudRole(uid, role) {
     if (!uid || ["admin", "manager", "member"].indexOf(role) === -1) return Promise.resolve(false);
     if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
-    return setRoleViaBackend(uid, role).then(function (done) {
-      if (done) return true;
-      // fallback: no deployed function — direct write (rules are the real gate)
-      return ensureReady().then(function () {
-        return cloudUserRef(uid).set({ role: role }, { merge: true });
-      }).then(function () { return true; }).catch(function () { return false; });
+    return cloudUserRef(uid).get().then(function (s) {
+      var prev = (s.exists && s.data() && s.data().role) || null;
+      return setRoleViaBackend(uid, role).then(function (done) {
+        if (!done) {
+          // fallback: no deployed function — direct write (rules are the real gate)
+          return ensureReady().then(function () {
+            return cloudUserRef(uid).set({ role: role }, { merge: true });
+          }).then(function () { return true; }).catch(function () { return false; });
+        }
+        return true;
+      }).then(function (ok) {
+        if (!ok) return false;
+        return recordAccountEvent("account.role", uid, (prev || "none") + " → " + role)
+          .then(function () { return true; });
+      });
     });
   }
 
@@ -423,8 +642,15 @@
     if (!uid) return Promise.resolve(false);
     if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
     return ensureReady().then(function () {
-      return cloudUserRef(uid).set({ personId: personId || null }, { merge: true });
-    }).then(function () { return true; }).catch(function () { return false; });
+      return cloudUserRef(uid).get();
+    }).then(function (s) {
+      var prev = (s.exists && s.data() && s.data().personId) || null;
+      return cloudUserRef(uid).set({ personId: personId || null }, { merge: true })
+        .then(function () {
+          return recordAccountEvent("account.person", uid, (prev || "none") + " → " + (personId || "none"));
+        })
+        .then(function () { return true; }).catch(function () { return false; });
+    }).catch(function () { return false; });
   }
 
   // ZMS-R05: removing a shared cloud account must NOT be a client-side write.
@@ -439,7 +665,11 @@
     return loadFunctionsSDK().then(function () {
       if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
       return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminDeleteUser")({ uid: uid });
-    }).then(function () { functionsReady = true; return true; });
+    }).then(function () {
+      functionsReady = true;
+      // recorded AFTER the delete, while this session is still authenticated
+      return recordAccountEvent("account.deleted", uid, "deleted");
+    }).then(function () { return true; });
   }
 
   // Create a cloud MEMBER account for a person via the trusted admin callable
@@ -477,6 +707,8 @@
         });
       }
       return { uid: uid };
+    }).then(function (out) {
+      return recordAccountEvent("account.created", out.uid, "created member").then(function () { return out; });
     });
   }
 
@@ -491,7 +723,10 @@
     return loadFunctionsSDK().then(function () {
       if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
       return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminSetActive")({ uid: uid, active: active !== false });
-    }).then(function () { functionsReady = true; return true; });
+    }).then(function () {
+      functionsReady = true;
+      return recordAccountEvent("account.active", uid, active !== false ? "enabled" : "disabled");
+    }).then(function () { return true; });
   }
   // Change a cloud account's SIGN-IN email (Firebase Authentication). The
   // web SDK can never rewrite another account's email (even Firestore writes
@@ -507,7 +742,10 @@
     return loadFunctionsSDK().then(function () {
       if (!window.firebase || !window.firebase.functions) throw { userCode: "backendRequired" };
       return window.firebase.functions(window.firebase.app(APP_NAME)).httpsCallable("adminUpdateEmail")({ uid: uid, email: clean });
-    }).then(function () { functionsReady = true; return true; });
+    }).then(function () {
+      functionsReady = true;
+      return recordAccountEvent("account.email", uid, "email changed");
+    }).then(function () { return true; });
   }
 
   /* ---------------- per-record change tracking (local mirror) ---------------- */
@@ -918,6 +1156,12 @@
         });
         setMirrorFor(cname, map);
       });
+      // accountEvents is a CLOUD-ONLY, admin-read cache: it is not part of
+      // COLLECTIONS, so it is neither pushed nor merged here. Keep whatever the
+      // local cache already holds instead of letting the wholesale replacement
+      // drop it (setData() replaces the store, and this key is not rebuilt
+      // from a pull). It is refreshed explicitly by accountEvents().
+      if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
       applying = false;
       lastPulled = Date.now();
       PMS.bus.emit("cloud:state", { pulled: true });
@@ -1238,6 +1482,12 @@
     push: push,
     dataReplaced: dataReplaced,
     pull: pull,
+    accountEvents: accountEvents,
+    saveBackup: saveBackup,
+    listBackups: listBackups,
+    loadBackup: loadBackup,
+    deleteBackup: deleteBackup,
+    trimBackups: trimBackups,
     status: status,
     config: config,
     saveConfig: saveConfig,

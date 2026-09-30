@@ -10,7 +10,7 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
-  var ENTITY_COLORS = { task: "#2563eb", project: "#7c3aed", person: "#16a34a", department: "#ea580c" };
+  var ENTITY_COLORS = { task: "#2563eb", project: "#7c3aed", person: "#16a34a", department: "#ea580c", meeting: "#db2777", account: "#b45309" };
 
   function entityLabel(entity) {
     return t("activity.entities." + (entity || "")) !== ("activity.entities." + (entity || ""))
@@ -84,6 +84,21 @@
   function render(container) {
     container.innerHTML = "";
     var entries = PMS.activity.entries();
+    draw(container, entries);
+    // Account/security events live in the cloud, not in the synced dataset, so
+    // the first paint above may only have the local cache. Refresh and redraw
+    // when the cloud answers. Only the admin view is reachable here, and the
+    // rules deny these documents to everyone else.
+    if (PMS.activity.refreshAccountEvents) {
+      PMS.activity.refreshAccountEvents().then(function (rows) {
+        if (!rows || !rows.length) return;
+        if (PMS.router && PMS.router.current && PMS.router.current !== "/activity") return;
+        draw(container, PMS.activity.entries());
+      });
+    }
+  }
+
+  function draw(container, entries) {
 
     var head = h("div.card");
     var headRow = h("div.u-flex", { style: { flexWrap: "wrap", gap: "10px", alignItems: "center", justifyContent: "space-between" } });

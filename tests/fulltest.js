@@ -1337,6 +1337,69 @@ section("Cloud sync (offline-safe API)");
     else window.localStorage.setItem("pms-cloud-mirror", mtgSavedMirror);
     ok("a pull imports meetings, keeps never-synced ones and applies deletions", mtgMergeOk);
   }
+  // --- account audit trail + shared backups + the copy/label cleanups ---
+  {
+    const mtgSyncSrc2 = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    const mtgRules2 = fs.readFileSync(path.join(APP, "firestore.rules"), "utf8");
+    const enSrc = fs.readFileSync(path.join(APP, "js", "i18n", "en.js"), "utf8");
+    const arSrc = fs.readFileSync(path.join(APP, "js", "i18n", "ar.js"), "utf8");
+
+    // the removed sign-in sentence must be gone from BOTH locales
+    ok("the \"first account becomes the admin\" sentence is gone from en",
+      enSrc.indexOf("One email + password works on every device") === -1);
+    ok("the same sentence is gone from ar",
+      arSrc.indexOf("أول حساب يصبح المدير") === -1);
+    // an empty description must not leave an empty paragraph on the card
+    ok("the sign-in card only renders the description when there is one",
+      /if \(t\("auth\.cloudDesc"\)\)/.test(fs.readFileSync(path.join(APP, "js", "views", "auth.js"), "utf8")));
+
+    ok("the tasks column is labelled \"Assign to\"", /assignees: "Assign to"/.test(enSrc));
+    ok("the Arabic label is \"إسناد إلى\"", arSrc.indexOf('assignees: "إسناد إلى"') !== -1);
+
+    // the audit trail writes every account/security action
+    ["account.created", "account.deleted", "account.role", "account.person",
+      "account.email", "account.active", "account.password",
+      "account.signin", "account.signout", "account.signin.failed"
+    ].forEach(function (kind) {
+      ok("the audit trail records " + kind,
+        mtgSyncSrc2.indexOf('"' + kind + '"') !== -1);
+    });
+    ok("a failed sign-in is audited as well as a successful one",
+      /account\.signin\.failed/.test(mtgSyncSrc2) && /e\.userCode !== "invalid"/.test(mtgSyncSrc2));
+    ok("an audit write can never break the action the user asked for",
+      /function recordAccountEvent[\s\S]{0,1200}never throws and never rejects/.test(mtgSyncSrc2) ||
+      /recordAccountEvent[\s\S]{0,400}return Promise\.resolve\(false\)/.test(mtgSyncSrc2));
+    ok("no password or hash is ever written to the audit trail",
+      mtgSyncSrc2.indexOf("passwordHash") === -1 && mtgSyncSrc2.indexOf("attempted password") !== -1);
+
+    // the audit trail is admin-readable and append-only, like the activity log
+    ok("the rules define zms_account_events",
+      /match \/zms_account_events\/\{id\}/.test(mtgRules2));
+    ok("only an admin can read the account audit trail",
+      /match \/zms_account_events\/\{id\}[\s\S]{0,200}allow read: if isAdmin/.test(mtgRules2));
+    ok("account events are append-only (no update)",
+      /match \/zms_account_events\/\{id\}[\s\S]{0,300}allow update: if false/.test(mtgRules2));
+
+    // shared backups
+    ok("the rules define the shared zms_backups collection",
+      /match \/zms_backups\/\{id\}/.test(mtgRules2));
+    ok("backups are admin-only in the cloud",
+      /match \/zms_backups\/\{id\}[\s\S]{0,300}allow read: if isAdmin/.test(mtgRules2) &&
+      /match \/zms_backups\/\{id\}[\s\S]{0,300}allow create, update: if isAdmin/.test(mtgRules2) &&
+      /match \/zms_backups\/\{id\}[\s\S]{0,300}allow delete: if isAdmin/.test(mtgRules2));
+    ["saveBackup", "listBackups", "loadBackup", "deleteBackup", "trimBackups"]
+      .forEach(function (fn) {
+        ok("cloudsync exposes " + fn, mtgSyncSrc2.indexOf(fn + ": " + fn) !== -1);
+      });
+    ok("a snapshot is uploaded at most once", /function isUploaded\(b\)/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
+    ok("a snapshot never carries the cache or the audit list",
+      /delete d\.accountEvents/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
+    ok("backups keep the local cache for offline restores", /localStorage\.setItem\(LS_KEY/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
+    ok("a snapshot made on another device can be restored",
+      /PMS\.cloudsync\.loadBackup\(id\)/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
+    ok("a local-only snapshot is labelled as such",
+      /settings\.backupLocalOnly/.test(fs.readFileSync(path.join(APP, "js", "views", "settings.js"), "utf8")));
+  }
   {
     const mtgSyncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
     ok("meetings are a synced per-record collection",

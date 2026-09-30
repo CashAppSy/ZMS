@@ -200,7 +200,11 @@
     var passInput = h("input", { type: "password", name: "password", autocomplete: "current-password", placeholder: "••••••••", required: true });
 
     var form = h("form", { style: { marginTop: "4px" } });
-    form.appendChild(h("p.u-muted", { text: t("auth.cloudDesc"), style: { marginBlockEnd: "14px" } }));
+    // The cloudDesc copy is optional: an empty string must not leave an empty
+    // paragraph behind on the sign-in card.
+    if (t("auth.cloudDesc")) {
+      form.appendChild(h("p.u-muted", { text: t("auth.cloudDesc"), style: { marginBlockEnd: "14px" } }));
+    }
     form.appendChild(field(t("auth.cloudEmail"), emailInput));
     form.appendChild(field(t("auth.password"), passInput));
 
