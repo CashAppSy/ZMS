@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T10:12:45.395Z
+**Date:** 2026-09-30T10:46:59.598Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 266 |
+| **Passed** | 268 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~18 ms |
-| Slowest route | ~60 ms |
+| App boot (store init from live bundle) | 13 ms |
+| Mean route render | ~22 ms |
+| Slowest route | ~56 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/e189dfe7-d096-4b5b-a074-5b149aea1aa7 renders clean | PASS |
+| 3 | route /projects/8c262f2f-31dc-42eb-8fd9-e436ba7a3511 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -340,9 +340,11 @@
 | 23 | live the people grid narrows on small windows | PASS |
 | 24 | live the people grid renders | PASS |
 | 25 | live the people grid holds the person cards | PASS |
-| 26 | live the tab icon is the original inline SVG | PASS |
-| 27 | live the tab icon is not a PNG file | PASS |
-| 28 | live the generated favicon files are gone | PASS |
+| 26 | live the tab icon is an inline SVG | PASS |
+| 27 | live the tab icon is the clipboard glyph | PASS |
+| 28 | live the tab icon has no raw spaces in the data URI | PASS |
+| 29 | live the tab icon is not a PNG file | PASS |
+| 30 | live the generated favicon files are gone | PASS |
 
 ### E.9b4 Task creator + sync-after-every-action (live UI)
 
