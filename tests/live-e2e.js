@@ -559,6 +559,20 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live blank-screen strings are translated in both languages",
     enStartFail.length > 2 && enViewFail.length > 2 && enRetry.length > 2 &&
     arStartFail !== enStartFail && arViewFail !== enViewFail && arRetry !== enRetry);
+  const enBlank = PMS.i18n.t("errors.blankScreen");
+  PMS.i18n.setLang("ar");
+  const arBlank = PMS.i18n.t("errors.blankScreen");
+  PMS.i18n.setLang("en");
+  ok("live hidden-interface text is translated", enBlank.length > 2 && arBlank !== enBlank);
+  // the watchdog has to rescue the two states a sign-in can leave behind
+  document.getElementById("app-shell").style.display = "none";
+  await new Promise(r => setTimeout(r, 4600));
+  ok("live watchdog shows an app shell left hidden", document.getElementById("app-shell").style.display !== "none");
+  const liveOverlay = document.getElementById("auth-root");
+  liveOverlay.style.display = "flex"; liveOverlay.innerHTML = "";
+  await new Promise(r => setTimeout(r, 4600));
+  ok("live watchdog puts away an empty sign-in overlay",
+    liveOverlay.style.display === "none" && root().children.length > 0 && !root().querySelector(".blank-report"));
   errors.length = 0;
   route("/");
   ok("the app still navigates normally afterwards", errors.length === 0 && root().children.length > 0);

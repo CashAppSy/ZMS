@@ -220,20 +220,135 @@
   }
 
   // Signing in used to be able to leave an empty app on screen that only a
-  // manual refresh cleared. If the first paint produced nothing, rebuild the
-  // shell once instead of leaving the user in front of a blank page.
-  function ensurePainted() {
-    setTimeout(function () {
-      var view = document.getElementById("view-root");
-      if (!view || view.children.length) return;
-      console.warn("[app] first paint produced nothing - rebuilding the shell");
-      step("repaint", function () {
-        buildSidebar();
-        buildTopbar();
-        if (PMS.router) PMS.router.handle();
-      });
-    }, 500);
+  // manual refresh cleared. Nothing threw in that case, so the failure is
+  // checked in the layers that decide what the user actually sees: the app
+  // shell, the sign-in overlay, and the view container. What can be repaired
+  // is repaired, and if it is still hidden the reason is written on the page
+  // instead of leaving a blank screen.
+  //
+  // Showing the sign-in screen is a healthy state even though the view
+  // container is empty, so it is checked for first and reported as fine.
+  function diagnose() {
+    var shell = document.getElementById("app-shell");
+    var overlay = document.getElementById("auth-root");
+    var root = document.getElementById("view-root");
+    var overlayLive = !!(overlay && overlay.style.display !== "none" && overlay.children.length);
+    if (overlayLive) return [];                    // signed out, sign-in form is up
+    var issues = [];
+    if (!root) issues.push({ text: "no #view-root element", fix: "none" });
+    else if (!root.children.length) issues.push({ text: "#view-root has no content", fix: "repaint" });
+    if (shell && shell.style.display === "none") issues.push({ text: "#app-shell is hidden", fix: "shell" });
+    if (overlay && overlay.style.display !== "none" && !overlay.children.length)
+      issues.push({ text: "the sign-in overlay is still covering the app", fix: "overlay" });
+    return issues;
   }
+
+  function repair(issues) {
+    issues.forEach(function (issue) {
+      if (issue.fix === "shell") {
+        var shell = document.getElementById("app-shell");
+        if (shell) shell.style.display = "";
+      }
+      if (issue.fix === "overlay") {
+        var overlay = document.getElementById("auth-root");
+        if (overlay) overlay.style.display = "none";
+      }
+      if (issue.fix === "repaint") {
+        step("repaint", function () {
+          buildSidebar();
+          buildTopbar();
+          if (PMS.router) PMS.router.handle();
+        });
+      }
+    });
+  }
+
+  function checkNow(where) {
+    var issues = diagnose();
+    if (!issues.length) return false;
+    console.warn("[app] interface is hidden (" + where + "):", issues.map(function (i) { return i.text; }));
+    PMS.bus.emit("app:blank-screen", { where: where, issues: issues });
+    repair(issues);
+    // after the repairs, report anything that is still not right
+    setTimeout(function () {
+      var left = diagnose();
+      if (!left.length) {
+        console.info("[app] interface recovered automatically (" + where + ")");
+        return;
+      }
+      paintDiagnostics(left);
+    }, 400);
+    return true;
+  }
+
+  function ensurePainted() {
+    setTimeout(function () { checkNow("first paint"); }, 500);
+  }
+
+  // Watches the interface afterwards too: a session that expires (or is
+  // dropped while the cloud data lands) hides the shell after sign-in, and
+  // nothing on that path re-shows it.
+  var watchTimer = null;
+  function watch() {
+    if (watchTimer) return;
+    watchTimer = setInterval(function () {
+      if (document.hidden) return;
+      checkNow("watchdog");
+    }, 4000);
+  }
+
+  // Last resort: a readable explanation with a retry button, so the problem
+  // is never an unexplained blank page.
+  function paintDiagnostics(issues) {
+    var shell = document.getElementById("app-shell");
+    if (shell) shell.style.display = "";            // a report nobody can see is useless
+    var host = document.getElementById("view-root") || document.body;
+    if (!host || host.querySelector(".blank-report")) return;
+    var box = document.createElement("div");
+    box.className = "empty-state blank-report";
+    var h = PMS.dom.h;
+    box.appendChild(h("div.empty-icon", { text: "⚠️" }));
+    box.appendChild(h("h3", { text: PMS.i18n.t("errors.blankScreen") }));
+    var ul = h("ul.u-muted");
+    (issues || []).forEach(function (issue) { ul.appendChild(h("li", { text: issue.text })); });
+    if (recentErrors.length) {
+      ul.appendChild(h("li", { text: PMS.i18n.t("errors.blankScreenLast") + ": " + recentErrors[recentErrors.length - 1] }));
+    }
+    box.appendChild(ul);
+    var btn = h("button.btn.btn-primary", {
+      text: PMS.i18n.t("common.retry"),
+      on: {
+        click: function () { try { window.location.reload(); } catch (e) { window.location.hash = "#/"; } }
+      }
+    });
+    box.appendChild(btn);
+    host.appendChild(box);
+  }
+
+  // Nothing may fail silently: keep the last few uncaught errors so a blank
+  // page can always explain itself, and show them in a corner note.
+  var recentErrors = [];
+  function noteError(where, err) {
+    var text = where + ": " + String((err && err.message) || err);
+    recentErrors.push(text);
+    if (recentErrors.length > 5) recentErrors.shift();
+    if (document.readyState === "loading") return;
+    var box = document.getElementById("error-note");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "error-note";
+      document.body.appendChild(box);
+    }
+    box.textContent = text;
+    box.classList.add("is-on");
+    PMS.bus.emit("app:error-note", { text: text });
+  }
+  window.addEventListener("error", function (ev) {
+    noteError("error", ev.error || ev.message);
+  });
+  window.addEventListener("unhandledrejection", function (ev) {
+    noteError("promise", ev.reason);
+  });
 
   function showShell() {
     if (!started) { init(); return; }
@@ -275,6 +390,7 @@
     step("sync", function () { if (PMS.sync) PMS.sync.start(); });
     PMS.bus.emit("app:ready");
     ensurePainted();
+    watch();
     // whenever the session ends (logout), return to the login screen
     PMS.bus.on("auth:logout", function () {
       hideShell();

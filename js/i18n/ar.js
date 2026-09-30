@@ -393,7 +393,9 @@
     errors: {
       generic: "حدث خطأ ما", notFound: "غير موجود",
       viewFailed: "تعذّر عرض هذه الشاشة",
-      startFailed: "تعذّر فتح التطبيق"
+      startFailed: "تعذّر فتح التطبيق",
+      blankScreen: "الواجهة مخفية - وهذا هو السبب",
+      blankScreenLast: "آخر خطأ"
     },
     lang: { ar: "العربية", en: "English" },
     hide: "إخفاء", show: "إظهار"

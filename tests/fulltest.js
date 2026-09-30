@@ -16,7 +16,7 @@ const APP = path.resolve(__dirname, "..");
 // ---------------- environment ----------------
 const dom = new JSDOM(`<!DOCTYPE html><html><body>
   <div id="auth-root"></div>
-  <div id="view-root"></div>
+  <div id="app-shell"><div id="view-root"></div></div>
   <div id="sidebar"></div>
   <div id="topbar"></div>
   <div id="modal-root"></div>
@@ -1059,6 +1059,71 @@ section("Login hand-off + render resilience (no blank screen without a refresh)"
     ok("the failed boot can be retried", !!document.getElementById("view-root").querySelector(".boot-error .btn"));
     PMS.app.init = realInit;
     document.getElementById("view-root").innerHTML = "";
+  }
+
+  // An app that cannot show itself has to say so on the page, not just in the
+  // console: every way of ending up invisible is checked and repaired
+  {
+    const shell = document.getElementById("app-shell");
+    const overlay = document.getElementById("auth-root");
+    let blanks = [];
+    PMS.bus.on("app:blank-screen", (info) => { blanks.push(info.where); });
+    // 1) the sign-in screen is healthy even with an empty view container
+    root().innerHTML = "";
+    shell.style.display = "none";
+    overlay.style.display = "flex";
+    overlay.innerHTML = "<form></form>";
+    await new Promise(r => setTimeout(r, 4600));
+    ok("the sign-in screen is not treated as a blank app", blanks.length === 0 &&
+      overlay.style.display === "flex" && !root().querySelector(".blank-report"));
+    // 2) an empty first paint is rebuilt
+    overlay.style.display = "none";
+    overlay.innerHTML = "";
+    root().innerHTML = "";
+    PMS.app.showShell();
+    await new Promise(r => setTimeout(r, 1200));
+    ok("an empty first paint is rebuilt", root().children.length > 0);
+    // 3) a shell left hidden after sign-in is shown again (watchdog)
+    PMS.app.hideShell();
+    await new Promise(r => setTimeout(r, 4600));
+    ok("a hidden app shell is shown again", shell.style.display !== "none" && root().children.length > 0);
+    ok("the hidden-interface check reports what it repaired", blanks.length >= 1, "reports: " + blanks.join(","));
+    // 4) an empty sign-in overlay left on top is put away
+    overlay.style.display = "flex";
+    overlay.innerHTML = "";
+    await new Promise(r => setTimeout(r, 4600));
+    ok("an empty sign-in overlay stops covering the app",
+      overlay.style.display === "none" && root().children.length > 0);
+    // 5) still broken after the repairs: the reason is written on the page
+    const realHandle = PMS.router.handle;
+    PMS.router.handle = function () { root().innerHTML = ""; };
+    root().innerHTML = "";
+    shell.style.display = "none";
+    await new Promise(r => setTimeout(r, 5200));
+    const report = root().querySelector(".blank-report");
+    ok("an interface that stays hidden explains itself on the page",
+      !!report && report.textContent.indexOf(PMS.i18n.t("errors.blankScreen")) !== -1);
+    ok("the explanation lists the layer that failed",
+      !!report && report.textContent.indexOf("#view-root") !== -1);
+    ok("the explanation is on screen and offers a retry", !!report && !!report.querySelector(".btn") && shell.style.display !== "none");
+    PMS.router.handle = realHandle;
+    shell.style.display = "";
+    root().innerHTML = "";
+    PMS.app.showShell();
+    await new Promise(r => setTimeout(r, 1200));
+    ok("the app recovers once the view renders again", root().children.length > 0 && !root().querySelector(".blank-report"));
+  }
+  // and no uncaught error may pass unnoticed
+  {
+    const note = document.createElement("div");
+    note.id = "probe-note";
+    document.body.appendChild(note);
+    window.dispatchEvent(new window.ErrorEvent("error", { error: new Error("probe failure"), message: "probe failure" }));
+    const shown = document.getElementById("error-note");
+    ok("an uncaught error is surfaced, not swallowed",
+      !!shown && shown.className.indexOf("is-on") !== -1 && shown.textContent.indexOf("probe failure") !== -1);
+    if (shown) shown.remove();
+    note.remove();
   }
 
 section("Cloud sync (offline-safe API)");

@@ -398,7 +398,9 @@
     errors: {
       generic: "Something went wrong", notFound: "Not found",
       viewFailed: "This screen could not be displayed",
-      startFailed: "The app could not be opened"
+      startFailed: "The app could not be opened",
+      blankScreen: "The interface is hidden - here is why",
+      blankScreenLast: "Last error"
     },
     lang: { ar: "العربية", en: "English" },
     hide: "Hide", show: "Show"
