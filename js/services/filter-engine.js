@@ -106,7 +106,10 @@
       var pa = PMS.progress.taskProgress(d, a.id, wb), pb = PMS.progress.taskProgress(d, b.id, wb);
       return pa - pb;
     },
-    created: function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); }
+    created: function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); },
+    createdBy: function (a, b) {
+      return PMS.vformat.creatorOf(a).localeCompare(PMS.vformat.creatorOf(b));
+    }
   };
 
   function orderOfPriority(task, kind) {

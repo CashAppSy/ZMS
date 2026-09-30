@@ -718,6 +718,10 @@
           // keep accounts so the admin is not locked out
           if (PMS.store.data.users) fresh.users = PMS.utils.deepClone(PMS.store.data.users);
           PMS.store.setData(fresh);
+          // wholesale replacement: without clearing the cloud mirror the next
+          // autosave would read it as "all of this used to exist" and delete
+          // it from the cloud
+          if (PMS.cloudsync && PMS.cloudsync.dataReplaced) PMS.cloudsync.dataReplaced();
           PMS.modal.close();
           PMS.toast.show(t("settings.dataErased"), "success");
           render(document.getElementById("view-root"));

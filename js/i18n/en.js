@@ -98,6 +98,7 @@
       collapseSubtasks: "Collapse sub-tasks", expandSubtasks: "Expand sub-tasks",
       collapseAllSubtasks: "Collapse sub-tasks", expandAllSubtasks: "Expand sub-tasks",
       assignees: "Assignees", estimated: "Estimated hours", actual: "Actual hours",
+    createdBy: "Created by",
       progress: "Progress", checklist: "Checklist", comments: "Comments",
       progressFromStatus: "Progress is derived from status",
       activity: "Activity", dependencies: "Dependencies", parentTask: "Parent task",

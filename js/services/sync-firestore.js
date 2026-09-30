@@ -56,6 +56,9 @@
   var INTERVAL = 15000;       // poll interval for remote changes
   var COOLDOWN = 3000;        // min gap between pulls
   var PUSH_DEBOUNCE = 500;    // debounce between a local edit and its upload
+  // How long the cloud must be quiet before the NEXT edit is treated as a
+  // single deliberate action and uploaded immediately instead of debounced.
+  var PUSH_SETTLE = 1500;
 
   // Reference datasets: one whole-document per collection (round-3 layout).
   var WHOLE_COLS = ["departments", "people", "taskStatuses", "projectStatuses",
@@ -82,11 +85,14 @@
   var timer = null;
   var lastPulled = 0;
   var lastPushed = 0;
+  var lastPushAt = 0;   // when the last push STARTED, for the settle check
 
   var unsubChanged = null;
   var unsubSaved = null;
   var onFocus = null;
   var onVisibility = null;
+  var onBeforeUnload = null;
+  var onPageHide = null;
   var functionsReady = null; // backend availability memo (null = unknown)
 
   function now() { return new Date().toISOString(); }
@@ -518,6 +524,22 @@
     saveMirror(m);
   }
 
+  // A whole-dataset replacement (load demo data, restore a backup, replace
+  // import, erase all data) swaps the store wholesale without going through
+  // repositories.update(), so the mirror still describes the PREVIOUS dataset.
+  // Left alone, the next push would read the mirror as "these records used to
+  // be there" and delete them from the cloud. Forget the mirror first, then
+  // upload the new dataset.
+  function dataReplaced() {
+    clearTimeout(debounce);
+    debounce = null;
+    try { window.localStorage.removeItem(MIRROR_KEY); } catch (e) {}
+    lastPulled = 0;
+    lastPushAt = 0;
+    if (!enabled || applying) return Promise.resolve(false);
+    return push();
+  }
+
   // Per-record models (create/update per document) cover both the mutable
   // projects/tasks and the append-only activities collection.
   function isRecordCol(cname) {
@@ -699,6 +721,7 @@
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
     if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
+    lastPushAt = Date.now();
     PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
@@ -930,6 +953,9 @@
     if (onFocus) { window.removeEventListener("focus", onFocus); onFocus = null; }
     if (onVisibility) { document.removeEventListener("visibilitychange", onVisibility); onVisibility = null; }
     clearTimeout(debounce);
+    debounce = null;
+    if (onBeforeUnload) { window.removeEventListener("beforeunload", onBeforeUnload); onBeforeUnload = null; }
+    if (onPageHide) { window.removeEventListener("pagehide", onPageHide); onPageHide = null; }
     if (window.firebase && window.firebase.apps) {
       var app = window.firebase.apps.find(function (a) { return a.name === APP_NAME; });
       if (app) { try { app.delete(); } catch (e) {} }
@@ -938,8 +964,16 @@
   }
   function onChange() {
     if (applying || !enabled) return;
+    // A lone, deliberate action (a click, a drag, a save) uploads right away
+    // rather than waiting out the debounce. Only a burst of edits - typing in
+    // a field, ticking several checklist boxes - waits, so those still land as
+    // one write instead of one write per keystroke.
+    if (!debounce && Date.now() - lastPushAt >= PUSH_SETTLE) {
+      push();
+      return;
+    }
     clearTimeout(debounce);
-    debounce = setTimeout(function () { push(); }, PUSH_DEBOUNCE);
+    debounce = setTimeout(function () { debounce = null; push(); }, PUSH_DEBOUNCE);
   }
 
   function tick() {
@@ -967,6 +1001,24 @@
 
   function attachAutosave() {
     unsubChanged = PMS.bus.on("store:changed", onChange);
+    attachUnloadFlush();
+  }
+
+  // Closing or reloading the tab inside the debounce window used to drop the
+  // pending upload: the local save is debounced too, so a change made a moment
+  // before the tab went away could be lost from BOTH sides. Flush both on the
+  // way out. The cloud write may not complete, but it gets the chance, and the
+  // next device's poll will pull whatever did land.
+  function attachUnloadFlush() {
+    if (onBeforeUnload) return;
+    onBeforeUnload = function () {
+      if (debounce) { clearTimeout(debounce); debounce = null; }
+      if (PMS.store.flush) { try { PMS.store.flush(); } catch (e) {} }
+      if (enabled && !applying) { try { push(); } catch (e) {} }
+    };
+    onPageHide = onBeforeUnload;
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
   }
 
   // Push local data only when the cloud is empty or strictly older — so
@@ -1145,6 +1197,7 @@
     disable: disable,
     boot: boot,
     push: push,
+    dataReplaced: dataReplaced,
     pull: pull,
     status: status,
     config: config,

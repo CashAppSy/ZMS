@@ -27,7 +27,7 @@
 
   // Who made a record, kept as plain text as well as an id. The id only
   // resolves on the device that made the record, so the name is stored with
-  // it: a meeting then still shows who created it after cloud sync.
+  // it: a task or a meeting then still shows who created it after cloud sync.
   function stampCreator(obj) {
     var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
     if (!u) return obj;
@@ -284,10 +284,7 @@
         obj.parentTaskId = obj.parentTaskId || null;
         obj.meetingId = obj.meetingId || null;
         if (!Array.isArray(obj.linkedTaskIds)) obj.linkedTaskIds = [];
-        if (!obj.createdBy && PMS.auth && PMS.auth.currentUser) {
-          var cu = PMS.auth.currentUser();
-          obj.createdBy = cu ? cu.id : null;
-        }
+        stampCreator(obj);
         return add("tasks", obj);
       },
       update: function (id, patch) { return update("tasks", id, patch); },

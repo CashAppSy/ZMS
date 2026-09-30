@@ -97,6 +97,7 @@
       collapseSubtasks: "طي المهام الفرعية", expandSubtasks: "توسيع المهام الفرعية",
       collapseAllSubtasks: "طي المهام الفرعية", expandAllSubtasks: "توسيع المهام الفرعية",
       assignees: "المُسنَد إليهم", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
+      createdBy: "أنشأها",
       progress: "نسبة الإنجاز", checklist: "قائمة تحقق", comments: "تعليقات",
       progressFromStatus: "نسبة الإنجاز تُشتق من الحالة",
       activity: "سجل النشاط", dependencies: "الاعتماديات", parentTask: "المهمة الأم",

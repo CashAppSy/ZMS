@@ -201,6 +201,9 @@
     var fresh = build();
     if (PMS.store.data && Array.isArray(PMS.store.data.users)) fresh.users = U.deepClone(PMS.store.data.users);
     PMS.store.setData(fresh);
+    // the dataset was swapped wholesale: drop the cloud mirror so the next
+    // push uploads this instead of deleting the records it replaced
+    if (PMS.cloudsync && PMS.cloudsync.dataReplaced) PMS.cloudsync.dataReplaced();
     PMS.toast.show(PMS.i18n.t("settings.seedLoaded"), "success");
     return Promise.resolve(fresh);
   }

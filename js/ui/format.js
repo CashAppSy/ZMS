@@ -78,6 +78,35 @@
     return "rgba(" + r + "," + g + "," + b + "," + a + ")";
   }
 
+  // Who created a record (a task, a meeting, ...). The name is stored with the
+  // record, so it survives a cloud round-trip to a device that has no user
+  // account for that id. The id and the linked person are the fallbacks.
+  function creatorOf(rec) {
+    if (!rec) return "";
+    if (rec.createdByName) return rec.createdByName;
+    if (rec.createdBy && PMS.auth && PMS.auth.userById) {
+      var u = PMS.auth.userById(rec.createdBy);
+      if (u) return u.name || u.username || u.email || "";
+    }
+    if (rec.createdByPersonId) {
+      var p = PMS.repos.people.get(rec.createdByPersonId);
+      if (p) return p.name;
+    }
+    return "";
+  }
+
+  // A small round avatar with the creator's initial, plus their name. Used
+  // next to tasks and meetings so "who made this" is one glance away.
+  function creatorChip(rec) {
+    var name = creatorOf(rec);
+    if (!name) return null;
+    var initial = name.trim().charAt(0).toUpperCase();
+    var el = h("span.chip.chip-creator", { attrs: { title: name } });
+    el.appendChild(h("span.cc-avatar", { text: initial }));
+    el.appendChild(h("span.cc-name", { text: name }));
+    return el;
+  }
+
   PMS.vformat = {
     statusBadge: statusBadge,
     priorityBadge: priorityBadge,
@@ -86,6 +115,8 @@
     personChip: personChip,
     tagsChips: tagsChips,
     progressChip: progressChip,
-    hexToSoft: hexToSoft
+    hexToSoft: hexToSoft,
+    creatorOf: creatorOf,
+    creatorChip: creatorChip
   };
 })(window.PMS);

@@ -49,6 +49,7 @@
         meta.appendChild(metaItem(t("tasks.dueDate"), PMS.utils.formatDate(task.dueDate, PMS.i18n)));
         meta.appendChild(metaItem(t("tasks.estimated"), PMS.utils.hours(task.estimatedHours, PMS.i18n)));
         meta.appendChild(metaItem(t("tasks.actual"), PMS.utils.hours(task.actualHours, PMS.i18n)));
+        meta.appendChild(metaItem(t("tasks.createdBy"), PMS.vformat.creatorOf(task) || "—"));
         node.appendChild(meta);
 
         // progress (derived from status — no manual value)

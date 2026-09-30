@@ -27,6 +27,7 @@
       { key: "status", label: t("common.status"), render: cellStatus, visible: true, sortable: true },
       { key: "priority", label: t("common.priority"), render: cellPriority, visible: true, sortable: true },
       { key: "assignees", label: t("tasks.assignees"), render: cellAssignees, visible: true },
+      { key: "createdBy", label: t("tasks.createdBy"), render: cellCreator, visible: true, sortable: true },
       { key: "dueDate", label: t("tasks.dueDate"), render: cellDue, visible: true, sortable: true },
       { key: "estimatedHours", label: t("tasks.estimated"), render: cellEst, visible: true, sortable: true },
       { key: "actualHours", label: t("tasks.actual"), render: cellActual, visible: false, sortable: true },
@@ -395,6 +396,12 @@
     });
     if (!wrap.childNodes.length) wrap.appendChild(h("span.u-muted", { text: "—" }));
     return wrap;
+  }
+
+  function cellCreator(row) {
+    var chip = PMS.vformat.creatorChip(row);
+    if (chip) return chip;
+    return h("span.u-muted", { text: "-" });
   }
 
   function cellDue(row) {

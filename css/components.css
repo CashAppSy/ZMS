@@ -790,6 +790,35 @@ table.tbl {
 }
 .meeting-by-label { color: var(--text-muted); margin-inline-end: 5px; }
 
+/* Creator chip: a small avatar + name, shown next to a task (table cell and
+   kanban card) so "who made this" is readable at a glance. */
+.chip-creator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: .75rem;
+}
+.chip-creator .cc-avatar {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: .7rem;
+}
+.chip-creator .cc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-meta-by { margin-block-end: 4px; }
+
 /* a quiet note explaining a narrowed view (e.g. a member's own scope) */
 .scope-note {
   margin-block: var(--space-2) var(--space-3);

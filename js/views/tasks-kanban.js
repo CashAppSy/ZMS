@@ -83,6 +83,9 @@
     });
     if (canMove) c.setAttribute("draggable", "true");
     c.appendChild(h("div.kc-title", { text: tsk.title }));
+    // who created the task, on its own line so it never crowds the badges
+    var by = PMS.vformat.creatorChip(tsk);
+    if (by) c.appendChild(h("div.kc-meta.kc-meta-by", [by]));
     var meta = h("div.kc-meta");
     meta.appendChild(PMS.vformat.priorityBadge(tsk.priority));
     if (tsk.dueDate) {

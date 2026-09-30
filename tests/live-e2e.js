@@ -698,6 +698,50 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live the tab icon is not a PNG file", !/rel="icon"[^>]*href="assets\//.test(lcPage));
   ok("live the generated favicon files are gone", !fs.existsSync(path.join(APP, "assets", "favicon.ico")) && !fs.existsSync(path.join(APP, "assets", "favicon-32.png")) && !fs.existsSync(path.join(APP, "assets", "apple-touch-icon.png")));
 
+  section("E.9b4 Task creator + sync-after-every-action (live UI)");
+  PMS.app.init();
+  // ---- who created each task -------------------------------------------
+  const liveProject = PMS.repos.projects.all()[0];
+  const liveTask = PMS.repos.tasks.add({ projectId: liveProject.id, title: "LV creator task", status: "todo", priority: "medium", assignees: [] });
+  const liveTaskRec = PMS.repos.tasks.get(liveTask.id);
+  ok("live a new task records its creator id", !!liveTaskRec.createdBy, String(liveTaskRec.createdBy));
+  ok("live a new task records the creator name", !!liveTaskRec.createdByName, String(liveTaskRec.createdByName));
+  ok("live the creator name matches the signed-in user", liveTaskRec.createdByName === PMS.auth.currentUser().name);
+  ok("live the shared resolver finds the creator", PMS.vformat.creatorOf(liveTaskRec) === liveTaskRec.createdByName);
+  route("/tasks");
+  const liveHeads = Array.from(document.querySelectorAll(".vt-th")).map(th => (th.textContent || "").replace(/[\u25B2\u25BC\u25B4\u25BE\u25C0]/g, "").trim());
+  ok("live the tasks table has a creator column", liveHeads.indexOf(PMS.i18n.t("tasks.createdBy")) !== -1, liveHeads.join(" | "));
+  const liveRow = document.querySelector('.vt-row[data-id="' + liveTask.id + '"]');
+  ok("live the task row shows the creator name", !!liveRow && (liveRow.textContent || "").indexOf(liveTaskRec.createdByName) !== -1);
+  ok("live the task row shows the creator as a chip", !!liveRow && !!liveRow.querySelector(".chip-creator .cc-avatar"));
+  route("/tasks/kanban");
+  const liveCard = document.querySelector('.kanban-card[data-id="' + liveTask.id + '"]');
+  ok("live the kanban card shows the creator", !!liveCard && !!liveCard.querySelector(".kc-meta-by .chip-creator"));
+  PMS.taskDetail.open(liveTask.id);
+  ok("live the task detail lists the creator", (document.body.textContent || "").indexOf(PMS.i18n.t("tasks.createdBy")) !== -1);
+  ok("live the task detail shows the creator name", (document.body.textContent || "").indexOf(liveTaskRec.createdByName) !== -1);
+  PMS.modal.close();
+  ok("live meetings still resolve their creator", PMS.vformat.creatorOf({ createdByName: "Zed" }) === "Zed");
+  PMS.repos.tasks.remove(liveTask.id);
+
+  // ---- every action is followed by a sync --------------------------------
+  const liveSync = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+  ok("live a store change triggers the cloud autosave", /PMS\.bus\.on\("store:changed", onChange\)/.test(liveSync));
+  ok("live a single action pushes immediately", /if \(!debounce && Date\.now\(\) - lastPushAt >= PUSH_SETTLE\)/.test(liveSync));
+  ok("live a burst of edits still coalesces", /debounce = setTimeout\(function \(\) \{ debounce = null; push\(\); \}, PUSH_DEBOUNCE\)/.test(liveSync));
+  ok("live closing the tab flushes the pending change", /addEventListener\("beforeunload", onBeforeUnload\)/.test(liveSync) && /addEventListener\("pagehide", onPageHide\)/.test(liveSync));
+  ok("live the unload flush saves and uploads", /onBeforeUnload = function \(\)[\s\S]{0,400}PMS\.store\.flush\(\)[\s\S]{0,200}push\(\)/.test(liveSync));
+  ok("live there is a dataReplaced API", typeof PMS.cloudsync.dataReplaced === "function");
+  ok("live dataReplaced clears the stale cloud mirror", /function dataReplaced\(\)[\s\S]{0,300}removeItem\(MIRROR_KEY\)/.test(liveSync));
+  ok("live dataReplaced uploads the new dataset", /function dataReplaced\(\)[\s\S]{0,600}return push\(\)/.test(liveSync));
+  ["js/data/seed.js", "js/data/backup.js", "js/services/export.js", "js/views/settings.js"].forEach(f => {
+    const after = (fs.readFileSync(path.join(APP, f), "utf8").split("PMS.store.setData(")[1] || "");
+    ok("live a wholesale replace in " + f + " resets the mirror", after.indexOf("cloudsync.dataReplaced()") !== -1);
+  });
+  ok("live dataReplaced is safe with sync off", PMS.cloudsync.dataReplaced().then(function (r) { return r === false; }));
+  ok("live tasks and meetings stamp the creator identically", /stampCreator\(obj\);\s*return add\("tasks", obj\);/.test(fs.readFileSync(path.join(APP, "js", "data", "repositories.js"), "utf8")));
+  ok("live an imported task keeps its creator", PMS.dataMerge.taskDB({ id: "i1", title: "I", createdBy: "u1", createdByName: "Imp", createdByPersonId: "p1" }).createdByName === "Imp");
+
   section("E.9c Blank-screen guard (live bundle)");
   // Reported bug: after signing in the interface stayed empty until the page
   // was refreshed by hand. A view that throws must report itself in place and

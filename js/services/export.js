@@ -89,6 +89,9 @@
         });
       }
       PMS.store.setData(migrated);
+      // wholesale replacement: forget the old cloud mirror so the import is
+      // uploaded rather than treated as a deletion of what was there before
+      if (PMS.cloudsync && PMS.cloudsync.dataReplaced) PMS.cloudsync.dataReplaced();
       PMS.toast.show(PMS.i18n.t("export.importOk", { n: migrated.tasks.length }), "success");
       return { ok: true, records: migrated.tasks.length };
     }
@@ -174,6 +177,10 @@
         activity: t.activity || [], dependencies: t.dependencies || [],
         linkedTaskIds: t.linkedTaskIds || [], meetingId: t.meetingId || null,
         customFields: t.customFields || {},
+        // who created it, kept through an import so the task does not come
+        // back anonymous
+        createdBy: t.createdBy || null, createdByName: t.createdByName || "",
+        createdByPersonId: t.createdByPersonId || null,
         createdAt: t.createdAt || U.nowISO(), updatedAt: t.updatedAt || U.nowISO()
       };
     },
@@ -183,7 +190,8 @@
         location: m.location || null, attendees: m.attendees || [],
         agenda: m.agenda || [], projectIds: m.projectIds || [],
         taskIds: m.taskIds || [], notes: m.notes || "", status: m.status || "planned",
-        createdBy: m.createdBy || null,
+        createdBy: m.createdBy || null, createdByName: m.createdByName || "",
+        createdByPersonId: m.createdByPersonId || null,
         createdAt: m.createdAt || U.nowISO(), updatedAt: m.updatedAt || U.nowISO()
       };
     }

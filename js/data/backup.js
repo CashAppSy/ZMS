@@ -97,6 +97,9 @@
       });
     }
     PMS.store.setData(snap);
+    // wholesale replacement: the cloud mirror described the previous dataset,
+    // so forget it before the next push reads it
+    if (PMS.cloudsync && PMS.cloudsync.dataReplaced) PMS.cloudsync.dataReplaced();
     return Promise.resolve();
   }
 

@@ -14,21 +14,8 @@
   // visible until the user narrows it down.
   var state = { tab: "all", query: "" };
 
-  // Who created a meeting. The name is stored with the record, so it survives
-  // a cloud round-trip to a device that has no user account for that id.
-  function creatorName(m) {
-    if (!m) return "";
-    if (m.createdByName) return m.createdByName;
-    if (m.createdBy && PMS.auth && PMS.auth.userById) {
-      var u = PMS.auth.userById(m.createdBy);
-      if (u) return u.name || u.username || u.email || "";
-    }
-    if (m.createdByPersonId) {
-      var p = PMS.repos.people.get(m.createdByPersonId);
-      if (p) return p.name;
-    }
-    return "";
-  }
+  // Who created a meeting: shared with tasks, so both read the same way
+  function creatorName(m) { return PMS.vformat.creatorOf(m); }
 
   function attachmentsOf(m) {
     return (m && Array.isArray(m.attachments)) ? m.attachments : [];

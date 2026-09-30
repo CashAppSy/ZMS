@@ -1700,6 +1700,156 @@ section("Meeting card leads with the creator, logo + favicon");
   PMS.sync.stop();
   ok("sync.tick safe when unbound", true);
 
+  section("Tasks show who created them, and every action syncs");
+  PMS.auth.login("boss", "pw1234");
+  // ---- the write side stamps the creator like meetings already did -------
+  const crTask = PMS.repos.tasks.add({ projectId: PMS.repos.projects.all()[0].id, title: "Creator stamped task", status: "todo", priority: "medium", assignees: [] });
+  const crStored = PMS.repos.tasks.get(crTask.id);
+  ok("a new task records the user id that made it", !!crStored.createdBy, String(crStored.createdBy));
+  ok("a new task records the creator's name", !!crStored.createdByName, String(crStored.createdByName));
+  ok("the creator name matches the signed-in user", crStored.createdByName === PMS.auth.currentUser().name);
+  // boss is an admin with no linked person record, so there is no person to
+  // point at - the field must stay empty rather than hold a broken id
+  ok("a task made by an account with no person has no person id", !crStored.createdByPersonId, String(crStored.createdByPersonId));
+  // an account that IS linked to a person must stamp that link
+  const crPerson = PMS.repos.people.all().find(p => !!p && !!p.id);
+  const crUser = PMS.auth.createUser({ username: "crmaker", password: "cr1234", personId: crPerson.id, role: "member" });
+  ok("a linked account can be created for the test", !crUser.error && !!crUser.user.personId, crUser.error || String(crUser.user && crUser.user.personId));
+  const crLinked = (function () {
+    PMS.auth.login("crmaker", "cr1234");
+    const t = PMS.repos.tasks.add({ projectId: crStored.projectId, title: "Linked creator task", status: "todo", assignees: [] });
+    const st = PMS.repos.tasks.get(t.id);
+    PMS.repos.tasks.remove(t.id);
+    return st;
+  })();
+  ok("a task made by a linked account records that person", !!crLinked && crLinked.createdByPersonId === crPerson.id, crLinked ? String(crLinked.createdByPersonId) : "none");
+  ok("the person id resolves back to a real person", !!crLinked && !!PMS.repos.people.get(crLinked.createdByPersonId));
+  PMS.auth.login("boss", "pw1234");
+  PMS.auth.removeUser(crUser.user.id);
+  ok("the temporary account is cleaned up", !PMS.auth.users().some(u => u.username === "crmaker"));
+  ok("the shared resolver falls back to the linked person", PMS.vformat.creatorOf({ createdByPersonId: crPerson.id }) === crPerson.name);
+  ok("tasks and meetings stamp the creator the same way", (function () {
+    const mt = PMS.repos.meetings.add({ title: "Stamp compare", date: PMS.utils.todayISO(), time: "10:00", attendees: [], agenda: [], projectIds: [] });
+    const mv = PMS.repos.meetings.get(mt.id);
+    const same = !!mv.createdBy === !!crStored.createdBy && !!mv.createdByName === !!crStored.createdByName && !!mv.createdByPersonId === !!crStored.createdByPersonId;
+    PMS.repos.meetings.remove(mt.id);
+    return same;
+  })());
+  // a creator supplied by the caller must win over the signed-in user
+  const crKeep = PMS.repos.tasks.add({ projectId: crStored.projectId, title: "Keep creator", status: "todo", assignees: [], createdBy: "other-id", createdByName: "Someone Else" });
+  ok("stamping never overwrites a creator the caller supplied", PMS.repos.tasks.get(crKeep.id).createdByName === "Someone Else" && PMS.repos.tasks.get(crKeep.id).createdBy === "other-id", PMS.repos.tasks.get(crKeep.id).createdByName);
+  PMS.repos.tasks.remove(crKeep.id);
+
+  // ---- the read side shows it in the table, kanban and detail ------------
+  ok("the shared resolver finds the creator by name", PMS.vformat.creatorOf(crStored) === crStored.createdByName);
+  ok("the shared resolver falls back to the user account", PMS.vformat.creatorOf({ createdBy: PMS.auth.currentUser().id }) === PMS.auth.currentUser().name);
+  ok("the shared resolver returns empty for an anonymous record", PMS.vformat.creatorOf({}) === "" && PMS.vformat.creatorOf(null) === "");
+  const crChip = PMS.vformat.creatorChip(crStored);
+  ok("the creator chip renders", !!crChip);
+  ok("the creator chip shows the initial and the name", !!crChip && crChip.querySelector(".cc-avatar").textContent === crStored.createdByName.charAt(0).toUpperCase() && crChip.querySelector(".cc-name").textContent === crStored.createdByName);
+  ok("no chip for a record with no creator", PMS.vformat.creatorChip({}) === null);
+
+  route("/tasks");
+  const crCols = Array.from(root().querySelectorAll(".vt-th")).map(th => (th.textContent || "").replace(/[\u25B2\u25BC\u25B4\u25BE\u25C0]/g, "").trim());
+  ok("the tasks table has a creator column", crCols.indexOf(PMS.i18n.t("tasks.createdBy")) !== -1, crCols.join(" | "));
+  ok("the creator column sits next to the assignees", crCols.indexOf(PMS.i18n.t("tasks.createdBy")) === crCols.indexOf(PMS.i18n.t("tasks.assignees")) + 1, crCols.join(" | "));
+  const crRow = root().querySelector('.vt-row[data-id="' + crTask.id + '"]');
+  ok("the task row renders", !!crRow);
+  ok("the task row shows the creator name", !!crRow && (crRow.textContent || "").indexOf(crStored.createdByName) !== -1);
+  ok("the creator is a chip with an avatar, not a bare column", !!crRow && !!crRow.querySelector(".chip-creator .cc-avatar"));
+  ok("a task with no creator shows a dash, not a blank cell", (function () {
+    const orphan = PMS.repos.tasks.add({ projectId: crStored.projectId, title: "Orphan task", status: "todo", assignees: [] });
+    PMS.repos.tasks.update(orphan.id, { createdBy: null, createdByName: "", createdByPersonId: null });
+    route("/tasks");
+    const orow = root().querySelector('.vt-row[data-id="' + orphan.id + '"]');
+    const txt = orow ? (orow.textContent || "") : "";
+    const okDash = !!orow && !orow.querySelector(".chip-creator") && txt.indexOf("-") !== -1;
+    PMS.repos.tasks.remove(orphan.id);
+    return okDash;
+  })());
+  // sorting by the creator must be a real sorter, not a fallback
+  ok("the creator column is sortable", /key: "createdBy"[^}]*sortable: true/.test(fs.readFileSync(path.join(APP, "js", "views", "tasks-table.js"), "utf8")));
+  ok("the creator sorter exists", typeof PMS.filterEngine.sorters.createdBy === "function");
+  ok("the creator sorter orders by name", (function () {
+    const a = PMS.utils.deepClone(crStored); a.createdByName = "Aaa";
+    const b = PMS.utils.deepClone(crStored); b.createdByName = "Bbb";
+    return PMS.filterEngine.sorters.createdBy(a, b) < 0 && PMS.filterEngine.sorters.createdBy(b, a) > 0;
+  })());
+  // kanban card
+  route("/tasks/kanban");
+  const crCard = root().querySelector('.kanban-card[data-id="' + crTask.id + '"]');
+  ok("the kanban card shows the creator", !!crCard && !!crCard.querySelector(".kc-meta-by .chip-creator"));
+  ok("the kanban creator line shows the name", !!crCard && (crCard.textContent || "").indexOf(crStored.createdByName) !== -1);
+  ok("the kanban creator sits under the title", !!crCard && crCard.children[0].className.indexOf("kc-title") !== -1 && crCard.children[1].className.indexOf("kc-meta-by") !== -1);
+  // detail modal (it mounts on the body, not inside the view root)
+  PMS.taskDetail.open(crTask.id);
+  ok("the task detail modal is open", PMS.modal.isOpen);
+  ok("the task detail lists the creator", (document.body.textContent || "").indexOf(PMS.i18n.t("tasks.createdBy")) !== -1);
+  ok("the task detail shows the creator name", (document.body.textContent || "").indexOf(crStored.createdByName) !== -1);
+  PMS.modal.close();
+  // the byline on meetings must still work after the resolver was shared out
+  route("/meetings");
+  ok("meetings still resolve their creator", typeof PMS.vformat.creatorOf({ createdByName: "Zed" }) === "string" && PMS.vformat.creatorOf({ createdByName: "Zed" }) === "Zed");
+  // an import must not strip the creator off a task
+  const expTask = { id: "imp1", title: "Imported", projectId: crStored.projectId, createdBy: "u9", createdByName: "Importer", createdByPersonId: "p9" };
+  const kept = PMS.dataMerge.taskDB(expTask);
+  ok("an imported task keeps its creator", kept.createdBy === "u9" && kept.createdByName === "Importer" && kept.createdByPersonId === "p9", JSON.stringify(kept));
+  const keptM = PMS.dataMerge.meetingDB({ id: "m9", title: "M", createdBy: "u9", createdByName: "Importer", createdByPersonId: "p9" });
+  ok("an imported meeting keeps its creator name too", keptM.createdByName === "Importer" && keptM.createdByPersonId === "p9", JSON.stringify(keptM));
+  PMS.repos.tasks.remove(crTask.id);
+
+  section("Every interface action is followed by a sync");
+  const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+  // 1. the autosave must be wired to the store change event
+  ok("a store change triggers the cloud autosave", /PMS\.bus\.on\("store:changed", onChange\)/.test(syncSrc));
+  // 2. a lone action must not wait for the debounce
+  ok("a single deliberate action pushes immediately", /if \(!debounce && Date\.now\(\) - lastPushAt >= PUSH_SETTLE\)/.test(syncSrc));
+  ok("the push records when it ran", /lastPushAt = Date\.now\(\)/.test(syncSrc));
+  ok("a burst of edits still coalesces into one push", /debounce = setTimeout\(function \(\) \{ debounce = null; push\(\); \}, PUSH_DEBOUNCE\)/.test(syncSrc));
+  // 3. leaving the tab must not swallow a pending change
+  ok("closing the tab flushes the pending change", /addEventListener\("beforeunload", onBeforeUnload\)/.test(syncSrc) && /addEventListener\("pagehide", onPageHide\)/.test(syncSrc));
+  ok("the unload flush saves locally and uploads", /onBeforeUnload = function \(\)[\s\S]{0,400}PMS\.store\.flush\(\)[\s\S]{0,200}push\(\)/.test(syncSrc));
+  ok("the unload handlers are removed on teardown", /removeEventListener\("beforeunload", onBeforeUnload\)/.test(syncSrc) && /removeEventListener\("pagehide", onPageHide\)/.test(syncSrc));
+  // 4. a wholesale dataset swap must forget the stale cloud mirror
+  ok("there is a dataReplaced API", typeof PMS.cloudsync.dataReplaced === "function");
+  ok("dataReplaced clears the cloud mirror", /function dataReplaced\(\)[\s\S]{0,300}removeItem\(MIRROR_KEY\)/.test(syncSrc));
+  ok("dataReplaced pushes the new dataset", /function dataReplaced\(\)[\s\S]{0,600}return push\(\)/.test(syncSrc));
+  ["js/data/seed.js", "js/data/backup.js", "js/services/export.js", "js/views/settings.js"].forEach(f => {
+    const src = fs.readFileSync(path.join(APP, f), "utf8");
+    const afterReplace = src.split("PMS.store.setData(")[1] || "";
+    ok("a wholesale replace in " + f + " resets the mirror", afterReplace.indexOf("cloudsync.dataReplaced()") !== -1 && afterReplace.indexOf("cloudsync.dataReplaced()") < 400);
+  });
+  // 5. it must be a no-op when sync is off, not a crash
+  ok("dataReplaced is safe with sync disabled", (function () {
+    return PMS.cloudsync.dataReplaced().then(function (r) { return r === false; });
+  })());
+  // 6. every repo mutation has to reach the store commit that emits the event
+  const repoSrc = fs.readFileSync(path.join(APP, "js", "data", "repositories.js"), "utf8");
+  ok("repo writes go through the shared writer that commits", /function add\(collection, obj\)/.test(repoSrc) && /PMS\.store\.commit/.test(repoSrc));
+  const storeSrc = fs.readFileSync(path.join(APP, "js", "core", "store.js"), "utf8");
+  ok("the store emits store:changed on every commit", /function commit\(fn, desc\)[\s\S]{0,600}PMS\.bus\.emit\("store:changed"/.test(storeSrc));
+  // flush() persists locally but must NOT emit store:changed, or a save would
+  // look like a user edit and echo itself back to the cloud
+  const flushBody = storeSrc.split("function flush")[1] ? storeSrc.split("function flush")[1].split(/\n  function /)[0] : "";
+  ok("a local save is not mistaken for a user edit", flushBody.length > 0 && flushBody.indexOf("store:changed") === -1);
+  // every emitter must sit in a real user-action path, so undo/redo and a
+  // wholesale replace upload just like a direct edit does
+  ok("every store:changed emitter is a user action", (function () {
+    const names = [];
+    storeSrc.split("\n").forEach((line, i) => {
+      if (line.indexOf('PMS.bus.emit("store:changed') === -1) return;
+      for (let j = i; j >= 0; j--) {
+        const m = storeSrc.split("\n")[j].match(/^  function (\w+)/);
+        if (m) { names.push(m[1]); return; }
+      }
+    });
+    return names.length === 4 && names.every(n => ["commit", "setData", "undo", "redo"].indexOf(n) !== -1);
+  })(), (function () {
+    const out = [];
+    storeSrc.split("\n").forEach(line => { if (line.indexOf('PMS.bus.emit("store:changed') !== -1) out.push(line.trim()); });
+    return out.length + " emitters";
+  })());
+
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");
   console.log(process.exitCode ? "FULL TEST FAILED" : "FULL TEST PASSED");
