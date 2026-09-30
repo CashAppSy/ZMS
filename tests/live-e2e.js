@@ -1,9 +1,9 @@
-"use strict";
+﻿"use strict";
 /* ============================================================================
    ZMS Live-Site Full Automation Test.
    Runs the code that is ACTUALLY DEPLOYED at:
         https://mtn-syr.github.io/ZMS/
-   (DEVELOPMENT build — cloud sync points at the zain-management-tool
+   (DEVELOPMENT build â€” cloud sync points at the zain-management-tool
    Firestore project, separate from the live cashappsy.github.io/ZMS build
    which uses test-d371d. Running the suite here NEVER touches live data.)
    by fetching the live index.html + js/css assets straight from GitHub Pages
@@ -66,7 +66,7 @@ function ok(label, cond, note) {
 
 // ---------------- jsdom env ----------------
 const dom = new JSDOM(`<!DOCTYPE html><html><body>
-  <div id="auth-root"></div><div id="view-root"></div><div id="sidebar"></div>
+  <div id="auth-root"></div><div id="app-shell"><div id="view-root"></div></div><div id="sidebar"></div>
   <div id="topbar"></div><div id="modal-root"></div><div id="toast-root"></div>
   <input id="app-search" />
 </body></html>`, {
@@ -239,13 +239,13 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.repos.tasks.add({ title: "E2E child 2", projectId: projNew.id, parentTaskId: tParent.id, status: "review", estimatedHours: 3 });
   ok("dummy projects + hierarchy created", PMS.repos.projects.children(projNew.id).length === 1);
   ok("dummy tasks + subtask hierarchy created", PMS.repos.tasks.children(tParent.id).length === 2);
-  const cf = PMS.repos.fields.add({ entity: "task", label: { en: "Effort score", ar: "درجة الجهد" }, type: "number", order: 99 });
+  const cf = PMS.repos.fields.add({ entity: "task", label: { en: "Effort score", ar: "Ø¯Ø±Ø¬Ø© Ø§Ù„Ø¬Ù‡Ø¯" }, type: "number", order: 99 });
   PMS.repos.tasks.update(tLeaf1.id, { customFields: { [cf.id]: 7 }, tags: ["e2e"], dueDate: "2026-10-20" });
   PMS.repos.savedFilters.add({ name: "E2E QA filter", query: { search: "E2E", statusKey: "" }, type: "task" });
   ok("custom field + values + saved filter", PMS.repos.tasks.get(tLeaf1.id).customFields[cf.id] === 7);
 
   // ---------------- D. Role automation ----------------
-  section("D.1 Role matrix — MEMBER");
+  section("D.1 Role matrix â€” MEMBER");
   const memAcc = PMS.auth.createUser({ username: "ada", password: "ada1234", personId: pA.id });
   ok("member account created (role=member)", !memAcc.error && memAcc.user.role === "member");
   PMS.auth.logout();
@@ -275,7 +275,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("member gantt is view-only for unassigned", !tskEdit);
   PMS.auth.logout();
 
-  section("D.2 Role matrix — MANAGER");
+  section("D.2 Role matrix â€” MANAGER");
   PMS.auth.login("boss", "pw1234");
   ok("boss re-authenticated for manager setup", !!PMS.auth.currentUser() && PMS.auth.currentUser().role === "admin");
   const mgr = PMS.auth.createUser({ username: "mona", password: "mona1234", personId: pM.id });
@@ -314,7 +314,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.modal.close();
   PMS.auth.logout();
 
-  section("D.3 Role matrix — ADMIN (full)");
+  section("D.3 Role matrix â€” ADMIN (full)");
   PMS.auth.login("boss", "pw1234");
   ok("admin can settings/data/users/projects", PMS.auth.can("settings") && PMS.auth.can("data.manage") && PMS.auth.can("users.manage") && PMS.auth.can("projects.write"));
   ok("admin canEditProject any + canCreateTask any", PMS.auth.canEditProject(PMS.repos.projects.get(projSub.id)) === true && PMS.auth.canCreateTask(projSub.id) === true && PMS.auth.canCreateTask() === true);
@@ -564,13 +564,30 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   const arBlank = PMS.i18n.t("errors.blankScreen");
   PMS.i18n.setLang("en");
   ok("live hidden-interface text is translated", enBlank.length > 2 && arBlank !== enBlank);
-  // the watchdog has to rescue the two states a sign-in can leave behind
+  // the watchdog has to rescue the two states a sign-in can leave behind, and
+  // it only runs once the app itself is up, so start the shell here
+  errors.length = 0;
+  PMS.app.init();
+  await new Promise(r => setTimeout(r, 1200));
+  ok("live app shell starts after sign-in", errors.length === 0 &&
+    document.getElementById("app-shell").style.display !== "none" && root().children.length > 0);
+  // the harness signs in directly, so the sign-in overlay is still up; a
+  // finished sign-in puts it away, and then the watchdog has to do its job
+  PMS.authUI.hide();
+  document.getElementById("auth-root").innerHTML = "";
+  // wait for the app's own report rather than guessing the watchdog phase
+  const waitForRepair = (label) => new Promise((resolve) => {
+    const timer = setTimeout(resolve, 15000);
+    const off = PMS.bus.on("app:blank-screen", () => { clearTimeout(timer); off && off(); resolve(label); });
+  });
   document.getElementById("app-shell").style.display = "none";
-  await new Promise(r => setTimeout(r, 4600));
+  await waitForRepair("shell");
+  await new Promise(r => setTimeout(r, 600));
   ok("live watchdog shows an app shell left hidden", document.getElementById("app-shell").style.display !== "none");
   const liveOverlay = document.getElementById("auth-root");
   liveOverlay.style.display = "flex"; liveOverlay.innerHTML = "";
-  await new Promise(r => setTimeout(r, 4600));
+  await waitForRepair("overlay");
+  await new Promise(r => setTimeout(r, 600));
   ok("live watchdog puts away an empty sign-in overlay",
     liveOverlay.style.display === "none" && root().children.length > 0 && !root().querySelector(".blank-report"));
   errors.length = 0;
@@ -625,7 +642,7 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   const pass = results.filter(r => r.status === "PASS").length;
   const fail = results.filter(r => r.status === "FAIL").length;
   console.log("\n  TOTAL: " + pass + " passed, " + fail + " failed");
-  ok("ALL CHECKS PASSED — site is stable and fully functional", fail === 0, pass + " checks");
+  ok("ALL CHECKS PASSED â€” site is stable and fully functional", fail === 0, pass + " checks");
 
   writeReport(pass, fail, bootMs, timings);
   process.exit(fail === 0 ? 0 : 1);
@@ -642,7 +659,7 @@ function writeReport(pass, fail, bootMs, timings) {
   lines.push("");
   lines.push("**Date:** " + new Date().toISOString());
   lines.push("");
-  lines.push("**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)");
+  lines.push("**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)");
   lines.push("");
   lines.push("**Method:** fetched the *deployed* index.html + all js/css assets from GitHub Pages and executed them in a jsdom browser sandbox (the app is local-only until cloud sync is enabled, so no production data was touched).");
   lines.push("");
@@ -652,7 +669,7 @@ function writeReport(pass, fail, bootMs, timings) {
   lines.push("|---|---|");
   lines.push("| **Passed** | " + pass + " |");
   lines.push("| **Failed** | " + fail + " |");
-  lines.push("| Overall | " + (fail === 0 ? "STABLE & FULLY FUNCTIONAL ✅" : "ISSUES FOUND ❌") + " |");
+  lines.push("| Overall | " + (fail === 0 ? "STABLE & FULLY FUNCTIONAL âœ…" : "ISSUES FOUND âŒ") + " |");
   lines.push("");
   lines.push("## Performance");
   lines.push("");

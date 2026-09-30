@@ -1,8 +1,8 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T06:10:56.458Z
+**Date:** 2026-09-30T07:50:55.068Z
 
-**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
+**Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
 **Method:** fetched the *deployed* index.html + all js/css assets from GitHub Pages and executed them in a jsdom browser sandbox (the app is local-only until cloud sync is enabled, so no production data was touched).
 
@@ -10,17 +10,17 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 169 |
+| **Passed** | 173 |
 | **Failed** | 0 |
-| Overall | STABLE & FULLY FUNCTIONAL ✅ |
+| Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
 ## Performance
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 51 ms |
-| Mean route render | ~30 ms |
-| Slowest route | ~90 ms |
+| App boot (store init from live bundle) | 10 ms |
+| Mean route render | ~17 ms |
+| Slowest route | ~53 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (51ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -79,7 +79,7 @@
 | 5 | dummy tasks + subtask hierarchy created | PASS |
 | 6 | custom field + values + saved filter | PASS |
 
-### D.1 Role matrix — MEMBER
+### D.1 Role matrix â€” MEMBER
 
 | # | Check | Status |
 |---|---|---|
@@ -103,7 +103,7 @@
 | 18 | member bounced from /activity | PASS |
 | 19 | member gantt is view-only for unassigned | PASS |
 
-### D.2 Role matrix — MANAGER
+### D.2 Role matrix â€” MANAGER
 
 | # | Check | Status |
 |---|---|---|
@@ -128,7 +128,7 @@
 | 19 | manager canChangeStatus an unassigned task in a foreign pillar | PASS |
 | 20 | manager may open status-only editor for own-project task | PASS |
 
-### D.3 Role matrix — ADMIN (full)
+### D.3 Role matrix â€” ADMIN (full)
 
 | # | Check | Status |
 |---|---|---|
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/45f569a5-3365-429e-af44-6d1a5412411f renders clean | PASS |
+| 3 | route /projects/97408736-6aff-4361-833e-ec5e3f25ef6c renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -276,7 +276,11 @@
 | 3 | live failure page offers a retry | PASS |
 | 4 | live router recovers on its own | PASS |
 | 5 | live blank-screen strings are translated in both languages | PASS |
-| 6 | the app still navigates normally afterwards | PASS |
+| 6 | live hidden-interface text is translated | PASS |
+| 7 | live app shell starts after sign-in | PASS |
+| 8 | live watchdog shows an app shell left hidden | PASS |
+| 9 | live watchdog puts away an empty sign-in overlay | PASS |
+| 10 | the app still navigates normally afterwards | PASS |
 
 ### E.10 Workflow CRUD through UI repos
 
@@ -306,4 +310,4 @@
 
 | # | Check | Status |
 |---|---|---|
-| 1 | ALL CHECKS PASSED — site is stable and fully functional | PASS |
+| 1 | ALL CHECKS PASSED â€” site is stable and fully functional | PASS |
