@@ -526,6 +526,34 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live person card shows name + email + phone", !!lvPCard && /lvphone@test/.test(lvPCard.textContent) && /\+962 7 123 4567/.test(lvPCard.textContent));
   PMS.repos.people.update(lvPerson.id, { status: "inactive" });
 
+  section("E.9c Blank-screen guard (live bundle)");
+  // Reported bug: after signing in the interface stayed empty until the page
+  // was refreshed by hand. A view that throws must report itself in place and
+  // retry, never leave #view-root empty.
+  let liveBoom = 0;
+  PMS.registry.registerView({
+    id: "zmsLiveFlaky", path: "/zms-live-flaky", titleKey: "app.name", render: function (c) {
+      liveBoom++;
+      if (liveBoom === 1) throw new Error("live data not ready yet");
+      c.appendChild(document.createElement("div")).className = "live-recovered";
+    }
+  });
+  PMS.router.register("/zms-live-flaky", "zmsLiveFlaky", {});
+  errors.length = 0;
+  route("/zms-live-flaky");
+  ok("live router survives a throwing view", errors.length === 0 && liveBoom >= 1);
+  ok("live failure is shown in place, not as a blank page", root().children.length > 0 &&
+    (root().textContent || "").indexOf(PMS.i18n.t("errors.viewFailed")) !== -1 &&
+    (root().textContent || "").indexOf("live data not ready yet") !== -1);
+  ok("live failure page offers a retry", !!root().querySelector(".empty-state .btn"));
+  await new Promise(r => setTimeout(r, 700));
+  ok("live router recovers on its own", !!root().querySelector(".live-recovered"), "attempts: " + liveBoom);
+  ok("live start-failure strings are translated", PMS.i18n.t("errors.startFailed").length > 2 &&
+    PMS.i18n.setLang("ar") && PMS.i18n.t("errors.viewFailed") !== "errors.viewFailed" && PMS.i18n.setLang("en"));
+  errors.length = 0;
+  route("/");
+  ok("the app still navigates normally afterwards", errors.length === 0 && root().children.length > 0);
+
   section("E.10 Workflow CRUD through UI repos");
   const before = PMS.repos.tasks.all().length;
   PMS.repos.tasks.remove(tLeaf1.id);

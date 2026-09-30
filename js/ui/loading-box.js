@@ -18,6 +18,7 @@
 
   function ensure() {
     if (box) return;
+    if (!document.body) return;          // no body yet: nothing to attach to
     box = PMS.dom.h("div.loading-box.is-hidden", {
       id: "loading-box",
       attrs: { role: "status", "aria-live": "polite" }
@@ -35,6 +36,7 @@
   }
 
   function apply() {
+    if (!box) return;                     // attach failed; stay a no-op
     var reason = null;
     var offline = !!(PMS.network && PMS.network.isOnline && !PMS.network.isOnline());
     if (offline && isCloudActive()) reason = "offline";

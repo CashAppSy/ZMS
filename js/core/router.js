@@ -10,6 +10,56 @@
   var container = null;
   var currentView = null;
   var currentParams = null;
+  // A view that throws leaves #view-root empty, which used to mean a blank app
+  // that only a page refresh could clear (the usual cause is data that had not
+  // arrived yet, e.g. the first cloud pull finishing right after login). Track
+  // the failures per view+path so a render can be retried a couple of times and
+  // then reported in place instead of silently.
+  var renderFailures = {};
+  var MAX_RENDER_RETRIES = 2;
+
+  function paintRenderError(container, view, err) {
+    var h = PMS.dom.h;
+    var wrap = h("div.empty-state");
+    wrap.appendChild(h("div.empty-icon", { text: "⚠️" }));
+    wrap.appendChild(h("h3", { text: PMS.i18n.t("errors.viewFailed") }));
+    wrap.appendChild(h("p.u-muted", { text: String((err && err.message) || err) }));
+    wrap.appendChild(h("button.btn.btn-primary", {
+      text: PMS.i18n.t("common.retry"),
+      on: { click: function () { renderFailures = {}; handle(); } }
+    }));
+    container.appendChild(wrap);
+  }
+
+  function renderCurrent() {
+    var viewId = currentView.id;
+    var path = currentPath;
+    var key = viewId + "@" + path;
+    try {
+      var cleanup = currentView.render(container, currentParams);
+      if (typeof cleanup === "function") currentView.destroy = cleanup;
+      delete renderFailures[key];
+      if (!container.children.length) {
+        // a view that draws nothing is as good as a crash for the user: say so
+        // in the console so the cause is findable, but leave the DOM alone.
+        console.warn("[router] view " + viewId + " rendered nothing for " + path);
+      }
+      return true;
+    } catch (e) {
+      var tries = (renderFailures[key] || 0) + 1;
+      renderFailures[key] = tries;
+      console.error("[router] view " + viewId + " failed to render " + path + ":", e);
+      PMS.bus.emit("view:error", { viewId: viewId, path: path, error: e, tries: tries });
+      paintRenderError(container, currentView, e);
+      if (tries <= MAX_RENDER_RETRIES) {
+        // most first-time failures are data still arriving: retry shortly
+        setTimeout(function () {
+          if (currentPath === path && currentView && currentView.id === viewId) handle();
+        }, 150 * tries);
+      }
+      return false;
+    }
+  }
 
   function register(pattern, viewId, opts) {
     // idempotent: replace existing registration for the same pattern
@@ -92,8 +142,7 @@
     }
     container.innerHTML = "";
     container.scrollTop = 0;
-    var cleanup = currentView.render(container, resolved.params);
-    if (typeof cleanup === "function") currentView.destroy = cleanup;
+    renderCurrent();
     PMS.bus.emit("route:changed", { path: clean, viewId: currentView.id });
   }
 

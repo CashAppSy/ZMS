@@ -940,6 +940,127 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   PMS.auth.login("boss", "pw1234");
   ok("admin re-login for remaining suite", PMS.auth.currentUser().role === "admin");
 
+section("Login hand-off + render resilience (no blank screen without a refresh)");
+  // A view that throws must never leave #view-root empty: the router reports it
+  // in place and retries, so a late-arriving dataset recovers on its own.
+  let boomCalls = 0;
+  PMS.registry.registerView({
+    id: "flaky", path: "/flaky", titleKey: "app.name", render: function (c) {
+      boomCalls++;
+      if (boomCalls === 1) throw new Error("data not ready yet");
+      c.appendChild(document.createElement("div")).className = "flaky-ok";
+    }
+  });
+  PMS.router.register("/flaky", "flaky", {});
+  const viewErrors = [];
+  PMS.bus.on("view:error", e => viewErrors.push(e));
+  errors.length = 0;
+  route("/flaky");
+  ok("router.handle survives a throwing view", errors.length === 0 && boomCalls === 1);
+  ok("the failure is shown in the view, not as a blank page", !!root().querySelector(".empty-state") &&
+    (root().textContent || "").indexOf(PMS.i18n.t("errors.viewFailed")) !== -1 &&
+    (root().textContent || "").indexOf("data not ready yet") !== -1);
+  ok("the failure page offers a retry button", !!root().querySelector(".empty-state .btn"));
+  ok("view:error tells the app what broke", viewErrors.length === 1 && viewErrors[0].viewId === "flaky");
+  await new Promise(r => setTimeout(r, 400));
+  ok("the router retries by itself and the screen recovers", !!root().querySelector(".flaky-ok") && boomCalls >= 2,
+    "attempts: " + boomCalls);
+
+  // a view that always throws stops retrying and keeps reporting itself
+  let hardCalls = 0;
+  PMS.registry.registerView({
+    id: "broken", path: "/broken", titleKey: "app.name", render: function () { hardCalls++; throw new Error("always broken"); }
+  });
+  PMS.router.register("/broken", "broken", {});
+  errors.length = 0;
+  route("/broken");
+  await new Promise(r => setTimeout(r, 700));
+  const hardAfterRetries = hardCalls;
+  await new Promise(r => setTimeout(r, 600));
+  ok("a permanently broken view stops retrying (no loop)", hardAfterRetries > 1 && hardCalls === hardAfterRetries,
+    "attempts: " + hardAfterRetries + " then " + hardCalls);
+  ok("a permanently broken view keeps the error on screen", (root().textContent || "").indexOf("always broken") !== -1);
+  ok("errors never escape the router", errors.length === 0);
+
+  // the manual retry button re-renders the current route
+  const manualCalls = [];
+  PMS.registry.registerView({
+    id: "manual", path: "/manual", titleKey: "app.name", render: function (c) {
+      manualCalls.push(1);
+      if (manualCalls.length < 2) throw new Error("first attempt fails");
+      c.appendChild(document.createElement("div")).className = "manual-ok";
+    }
+  });
+  PMS.router.register("/manual", "manual", {});
+  route("/manual");
+  const retryBtn = root().querySelector(".empty-state .btn");
+  if (retryBtn) retryBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  ok("the retry button re-renders the view", !!root().querySelector(".manual-ok"));
+
+  // a start-up service that throws must not keep the shell from opening
+  const realBackupLoad = PMS.backup.load;
+  PMS.backup.load = function () { throw new Error("backup service is down"); };
+  errors.length = 0;
+  PMS.app.showShell();
+  ok("app.showShell still opens the shell when a service throws", errors.length === 0 &&
+    document.getElementById("sidebar").children.length > 0 && root().children.length > 0);
+  PMS.backup.load = realBackupLoad;
+  PMS.app.showShell();
+
+  // a first paint that produces nothing is repainted by itself
+  const realHandle = PMS.router.handle;
+  let paintCalls = 0;
+  window.location.hash = "#/";
+  await new Promise(r => setTimeout(r, 30));   // let the hashchange render settle
+  PMS.router.handle = function () {
+    paintCalls++;
+    if (paintCalls >= 2) root().innerHTML = "<div class='repainted'></div>";
+  };
+  document.getElementById("view-root").innerHTML = "";
+  PMS.app.showShell();
+  await new Promise(r => setTimeout(r, 800));
+  ok("an empty first paint is rebuilt without a refresh", !!root().querySelector(".repainted"), "handle calls: " + paintCalls);
+  PMS.router.handle = realHandle;
+  PMS.app.showShell();
+
+  // a throw while handing over from the login screen keeps the overlay + reason
+  const realIsConfigured = PMS.cloudsync.isConfigured;
+  PMS.cloudsync.isConfigured = () => false;
+  PMS.authUI.show(function () { throw new Error("shell hand-off exploded"); });
+  const handoffForm = document.getElementById("auth-root").querySelector("form");
+  const handoffInputs = handoffForm.querySelectorAll("input");
+  handoffInputs[0].value = "boss";
+  handoffInputs[1].value = "pw1234";
+  handoffForm.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+  const handoffText = document.getElementById("auth-root").textContent || "";
+  ok("a failed hand-off explains itself instead of going blank",
+    document.getElementById("auth-root").style.display === "flex" &&
+    handoffText.indexOf(PMS.i18n.t("errors.startFailed")) !== -1 &&
+    handoffText.indexOf("shell hand-off exploded") !== -1);
+  ok("the failed hand-off can be retried", !!document.getElementById("auth-root").querySelector(".empty-state .btn"));
+  PMS.cloudsync.isConfigured = realIsConfigured;
+  PMS.authUI.hide();
+  PMS.auth.login("boss", "pw1234");
+  ok("suite is back on the admin session", PMS.auth.currentUser().role === "admin");
+  route("/");
+  ok("the app still renders the dashboard afterwards", root().children.length > 0);
+
+  // main.js guards its own boot hand-off the same way: a startApp that throws
+  // paints the reason instead of leaving the page blank
+  {
+    const realInit = PMS.app.init;
+    PMS.app.init = function () { throw new Error("boot exploded"); };
+    document.getElementById("view-root").innerHTML = "";
+    window.eval(fs.readFileSync(path.join(APP, "js", "main.js"), "utf8"));
+    await new Promise(r => setTimeout(r, 300));
+    const bootText = document.getElementById("view-root").textContent || "";
+    ok("a failing boot paints the reason instead of a blank page",
+      bootText.indexOf(PMS.i18n.t("errors.startFailed")) !== -1 && bootText.indexOf("boot exploded") !== -1);
+    ok("the failed boot can be retried", !!document.getElementById("view-root").querySelector(".boot-error .btn"));
+    PMS.app.init = realInit;
+    document.getElementById("view-root").innerHTML = "";
+  }
+
 section("Cloud sync (offline-safe API)");
   ok("cloudsync module present", PMS.cloudsync && PMS.cloudsync.push && PMS.cloudsync.pull && PMS.cloudsync.status);
   ok("cloudsync not enabled by default", PMS.cloudsync.status().enabled === false);

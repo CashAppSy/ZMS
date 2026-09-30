@@ -34,7 +34,8 @@
       today: "اليوم", selectAll: "تحديد الكل", selected: "المحدد",
       back: "رجوع", copy: "نسخ", remove: "إزالة", move: "نقل",
       counting: "{count} عنصر", hour: "ساعة", hoursUnit: "س",
-      owner: "المالك", link: "ربط", unlink: "إلغاء الربط", saveAndNew: "حفظ + جديد"
+      owner: "المالك", link: "ربط", unlink: "إلغاء الربط", saveAndNew: "حفظ + جديد",
+      retry: "إعادة المحاولة"
     },
     confirm: {
       title: "هل أنت متأكد؟",
@@ -389,7 +390,11 @@
       slowNet: "اتصال بطيء — جارٍ المزامنة…",
       offline: "غير متصل — تُحفظ التعديلات على هذا الجهاز وستتم المزامنة عند عودة الاتصال"
     },
-    errors: { generic: "حدث خطأ ما", notFound: "غير موجود" },
+    errors: {
+      generic: "حدث خطأ ما", notFound: "غير موجود",
+      viewFailed: "تعذّر عرض هذه الشاشة",
+      startFailed: "تعذّر فتح التطبيق"
+    },
     lang: { ar: "العربية", en: "English" },
     hide: "إخفاء", show: "إظهار"
   };

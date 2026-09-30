@@ -56,6 +56,28 @@
     });
   }
 
+  // Hands control to the app shell. If anything in that hand-off throws the
+  // overlay stays on screen with the reason and a retry, instead of the page
+  // turning blank until it is refreshed by hand.
+  function enterApp(root) {
+    try {
+      done();
+    } catch (e) {
+      console.error("[auth] could not open the app:", e);
+      root.innerHTML = "";
+      var box = h("div.empty-state");
+      box.appendChild(h("div.empty-icon", { text: "⚠️" }));
+      box.appendChild(h("h3", { text: t("errors.startFailed") }));
+      box.appendChild(h("p.u-muted", { text: String((e && e.message) || e) }));
+      box.appendChild(h("button.btn.btn-primary", {
+        text: t("common.retry"),
+        on: { click: function () { window.location.reload(); } }
+      }));
+      root.appendChild(box);
+      root.style.display = "flex";
+    }
+  }
+
   function personSelect() {
     var people = PMS.repos ? PMS.repos.people.all() : [];
     var activePeople = people.filter(function (p) { return p.status !== "inactive"; });
@@ -109,7 +131,7 @@
     }
     PMS.cloudBridge.adopt({ id: local.id, cloudUid: local.cloudUid });
     root.innerHTML = "";
-    done();
+    enterApp(root);
   }
 
   /* ---------------- first-run: classic local admin (defensive, no cloud) ---------------- */
@@ -151,7 +173,7 @@
       if (lg.error) { setError(form, lg.error); return; }
       PMS.toast.show(t("auth.adminCreated"), "success");
       root.innerHTML = "";
-      done();
+      enterApp(root);
     });
 
     root.appendChild(card(t("auth.setupTitle"), form));
@@ -210,7 +232,7 @@
       var res = PMS.auth.login(userInput.value, passInput.value);
       if (res.error) { setError(form, res.error); return; }
       root.innerHTML = "";
-      done();
+      enterApp(root);
     });
 
     root.appendChild(card(t("auth.loginTitle"), form));

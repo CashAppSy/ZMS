@@ -35,7 +35,8 @@
       today: "Today", selectAll: "Select all", selected: "Selected",
       back: "Back", copy: "Copy", remove: "Remove", move: "Move",
       counting: "{count} items", hour: "Hour", hoursUnit: "h",
-      owner: "Owner", link: "Link", unlink: "Unlink", saveAndNew: "Save & new"
+      owner: "Owner", link: "Link", unlink: "Unlink", saveAndNew: "Save & new",
+      retry: "Try again"
     },
     confirm: {
       title: "Are you sure?",
@@ -394,7 +395,11 @@
       slowNet: "Slow connection — syncing…",
       offline: "Offline — changes are saved on this device and will sync when the connection returns"
     },
-    errors: { generic: "Something went wrong", notFound: "Not found" },
+    errors: {
+      generic: "Something went wrong", notFound: "Not found",
+      viewFailed: "This screen could not be displayed",
+      startFailed: "The app could not be opened"
+    },
     lang: { ar: "العربية", en: "English" },
     hide: "Hide", show: "Show"
   };

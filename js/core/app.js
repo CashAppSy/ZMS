@@ -219,30 +219,62 @@
     if (shell) shell.style.display = "none";
   }
 
+  // Signing in used to be able to leave an empty app on screen that only a
+  // manual refresh cleared. If the first paint produced nothing, rebuild the
+  // shell once instead of leaving the user in front of a blank page.
+  function ensurePainted() {
+    setTimeout(function () {
+      var view = document.getElementById("view-root");
+      if (!view || view.children.length) return;
+      console.warn("[app] first paint produced nothing - rebuilding the shell");
+      step("repaint", function () {
+        buildSidebar();
+        buildTopbar();
+        if (PMS.router) PMS.router.handle();
+      });
+    }, 500);
+  }
+
   function showShell() {
     if (!started) { init(); return; }
     var shell = document.getElementById("app-shell");
     if (shell) shell.style.display = "";
-    PMS.i18n.setLang(PMS.store.data.settings.lang || "en");
-    buildSidebar();
-    buildTopbar();
-    if (PMS.router) { PMS.router.navigate("/"); PMS.router.handle(); }
+    step("lang", function () { PMS.i18n.setLang(PMS.store.data.settings.lang || "en"); });
+    step("sidebar", buildSidebar);
+    step("topbar", buildTopbar);
+    step("route", function () { if (PMS.router) { PMS.router.navigate("/"); PMS.router.handle(); } });
+    ensurePainted();
+  }
+
+  // Runs one start-up step; a failure is reported but never stops the shell
+  // from coming up (a broken optional service must not leave a blank app).
+  function step(name, fn) {
+    try { return fn(); }
+    catch (e) {
+      console.error("[app] start step " + name + " failed:", e);
+      PMS.bus.emit("app:step-error", { step: name, error: e });
+      return null;
+    }
   }
 
   function init() {
     if (started) { showShell(); return; }
     started = true;
-    document.documentElement.setAttribute("data-theme", PMS.store.data.settings.theme || "light");
-    PMS.i18n.setLang(PMS.store.data.settings.lang || "en");
-    buildSidebar();
-    buildTopbar();
-    setupKeyboard();
-    PMS.router.start();
-    PMS.backup.load();
-    PMS.backup.startAuto();
-    setupFileBinding();
-    if (PMS.sync) PMS.sync.start();
+    step("theme", function () {
+      document.documentElement.setAttribute("data-theme", PMS.store.data.settings.theme || "light");
+    });
+    step("lang", function () { PMS.i18n.setLang(PMS.store.data.settings.lang || "en"); });
+    step("sidebar", buildSidebar);
+    step("topbar", buildTopbar);
+    step("keyboard", setupKeyboard);
+    // the view is drawn first: the shell is usable even if a later service fails
+    step("router", function () { PMS.router.start(); });
+    step("backup-load", function () { PMS.backup.load(); });
+    step("backup-auto", function () { PMS.backup.startAuto(); });
+    step("file-binding", setupFileBinding);
+    step("sync", function () { if (PMS.sync) PMS.sync.start(); });
     PMS.bus.emit("app:ready");
+    ensurePainted();
     // whenever the session ends (logout), return to the login screen
     PMS.bus.on("auth:logout", function () {
       hideShell();
