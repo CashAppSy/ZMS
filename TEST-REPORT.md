@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T09:14:50.461Z
+**Date:** 2026-09-30T09:43:02.722Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 241 |
+| **Passed** | 240 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -19,8 +19,8 @@
 | Metric | Value |
 |---|---|
 | App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~17 ms |
-| Slowest route | ~48 ms |
+| Mean route render | ~19 ms |
+| Slowest route | ~50 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/5d57491c-b00b-4f21-a78f-ecdd78666d86 renders clean | PASS |
+| 3 | route /projects/2f276241-e969-43f1-bcd9-2f7ae8b1c11f renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -331,19 +331,18 @@
 | 14 | live the logo is bigger than it used to be | PASS |
 | 15 | live the brand renders both logo variants | PASS |
 | 16 | live the brand logo points at the real logo files | PASS |
-| 17 | live the app name is still announced to screen readers | PASS |
-| 18 | live tab icon favicon.ico is deployed | PASS |
-| 19 | live tab icon favicon-16.png is deployed | PASS |
-| 20 | live tab icon favicon-32.png is deployed | PASS |
-| 21 | live tab icon favicon-16-dark.png is deployed | PASS |
-| 22 | live tab icon favicon-32-dark.png is deployed | PASS |
-| 23 | live tab icon apple-touch-icon.png is deployed | PASS |
-| 24 | live the tab icon is a real ICONDIR | PASS |
-| 25 | live the tab icon has several sizes | PASS |
-| 26 | live index.html links the ico | PASS |
-| 27 | live index.html links the apple touch icon | PASS |
-| 28 | live index.html serves a favicon per colour scheme | PASS |
-| 29 | live the tab icon is a real file, not a data URI | PASS |
+| 17 | live the app name is visible under the logo | PASS |
+| 18 | live the app name reads Digital Program | PASS |
+| 19 | live the app name is not hidden from sighted users | PASS |
+| 20 | live the brand holds the logo and the name | PASS |
+| 21 | live the people grid is capped at 3 columns | PASS |
+| 22 | live the people grid no longer grows with the window | PASS |
+| 23 | live the people grid narrows on small windows | PASS |
+| 24 | live the people grid renders | PASS |
+| 25 | live the people grid holds the person cards | PASS |
+| 26 | live the tab icon is the original inline SVG | PASS |
+| 27 | live the tab icon is not a PNG file | PASS |
+| 28 | live the generated favicon files are gone | PASS |
 
 ### E.9c Blank-screen guard (live bundle)
 
