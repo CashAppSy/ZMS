@@ -548,8 +548,17 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live failure page offers a retry", !!root().querySelector(".empty-state .btn"));
   await new Promise(r => setTimeout(r, 700));
   ok("live router recovers on its own", !!root().querySelector(".live-recovered"), "attempts: " + liveBoom);
-  ok("live start-failure strings are translated", PMS.i18n.t("errors.startFailed").length > 2 &&
-    PMS.i18n.setLang("ar") && PMS.i18n.t("errors.viewFailed") !== "errors.viewFailed" && PMS.i18n.setLang("en"));
+  const enStartFail = PMS.i18n.t("errors.startFailed");
+  const enViewFail = PMS.i18n.t("errors.viewFailed");
+  const enRetry = PMS.i18n.t("common.retry");
+  PMS.i18n.setLang("ar");
+  const arStartFail = PMS.i18n.t("errors.startFailed");
+  const arViewFail = PMS.i18n.t("errors.viewFailed");
+  const arRetry = PMS.i18n.t("common.retry");
+  PMS.i18n.setLang("en");
+  ok("live blank-screen strings are translated in both languages",
+    enStartFail.length > 2 && enViewFail.length > 2 && enRetry.length > 2 &&
+    arStartFail !== enStartFail && arViewFail !== enViewFail && arRetry !== enRetry);
   errors.length = 0;
   route("/");
   ok("the app still navigates normally afterwards", errors.length === 0 && root().children.length > 0);

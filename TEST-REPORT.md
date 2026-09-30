@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-29T21:47:16.550Z
+**Date:** 2026-09-30T06:10:56.458Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch — DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 163 |
+| **Passed** | 169 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL ✅ |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 11 ms |
-| Mean route render | ~18 ms |
-| Slowest route | ~49 ms |
+| App boot (store init from live bundle) | 51 ms |
+| Mean route render | ~30 ms |
+| Slowest route | ~90 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (51ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/32798fea-11c9-4159-88e2-6aceb9cda969 renders clean | PASS |
+| 3 | route /projects/45f569a5-3365-429e-af44-6d1a5412411f renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -266,6 +266,17 @@
 | 21 | live meeting cleanup keeps its task | PASS |
 | 22 | live /people renders a card per person | PASS |
 | 23 | live person card shows name + email + phone | PASS |
+
+### E.9c Blank-screen guard (live bundle)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live router survives a throwing view | PASS |
+| 2 | live failure is shown in place, not as a blank page | PASS |
+| 3 | live failure page offers a retry | PASS |
+| 4 | live router recovers on its own | PASS |
+| 5 | live blank-screen strings are translated in both languages | PASS |
+| 6 | the app still navigates normally afterwards | PASS |
 
 ### E.10 Workflow CRUD through UI repos
 
