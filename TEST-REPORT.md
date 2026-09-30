@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T09:43:02.722Z
+**Date:** 2026-09-30T10:12:45.395Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 240 |
+| **Passed** | 266 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -19,8 +19,8 @@
 | Metric | Value |
 |---|---|
 | App boot (store init from live bundle) | 10 ms |
-| Mean route render | ~19 ms |
-| Slowest route | ~50 ms |
+| Mean route render | ~18 ms |
+| Slowest route | ~60 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/2f276241-e969-43f1-bcd9-2f7ae8b1c11f renders clean | PASS |
+| 3 | route /projects/e189dfe7-d096-4b5b-a074-5b149aea1aa7 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -343,6 +343,37 @@
 | 26 | live the tab icon is the original inline SVG | PASS |
 | 27 | live the tab icon is not a PNG file | PASS |
 | 28 | live the generated favicon files are gone | PASS |
+
+### E.9b4 Task creator + sync-after-every-action (live UI)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live a new task records its creator id | PASS |
+| 2 | live a new task records the creator name | PASS |
+| 3 | live the creator name matches the signed-in user | PASS |
+| 4 | live the shared resolver finds the creator | PASS |
+| 5 | live the tasks table has a creator column | PASS |
+| 6 | live the task row shows the creator name | PASS |
+| 7 | live the task row shows the creator as a chip | PASS |
+| 8 | live the kanban card shows the creator | PASS |
+| 9 | live the task detail lists the creator | PASS |
+| 10 | live the task detail shows the creator name | PASS |
+| 11 | live meetings still resolve their creator | PASS |
+| 12 | live a store change triggers the cloud autosave | PASS |
+| 13 | live a single action pushes immediately | PASS |
+| 14 | live a burst of edits still coalesces | PASS |
+| 15 | live closing the tab flushes the pending change | PASS |
+| 16 | live the unload flush saves and uploads | PASS |
+| 17 | live there is a dataReplaced API | PASS |
+| 18 | live dataReplaced clears the stale cloud mirror | PASS |
+| 19 | live dataReplaced uploads the new dataset | PASS |
+| 20 | live a wholesale replace in js/data/seed.js resets the mirror | PASS |
+| 21 | live a wholesale replace in js/data/backup.js resets the mirror | PASS |
+| 22 | live a wholesale replace in js/services/export.js resets the mirror | PASS |
+| 23 | live a wholesale replace in js/views/settings.js resets the mirror | PASS |
+| 24 | live dataReplaced is safe with sync off | PASS |
+| 25 | live tasks and meetings stamp the creator identically | PASS |
+| 26 | live an imported task keeps its creator | PASS |
 
 ### E.9c Blank-screen guard (live bundle)
 
