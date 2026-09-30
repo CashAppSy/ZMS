@@ -692,9 +692,12 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live the people grid renders", document.querySelectorAll(".grid-3").length === 1);
   ok("live the people grid holds the person cards", document.querySelectorAll(".grid-3 > *").length > 0, document.querySelectorAll(".grid-3 > *").length + " cards");
 
-  // ---- the tab icon is the original inline SVG again --------------------
+  // ---- the tab icon is the inline clipboard SVG -------------------------
   const lcPage = fs.readFileSync(path.join(APP, "index.html"), "utf8");
-  ok("live the tab icon is the original inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(lcPage));
+  const lcIconHref = (lcPage.match(/rel="icon"[^>]*href="([^"]*)"/) || [])[1] || "";
+  ok("live the tab icon is an inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(lcPage), lcIconHref.slice(0, 60));
+  ok("live the tab icon is the clipboard glyph", lcIconHref.indexOf("%F0%9F%93%8A") !== -1);
+  ok("live the tab icon has no raw spaces in the data URI", lcIconHref.indexOf(" ") === -1);
   ok("live the tab icon is not a PNG file", !/rel="icon"[^>]*href="assets\//.test(lcPage));
   ok("live the generated favicon files are gone", !fs.existsSync(path.join(APP, "assets", "favicon.ico")) && !fs.existsSync(path.join(APP, "assets", "favicon-32.png")) && !fs.existsSync(path.join(APP, "assets", "apple-touch-icon.png")));
 

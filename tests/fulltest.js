@@ -1689,9 +1689,17 @@ section("Meeting card leads with the creator, logo + favicon");
   const gridCards = root().querySelectorAll(".grid-3 > *");
   ok("the people grid holds the person cards", gridCards.length > 0, gridCards.length + " cards");
 
-  // the browser tab icon is the old inline SVG again
+  // the browser tab icon: an inline SVG, so it costs no extra request
   const pageHtml = fs.readFileSync(path.join(APP, "index.html"), "utf8");
-  ok("the tab icon is the original inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(pageHtml));
+  const iconHref = (pageHtml.match(/rel="icon"[^>]*href="([^"]*)"/) || [])[1] || "";
+  ok("the tab icon is an inline SVG", /rel="icon"[^>]*data:image\/svg\+xml/.test(pageHtml), iconHref.slice(0, 60));
+  ok("the tab icon is the clipboard glyph", iconHref.indexOf("%F0%9F%93%8A") !== -1);
+  ok("the tab icon has no raw spaces in the data URI", iconHref.indexOf(" ") === -1 && iconHref.indexOf("\n") === -1);
+  ok("the tab icon SVG is well formed", (function () {
+    // decode and check it parses as SVG with a <text> glyph
+    var svg = decodeURIComponent(iconHref.replace("data:image/svg+xml,", ""));
+    return /^<svg[\s\S]*<\/svg>$/.test(svg) && svg.indexOf("<text") !== -1 && svg.indexOf("viewBox='0 0 100 100'") !== -1;
+  })(), decodeURIComponent(iconHref.replace("data:image/svg+xml,", "")).slice(0, 80));
   ok("the tab icon is not a PNG file", !/rel="icon"[^>]*href="assets\//.test(pageHtml));
   ok("the generated favicon files are gone", !fs.existsSync(path.join(APP, "assets", "favicon.ico")) && !fs.existsSync(path.join(APP, "assets", "favicon-32.png")) && !fs.existsSync(path.join(APP, "assets", "apple-touch-icon.png")));
   ok("the page title is still the new name", /<title>\s*Digital Program/.test(pageHtml));
