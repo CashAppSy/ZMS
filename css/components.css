@@ -708,7 +708,7 @@ table.tbl {
   background: var(--danger);
   color: #fff;
   font-size: .72rem;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--font-sans);
 
   direction: ltr;
   text-align: start;

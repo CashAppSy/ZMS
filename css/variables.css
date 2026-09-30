@@ -5,8 +5,12 @@
    ========================================================================== */
 
 :root {
-  --font-sans: "Segoe UI", Tahoma, Arial, sans-serif;
-  --font-arabic: "Segoe UI", "Tahoma", "Cairo", sans-serif;
+  /* Zain is the one typeface in the app, for Latin and Arabic alike - the
+     faces carry both scripts, so the Arabic stack needs no separate family.
+     The generic sans-serif is only a safety net for the moment before the
+     webfont arrives, or if the font file itself fails to load. */
+  --font-sans: "Zain", "Segoe UI", Tahoma, Arial, sans-serif;
+  --font-arabic: "Zain", "Segoe UI", Tahoma, "Cairo", sans-serif;
 
   --radius-sm: 6px;
   --radius-md: 10px;

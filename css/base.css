@@ -60,6 +60,8 @@ textarea {
   color: inherit;
 }
 
+/* The one deliberate exception to "Zain everywhere": real code elements stay
+   monospaced, because proportional letters break code alignment. */
 code, pre, tt {
   font-family: Consolas, "Courier New", monospace;
 }

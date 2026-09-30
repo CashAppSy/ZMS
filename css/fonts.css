@@ -1,0 +1,82 @@
+/* ==========================================================================
+   Zain typeface - the brand font, used throughout the app.
+
+   Source of truth: the "Zain Fonts" folder in the repo root, which holds the
+   original .ttf files under the SIL Open Font License (see "Zain Fonts/OFL.txt").
+   The files in /fonts are those same faces converted to WOFF2 (-71% weight);
+   they are generated from the .ttf sources, so edit the .ttf and re-convert
+   rather than editing the .woff2.
+
+   Every face is declared under the single family "Zain" with an explicit
+   font-weight. The fonts disagree about their own family names (some say
+   "Zain", others "Zain Light" / "Zain Black"), so relying on the internal
+   names would make the browser pick the wrong file for a given weight.
+
+   font-display: swap shows the text in the fallback immediately and swaps in
+   Zain when it arrives, so a slow font never blocks the first paint.
+
+   Vertical metrics note: the source faces use a non-standard 800-units-per-em
+   and a tall native line box (~1.66em). The app sets an explicit line-height
+   (1.55) on the body, which is inherited everywhere, so that tall native box
+   is never used and the vertical rhythm stays as designed.
+   ========================================================================== */
+
+/* ---- Latin + Arabic, upright ---- */
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-ExtraLight.woff2") format("woff2");
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-Light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-ExtraBold.woff2") format("woff2");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-Black.woff2") format("woff2");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- Italic ---- */
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("../fonts/Zain-LightItalic.woff2") format("woff2");
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}

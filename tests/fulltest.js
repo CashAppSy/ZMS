@@ -69,6 +69,43 @@ const root = () => document.getElementById("view-root");
 
 (async function main() {
 
+  // A webfont that 404s is invisible in every other test: the browser just
+  // falls back and the app still "works". So the wiring is checked on disk.
+  section("Brand typeface (Zain)");
+  const fontsCssPath = path.join(APP, "css", "fonts.css");
+  ok("css/fonts.css exists", fs.existsSync(fontsCssPath));
+  const fontsCss = fs.existsSync(fontsCssPath) ? fs.readFileSync(fontsCssPath, "utf8") : "";
+  const faceBlocks = fontsCss.match(/@font-face\s*\{[^}]*\}/g) || [];
+  ok("fonts.css declares 8 @font-face rules", faceBlocks.length === 8, faceBlocks.length + " faces");
+  ok("every face declares an explicit font-weight", faceBlocks.length > 0 && faceBlocks.every(b => /font-weight:\s*\d+/.test(b)),
+    faceBlocks.filter(b => !/font-weight:\s*\d+/.test(b)).length + " without a weight");
+  ok("every face is the single family Zain", faceBlocks.every(b => /font-family:\s*"Zain"/.test(b)));
+  ok("every face uses font-display: swap", faceBlocks.every(b => /font-display:\s*swap/.test(b)));
+  const weights = faceBlocks.map(b => (b.match(/font-weight:\s*(\d+)/) || [])[1]).sort((a, b) => a - b);
+  ok("the weight scale covers 200-900", weights.join(",") === "200,300,300,400,400,700,800,900", weights.join(","));
+  // every referenced file must exist, or the browser silently substitutes
+  const fontUrls = [...fontsCss.matchAll(/url\("([^"]+\.woff2)"\)/g)].map(x => x[1]);
+  ok("fonts.css references 8 woff2 files", new Set(fontUrls).size === 8, new Set(fontUrls).size + " unique");
+  const missingFontFiles = [...new Set(fontUrls)].filter(u => !fs.existsSync(path.resolve(path.dirname(fontsCssPath), u)));
+  ok("every referenced woff2 exists on disk", missingFontFiles.length === 0, missingFontFiles.join(", "));
+  const woff2 = [...new Set(fontUrls)].map(u => fs.statSync(path.resolve(path.dirname(fontsCssPath), u)).size);
+  ok("no woff2 is suspiciously empty", woff2.every(s => s > 5000), "smallest " + Math.min.apply(null, woff2) + " bytes");
+  ok("the whole family is a sane size", woff2.reduce((a, b) => a + b, 0) < 900 * 1024, Math.round(woff2.reduce((a, b) => a + b, 0) / 1024) + " KB total");
+  // it has to be loaded, or declaring it changes nothing
+  ok("index.html links css/fonts.css", /<link rel="stylesheet" href="css\/fonts\.css">/.test(html));
+  ok("fonts.css is linked before variables.css", html.indexOf("css/fonts.css") < html.indexOf("css/variables.css"));
+  const preloads = [...html.matchAll(/<link rel="preload" href="(fonts\/[^"]+\.woff2)"[^>]*crossorigin>/g)].map(x => x[1]);
+  ok("index.html preloads the regular and bold faces", preloads.length === 2 && preloads.indexOf("fonts/Zain-Regular.woff2") !== -1 && preloads.indexOf("fonts/Zain-Bold.woff2") !== -1, preloads.join(", "));
+  ok("every preloaded file exists", preloads.every(p => fs.existsSync(path.join(APP, p))));
+  // Zain must be the typeface in use, for Latin and Arabic alike
+  const vars = fs.readFileSync(path.join(APP, "css", "variables.css"), "utf8");
+  const sansVar = (vars.match(/--font-sans:\s*([^;]+);/) || [])[1] || "";
+  const arabVar = (vars.match(/--font-arabic:\s*([^;]+);/) || [])[1] || "";
+  ok("--font-sans starts with Zain", /^\s*"Zain"/.test(sansVar), sansVar.trim());
+  ok("--font-arabic starts with Zain", /^\s*"Zain"/.test(arabVar), arabVar.trim());
+  // the licence must travel with the fonts
+  ok("the OFL licence file is present", fs.existsSync(path.join(APP, "Zain Fonts", "OFL.txt")));
+
   section("Core services");
 
   const d = PMS.schema.defaultData();
