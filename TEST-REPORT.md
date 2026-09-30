@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T10:46:59.598Z
+**Date:** 2026-09-30T11:14:08.976Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 268 |
+| **Passed** | 302 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 13 ms |
-| Mean route render | ~22 ms |
-| Slowest route | ~56 ms |
+| App boot (store init from live bundle) | 12 ms |
+| Mean route render | ~164 ms |
+| Slowest route | ~1541 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (13ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (12ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/8c262f2f-31dc-42eb-8fd9-e436ba7a3511 renders clean | PASS |
+| 3 | route /projects/3ba8da5f-9446-4d57-a778-5a89c1aaef48 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -304,9 +304,9 @@
 | 31 | live a meeting records the member creator's person id | PASS |
 | 32 | live the member can see the meeting they created | PASS |
 | 33 | live the member's task view renders | PASS |
-| 34 | live the member's dashboard counts only visible tasks | PASS |
-| 35 | live the member's dashboard shows the visible count | PASS |
-| 36 | live the member's reports render on narrowed data | PASS |
+| 34 | live the member's task list only holds the tasks they may see | PASS |
+| 35 | live a member routed to the dashboard lands on Tasks | PASS |
+| 36 | live a member routed to reports lands on Tasks | PASS |
 | 37 | live a foreign task title never reaches the member's screen | PASS |
 | 38 | live the member's meetings view renders | PASS |
 | 39 | live the admin is signed back in | PASS |
@@ -376,6 +376,45 @@
 | 24 | live dataReplaced is safe with sync off | PASS |
 | 25 | live tasks and meetings stamp the creator identically | PASS |
 | 26 | live an imported task keeps its creator | PASS |
+
+### E.9b5 A member only gets the Tasks and Meetings tabs (live UI)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live the test member is a member | PASS |
+| 2 | live the test member signs in | PASS |
+| 3 | live a member sees exactly two tabs | PASS |
+| 4 | live the member tabs are Tasks and Meetings | PASS |
+| 5 | live the member has no dashboard | PASS |
+| 6 | live the member has no projects, people or reports | PASS |
+| 7 | live the member has no settings or activity | PASS |
+| 8 | live the member's home is Tasks | PASS |
+| 9 | live the member lands on Tasks after init | PASS |
+| 10 | live a member cannot open / | PASS |
+| 11 | live routing a member to / lands on Tasks | PASS |
+| 12 | live a member cannot open /projects | PASS |
+| 13 | live routing a member to /projects lands on Tasks | PASS |
+| 14 | live a member cannot open /people | PASS |
+| 15 | live routing a member to /people lands on Tasks | PASS |
+| 16 | live a member cannot open /reports | PASS |
+| 17 | live routing a member to /reports lands on Tasks | PASS |
+| 18 | live a member cannot open /settings | PASS |
+| 19 | live routing a member to /settings lands on Tasks | PASS |
+| 20 | live a member cannot open /activity | PASS |
+| 21 | live routing a member to /activity lands on Tasks | PASS |
+| 22 | live the blocked URL was corrected | PASS |
+| 23 | live a member can open /tasks | PASS |
+| 24 | live a member can open /meetings | PASS |
+| 25 | live a member can open /tasks/kanban | PASS |
+| 26 | live a member can open /tasks/gantt | PASS |
+| 27 | live a member can open /tasks/calendar | PASS |
+| 28 | live a member can still switch the tasks view to kanban | PASS |
+| 29 | live a member can still switch the tasks view to calendar | PASS |
+| 30 | live a member sees the tasks table | PASS |
+| 31 | live a member sees the meetings view | PASS |
+| 32 | live an admin keeps every tab | PASS |
+| 33 | live an admin's home is the dashboard | PASS |
+| 34 | live an admin can still open reports | PASS |
 
 ### E.9c Blank-screen guard (live bundle)
 
