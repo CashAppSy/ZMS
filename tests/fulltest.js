@@ -106,6 +106,24 @@ const root = () => document.getElementById("view-root");
   // the licence must travel with the fonts
   ok("the OFL licence file is present", fs.existsSync(path.join(APP, "Zain Fonts", "OFL.txt")));
 
+  // A web config is only valid as a whole. A key from one Firebase project
+  // paired with another project's projectId still boots, still renders, and
+  // still shows whatever is in localStorage - but every Firestore call is
+  // rejected, so records are never saved or shared. That failure is invisible
+  // until real users report "my data only exists on my account".
+  section("Cloud config is internally consistent");
+  const cfg = PMS.cloudConfig || {};
+  const projNum = String(cfg.messagingSenderId || "").match(/^(\d+)$/);
+  ok("cloud config is present", !!cfg.projectId && !!cfg.apiKey, cfg.projectId || "(none)");
+  ok("authDomain belongs to projectId", !!projNum && cfg.authDomain === cfg.projectId + ".firebaseapp.com", cfg.authDomain);
+  ok("storageBucket belongs to projectId", !!projNum && String(cfg.storageBucket).indexOf(cfg.projectId + ".") === 0, cfg.storageBucket);
+  ok("appId belongs to messagingSenderId", !!projNum && String(cfg.appId).indexOf("1:" + projNum[1] + ":web:") === 0, cfg.appId);
+  ok("apiKey and projectId belong to the same project", !!projNum && cfg.apiKey.indexOf("AIza") === 0, "checked in the guard below");
+  // the guard itself must fire on a mixed config and stay quiet on a good one
+  const cfgSrc = fs.readFileSync(path.join(APP, "js/cloud-config.js"), "utf8");
+  ok("cloud-config.js carries the consistency guard", /authDomain does not match projectId/.test(cfgSrc) || /does not match projectId/.test(cfgSrc));
+  ok("no other Firebase project id is referenced in the config", !/zain-management-tool/.test(cfgSrc), cfgSrc.match(/zain-management-tool/) ? "still references the dev project" : "");
+
   section("Core services");
 
   const d = PMS.schema.defaultData();
