@@ -13,6 +13,22 @@
   var started = false;
   var profileBuilt = false;
 
+  // The brand logo ships in two files: one to read on a light background and
+  // one for dark mode. Both are rendered and CSS shows the right one, so
+  // switching the theme never needs a reload.
+  function logoImage(cls) {
+    var wrap = h("span" + (cls ? "." + cls : ""));
+    wrap.appendChild(h("img", {
+      attrs: { src: "assets/logo-light.png", alt: t("app.name"), loading: "lazy", decoding: "async" },
+      style: { display: "block", maxWidth: "100%" }
+    }));
+    wrap.appendChild(h("img", {
+      attrs: { src: "assets/logo-dark.png", alt: "", "aria-hidden": "true", loading: "lazy", decoding: "async" },
+      style: { display: "none", maxWidth: "100%" }
+    }));
+    return wrap;
+  }
+
   function buildProfile() {
     var sidebar = document.getElementById("sidebar");
     var existing = sidebar.querySelector(".sidebar-profile");
@@ -41,11 +57,11 @@
   function buildSidebar() {
     var sidebar = document.getElementById("sidebar");
     sidebar.innerHTML = "";
-    // brand
-    sidebar.appendChild(h("div.sidebar-brand", [
-      h("span.brand-logo", { text: "PM" }),
-      h("span", { text: t("app.name") })
-    ]));
+    // brand: the PM logo, swapped by theme (the light file is for light mode)
+    var brand = h("div.sidebar-brand");
+    brand.appendChild(logoImage("brand-logo-img"));
+    brand.appendChild(h("span", { text: t("app.name") }));
+    sidebar.appendChild(brand);
     var nav = h("nav.sidebar-nav", { attrs: { "aria-label": "Main" } });
     PMS.registry.allViews().filter(function (v) { return v.nav; }).forEach(function (v) {
       if (v.adminOnly && (!PMS.auth || !PMS.auth.can("settings"))) return;

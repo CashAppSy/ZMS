@@ -10,7 +10,8 @@
 
   function render(container) {
     container.innerHTML = "";
-    var data = PMS.store.data;
+    // scoped, so a member's dashboard totals only the work they may see
+    var data = PMS.repos.scopedData();
     var tasks = data.tasks || [];
     var projects = data.projects || [];
     var people = data.people || [];

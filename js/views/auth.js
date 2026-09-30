@@ -26,10 +26,25 @@
     return wrap;
   }
 
+  // The brand logo ships in two files, one per theme: both are rendered and
+  // CSS shows the right one, so the sign-in screen follows the theme too.
+  function brandLogo() {
+    var wrap = h("span.auth-logo");
+    wrap.appendChild(h("img", {
+      attrs: { src: "assets/logo-light.png", alt: t("app.name") },
+      style: { display: "block", maxWidth: "100%" }
+    }));
+    wrap.appendChild(h("img", {
+      attrs: { src: "assets/logo-dark.png", alt: "", "aria-hidden": "true" },
+      style: { display: "none", maxWidth: "100%" }
+    }));
+    return wrap;
+  }
+
   function card(title, form) {
     var shell = h("div.shell-min");
     var brand = h("div.auth-brand");
-    brand.appendChild(h("span.brand-logo.auth-logo", { text: "PM" }));
+    brand.appendChild(brandLogo());
     brand.appendChild(h("span", { text: t("app.name") }));
     var cardEl = h("div.card.auth-card");
     cardEl.appendChild(h("h2.auth-title", { text: title }));

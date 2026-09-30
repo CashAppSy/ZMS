@@ -25,6 +25,52 @@
     return u ? (u.name || u.username || u.email || "") : "";
   }
 
+  // Who made a record, kept as plain text as well as an id. The id only
+  // resolves on the device that made the record, so the name is stored with
+  // it: a meeting then still shows who created it after cloud sync.
+  function stampCreator(obj) {
+    var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    if (!u) return obj;
+    if (!obj.createdBy) obj.createdBy = u.id;
+    if (!obj.createdByName) obj.createdByName = u.name || u.username || u.email || "";
+    if (!obj.createdByPersonId && u.personId) obj.createdByPersonId = u.personId;
+    return obj;
+  }
+
+  // Attachments are links only (a Google Drive file, a document, a link).
+  // Anything that is not http(s) is dropped: the value ends up in href
+  // attributes, so only web links may survive.
+  function normalizeAttachments(list) {
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    list.forEach(function (a) {
+      if (!a) return;
+      var raw = String(a.url || a.link || "").trim();
+      if (!raw) return;
+      if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw.replace(/^\/+/, "");
+      if (!/^https?:\/\//i.test(raw)) return;
+      var url = raw;
+      var name = String(a.name || a.title || "").trim();
+      if (!name) {
+        // fall back to something readable: the file name in the URL
+        var tail = url.split("?")[0].split("#")[0].split("/").pop();
+        name = tail ? decodeURIComponent(tail) : url;
+      }
+      var kind = a.kind === "link" ? "link" : "drive";
+      var dup = out.some(function (x) { return x.url === url; });
+      if (dup) return;
+      out.push({
+        id: a.id || PMS.ids.uuid(),
+        name: name.slice(0, 200),
+        url: url.slice(0, 1000),
+        kind: kind,
+        addedAt: a.addedAt || new Date().toISOString(),
+        addedBy: a.addedBy || actorName()
+      });
+    });
+    return out;
+  }
+
   function entityLabel(collection, rec) {
     if (!rec) return "";
     if (collection === "tasks" || collection === "meetings") return rec.title || "";
@@ -100,6 +146,37 @@
   function find(collection, id) {
     if (!id) return null;
     return list(collection).find(function (x) { return x.id === id; }) || null;
+  }
+
+  // Members only ever see their own work: the tasks assigned to them (or made
+  // by them) and the meetings they attended (or created). Managers and admins
+  // see everything.
+  //
+  // The filter lives HERE, in the single read path every screen goes through,
+  // so no view, report or export can hand a member a record they have no
+  // business seeing - it is not left to each screen to remember.
+  function canViewRecord(collection, rec) {
+    if (!rec) return false;
+    if (!PMS.auth || !PMS.auth.currentUser) return true;
+    var u = PMS.auth.currentUser();
+    if (!u || u.role !== "member") return true;
+    if (collection === "tasks" && PMS.auth.canViewTask) return PMS.auth.canViewTask(rec);
+    if (collection === "meetings" && PMS.auth.canViewMeeting) return PMS.auth.canViewMeeting(rec);
+    return true;
+  }
+
+  function visible(collection) {
+    var all = list(collection);
+    if (collection !== "tasks" && collection !== "meetings") return all;
+    return all.filter(function (rec) { return canViewRecord(collection, rec); });
+  }
+
+  // Same filter for a single record: a member asking for a record that is not
+  // theirs gets null (reported as "not found") rather than the record.
+  function findVisible(collection, id) {
+    var rec = find(collection, id);
+    if (!rec) return null;
+    return canViewRecord(collection, rec) ? rec : null;
   }
 
   function add(collection, obj) {
@@ -201,8 +278,8 @@
     },
 
     tasks: {
-      all: function () { return list("tasks"); },
-      get: function (id) { return find("tasks", id); },
+      all: function () { return visible("tasks"); },
+      get: function (id) { return findVisible("tasks", id); },
       add: function (obj) {
         obj.parentTaskId = obj.parentTaskId || null;
         obj.meetingId = obj.meetingId || null;
@@ -253,21 +330,21 @@
         return true;
       },
       forProject: function (projectId) {
-        return list("tasks").filter(function (t) { return t.projectId === projectId; });
+        return visible("tasks").filter(function (t) { return t.projectId === projectId; });
       },
       children: function (parentTaskId) {
-        return list("tasks").filter(function (t) { return t.parentTaskId === parentTaskId; });
+        return visible("tasks").filter(function (t) { return t.parentTaskId === parentTaskId; });
       },
       forMeeting: function (meetingId) {
-        return list("tasks").filter(function (t) { return t.meetingId === meetingId; });
+        return visible("tasks").filter(function (t) { return t.meetingId === meetingId; });
       },
       // task-to-task links (symmetric stored one-way: A lists B)
       linksOf: function (taskId) {
-        var t = find("tasks", taskId);
-        return ((t && t.linkedTaskIds) || []).map(function (id) { return find("tasks", id); }).filter(Boolean);
+        var t = findVisible("tasks", taskId);
+        return ((t && t.linkedTaskIds) || []).map(function (id) { return findVisible("tasks", id); }).filter(Boolean);
       },
       linkedCount: function (taskId) {
-        var t = find("tasks", taskId);
+        var t = findVisible("tasks", taskId);
         return t && Array.isArray(t.linkedTaskIds) ? t.linkedTaskIds.length : 0;
       },
       link: function (taskId, otherId) {
@@ -298,17 +375,37 @@
     },
 
     meetings: {
-      all: function () { return list("meetings"); },
-      get: function (id) { return find("meetings", id); },
+      all: function () { return visible("meetings"); },
+      get: function (id) { return findVisible("meetings", id); },
       add: function (obj) {
         obj.attendees = Array.isArray(obj.attendees) ? obj.attendees : [];
         obj.agenda = Array.isArray(obj.agenda) ? obj.agenda : [];
         obj.projectIds = Array.isArray(obj.projectIds) ? obj.projectIds : [];
         obj.taskIds = Array.isArray(obj.taskIds) ? obj.taskIds : [];
         obj.status = obj.status || "planned";
+        obj.attachments = normalizeAttachments(obj.attachments);
+        stampCreator(obj);
         return add("meetings", obj);
       },
-      update: function (id, patch) { return update("meetings", id, patch); },
+      update: function (id, patch) {
+        if (patch && Array.isArray(patch.attachments)) patch.attachments = normalizeAttachments(patch.attachments);
+        return update("meetings", id, patch);
+      },
+      // Adds a link to a meeting (or a task) without opening the editor.
+      addAttachment: function (id, attachment) {
+        var rec = find("meetings", id);
+        if (!rec) return null;
+        var next = normalizeAttachments((rec.attachments || []).concat([attachment || {}]));
+        update("meetings", id, { attachments: next });
+        return next;
+      },
+      removeAttachment: function (id, attachmentId) {
+        var rec = find("meetings", id);
+        if (!rec) return null;
+        var next = (rec.attachments || []).filter(function (a) { return a.id !== attachmentId; });
+        update("meetings", id, { attachments: next });
+        return next;
+      },
       // deleting a meeting never deletes its tasks: they stay in the Tasks tab
       remove: function (id) {
         PMS.store.commit(function (d) {
@@ -320,17 +417,24 @@
         return true;
       },
       tasksOf: function (meetingId) {
-        return list("tasks").filter(function (t) { return t.meetingId === meetingId; });
+        return visible("tasks").filter(function (t) { return t.meetingId === meetingId; });
       },
       upcoming: function () {
         var today = PMS.utils.todayISO();
-        return list("meetings").filter(function (m) { return m.date && m.date >= today; })
+        return visible("meetings").filter(function (m) { return m.date && m.date >= today; })
           .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
       },
       past: function () {
         var today = PMS.utils.todayISO();
-        return list("meetings").filter(function (m) { return m.date && m.date < today; })
+        return visible("meetings").filter(function (m) { return m.date && m.date < today; })
           .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+      },
+      // The meetings a person attended (used by the person card/detail).
+      forPerson: function (personId) {
+        if (!personId) return [];
+        return visible("meetings").filter(function (m) {
+          return (m.attendees || []).indexOf(personId) !== -1;
+        });
       }
     },
 
@@ -400,12 +504,38 @@
 
   PMS.activity = {
     entries: function () {
-      return (PMS.store.data && PMS.store.data.activities) || [];
+      var all = (PMS.store.data && PMS.store.data.activities) || [];
+      // a member only sees history about records they may see
+      if (!PMS.auth || !PMS.auth.currentUser) return all;
+      var u = PMS.auth.currentUser();
+      if (!u || u.role !== "member") return all;
+      return all.filter(function (e) {
+        if (e.entity === "task") return canViewRecord("tasks", find("tasks", e.entityId)) || !e.entityId;
+        if (e.entity === "meeting") return canViewRecord("meetings", find("meetings", e.entityId)) || !e.entityId;
+        return e.entity !== "task" && e.entity !== "meeting";
+      });
     },
     clear: function () {
       PMS.store.commit(function (d) { d.activities = []; }, "clear-activities");
       return true;
     },
     limit: LOG_LIMIT
+  };
+
+  // The whole store, with tasks and meetings narrowed by the same visibility
+  // rule the repositories use. The dashboard, the pillar pages and the report
+  // engine take a "data" object rather than reading one collection at a time,
+  // so without this they would quietly total up work the reader may not see.
+  // Shallow copy on purpose: the callers only read, and the live arrays stay
+  // the single source of truth.
+  PMS.repos.scopedData = function () {
+    var data = PMS.store.data || {};
+    var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    if (!u || u.role !== "member") return data;
+    var out = Object.create(null);
+    Object.keys(data).forEach(function (k) { out[k] = data[k]; });
+    out.tasks = visible("tasks");
+    out.meetings = visible("meetings");
+    return out;
   };
 })(window.PMS);

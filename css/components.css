@@ -709,3 +709,64 @@ table.tbl {
   text-align: start;
 }
 #error-note.is-on { display: block; }
+
+/* ---------- brand logo (one file per theme) ----------
+   Both images are in the DOM; the theme decides which one is shown, so no
+   reload is needed when the user switches between light and dark. */
+[data-theme="dark"] .brand-logo-img img:nth-child(1),
+[data-theme="dark"] .auth-logo img:nth-child(1) { display: none !important; }
+[data-theme="dark"] .brand-logo-img img:nth-child(2),
+[data-theme="dark"] .auth-logo img:nth-child(2) { display: block !important; }
+
+/* ---------- Attachments (file links: Drive + plain links) ---------- */
+.attach-rows { display: flex; flex-direction: column; gap: 8px; }
+.attach-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+.attach-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.attach-row-side { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+.attach-row-side .select { min-width: 118px; }
+@media (max-width: 640px) {
+  .attach-row { flex-direction: column; }
+  .attach-row-main { grid-template-columns: 1fr; width: 100%; }
+  .attach-row-side { width: 100%; }
+  .attach-row-side .select { flex: 1 1 auto; }
+}
+.attach-list { gap: 6px; }
+.attach-row-view {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.attach-row-view:hover { background: var(--bg-subtle); }
+.attach-icon { font-size: 1.1rem; flex: 0 0 auto; }
+.attach-main { flex: 1 1 auto; min-width: 0; }
+.attach-name { font-weight: 600; color: var(--primary); text-decoration: none; }
+.attach-name:hover { text-decoration: underline; }
+.meeting-by, .meeting-attach-chip { font-size: .75rem; }
+
+/* a quiet note explaining a narrowed view (e.g. a member's own scope) */
+.scope-note {
+  margin-block: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid var(--info);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft);
+  color: var(--text-muted);
+  font-size: .84rem;
+}

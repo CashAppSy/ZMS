@@ -384,12 +384,42 @@
 
   function isAssignee(task) {
     if (!task) return false;
-    return (task.assignees || []).indexOf(currentPersonId()) !== -1;
+    var pid = currentPersonId();
+    if (!pid) return false;          // an account with no linked person owns nothing
+    return (task.assignees || []).indexOf(pid) !== -1;
   }
 
   // Is the signed-in user the manager of this project (via their linked person)?
   function managesProject(project) {
     return !!(project && project.managerId && currentPersonId() && project.managerId === currentPersonId());
+  }
+
+  // Which tasks is a member allowed to SEE? Admins and managers: all of them.
+  // A member: the ones assigned to them, plus the ones they created (their own
+  // work must not disappear from under them). This is the visibility rule;
+  // canEditTask below decides who may change them.
+  function canViewTask(task) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin" || u.role === "manager") return true;
+    if (!task) return false;
+    if (isAssignee(task)) return true;
+    if (task.createdBy && u.id && task.createdBy === u.id) return true;
+    if (task.createdByPersonId && currentPersonId() && task.createdByPersonId === currentPersonId()) return true;
+    return false;
+  }
+
+  // Which meetings is a member allowed to SEE? The ones they attended, plus
+  // the ones they created. Managers and admins see every meeting.
+  function canViewMeeting(meeting) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin" || u.role === "manager") return true;
+    if (!meeting) return false;
+    if ((meeting.attendees || []).indexOf(currentPersonId()) !== -1) return true;
+    if (meeting.createdBy && u.id && meeting.createdBy === u.id) return true;
+    if (meeting.createdByPersonId && currentPersonId() && meeting.createdByPersonId === currentPersonId()) return true;
+    return false;
   }
 
   // Full task CRUD (every field). Admins: every task. Managers: their own
@@ -679,6 +709,8 @@ PMS.auth = {
     currentPersonId: currentPersonId,
     managesProject: managesProject,
     canEditTask: canEditTask,
+    canViewTask: canViewTask,
+    canViewMeeting: canViewMeeting,
     canChangeStatus: canChangeStatus,
     canCreateTask: canCreateTask,
     canCreateMeeting: canCreateMeeting,

@@ -6,7 +6,7 @@
   PMS.i18nFiles = PMS.i18nFiles || {};
 
   PMS.i18nFiles.ar = {
-    app: { name: "مدير المشاريع" },
+    app: { name: "برنامج رقمي" },
     nav: {
       dashboard: "لوحة المعلومات",
       projects: "الركائز",
@@ -122,18 +122,33 @@
       date: "التاريخ", time: "الوقت", location: "المكان",
       attendees: "الحضور", agenda: "جدول الأعمال", notes: "الملاحظات",
       addAgenda: "إضافة بند", agendaPlaceholder: "اكتب البند ثم اضغط Enter",
-      addAttendee: "إضافة مشارك", noAttendees: "لا يوجد حضور بعد",
+      addAttendee: "إضافة حاضر", noAttendees: "لا يوجد حضور بعد",
       pillars: "الركائز", addPillar: "إضافة ركيزة", noPillars: "لا توجد ركائز مرتبطة",
       tasks: "المهام", newTask: "مهمة جديدة", linkExistingTask: "ربط مهمة موجودة",
-      noTasks: "لا توجد مهام بعد", tasksCount: "{n} مهام", attendeesCount: "{n} حاضر",
-      empty: "لا توجد اجتماعات بعد — أنشئ أول اجتماع ثم أضف المهام الناتجة عنه.",
+      noTasks: "لا توجد مهام بعد", tasksCount: "{n} مهمة", attendeesCount: "{n} حاضر",
+      empty: "لا توجد اجتماعات بعد - أنشئ أول اجتماع ثم أضف المهام الناتجة عنه.",
       today: "اليوم", upcoming: "قادمة", past: "سابقة", all: "الكل",
-      detail: "تفاصيل الاجتماع", deleteIfEmpty: "لم يتبقَّ أي مهمة في هذا الاجتماع. هل تريد حذفه؟",
+      detail: "تفاصيل الاجتماع", deleteIfEmpty: "لم يتبقَّ في هذا الاجتماع أي مهمة. هل تحذفه؟",
       taskCreated: "تمت إضافة المهمة إلى الاجتماع وإلى صفحة المهام",
       taskLinked: "تم ربط المهمة بالاجتماع",
-      onlyManagers: "إنشاء الاجتماعات متاح للأدمن والمديرين فقط.",
-      createdBy: "أنشأه"
+      onlyManagers: "الأدمن والمديرون فقط هم من يمكنهم إنشاء الاجتماعات.",
+      createdBy: "أنشئه",
+      byWho: "بواسطة {name}",
+      attachments: "المرفقات",
+      attachmentsHint: "الصق رابط ملف من Google Drive (أو أي رابط) مع اسم الملف ليظهر بجانبه.",
+      addAttachment: "إضافة مرفق",
+      attachmentAdded: "تمت إضافة المرفق",
+      attachmentName: "اسم الملف",
+      attachmentUrl: "رابط الملف",
+      attachmentKind: "النوع",
+      attachmentsCount: "{n} ملفات",
+      noAttachments: "لا توجد مرفقات بعد",
+      kindDrive: "ملف درايف",
+      kindLink: "رابط",
+      addedBy: "أضافه {name}",
+      memberScope: "أنت ترى الاجتماعات التي حضرتها (والتي أنشأتها)."
     },
+
     kanban: { title: "كانبان", addCard: "إضافة", total: "الإجمالي", collapseCol: "طي" },
     gantt: {
       title: "غانت", zoom: "تكبير", days: "أيام", week: "أسبوع", month: "شهر",
@@ -148,6 +163,14 @@
       email: "البريد", phone: "الهاتف", active: "نشط", inactive: "غير نشط",
       notes: "ملاحظات", addPerson: "إضافة شخص", editPerson: "تعديل شخص",
       addDepartment: "إضافة قسم", editDepartment: "تعديل قسم",
+      allSections: "كل الأقسام", noDepartment: "بدون قسم",
+      sectionsSummary: "{depts} أقسام · {people} أشخاص",
+      sectionLoad: "{open} مفتوحة · {done} منجزة · {hours} س تقديرية",
+      noContact: "لا يوجد بريد أو هاتف مسجل",
+      account: "الحساب",
+      meetingsCount: "{n} اجتماع حضره",
+      meetingsTitle: "الاجتماعات التي حضرها ({n})",
+      noMeetings: "لم يحضر أي اجتماع بعد",
       tasksCount: "{n} مهام", workload: "عبء العمل", loadInHours: "{n} س تقديرية",
       noTasks: "لا توجد مهام مسندة", deletePerson: "أرشفة الشخص",
       openTasks: "مهام مفتوحة", doneTasks: "مهام منجزة", lateTasks: "مهام متأخرة",
@@ -239,7 +262,8 @@
       invalidDate: "تاريخ غير صالح",
       endBeforeStart: "تاريخ النهاية قبل تاريخ البداية",
       invalidEmail: "بريد إلكتروني غير صالح",
-      titleRequired: "يرجى إدخال عنوان (أو اسم) — لا يمكن حفظ عنوان فارغ."
+      titleRequired: "يرجى إدخال عنوان (أو اسم) — لا يمكن حفظ عنوان فارغ.",
+      urlRequired: "يرجى لصق رابط الملف."
     },
     statuses: {
       task: {

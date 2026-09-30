@@ -38,6 +38,15 @@
   width: 40px;
   height: 40px;
   font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.auth-logo img {
+  height: 44px;
+  width: auto;
+  max-width: 190px;
+  object-fit: contain;
 }
 
 .auth-card {

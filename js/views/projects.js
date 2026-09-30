@@ -7,7 +7,8 @@
 
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
-  var data = function () { return PMS.store.data; };
+  // scoped: progress percentages must not count work the reader may not see
+  var data = function () { return PMS.repos.scopedData(); };
 
   function buildTree(progressMap) {
     var projs = data().projects || [];

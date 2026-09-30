@@ -1,4 +1,4 @@
-# Project Manager (PMS)
+# Digital Program (PMS)
 
 A complete, offline project-management system built with **pure vanilla HTML/CSS/JavaScript** — no frameworks, no build tools, no npm, no CDN. Open `index.html` by double-clicking it and it runs directly from the filesystem (`file://` protocol).
 

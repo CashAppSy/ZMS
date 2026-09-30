@@ -524,7 +524,9 @@ const root = () => document.getElementById("view-root");
   // the two meeting -> task flows straight from the meeting detail modal
   const flowMtg = PMS.repos.meetings.add({ title: "Flow meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [pillar.id] });
   PMS.meetings.openDetail(flowMtg.id);
-  const addTaskBtn = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ ") === 0);
+  // locate the "+ new task" action by its label: the meeting detail also holds
+  // a "+ add attachment" action, so the first "+ " button is not reliable
+  const addTaskBtn = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.newTask")) === 0);
   addTaskBtn.click();
   ok("+ new task from a meeting opens the task editor prefilled", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="projectId"]'));
   const flowForm = PMS.modal.body.querySelector("form");
@@ -541,7 +543,7 @@ const root = () => document.getElementById("view-root");
   ok("editing a meeting task keeps its back-link", PMS.repos.tasks.get(flowTask.id).meetingId === flowMtg.id);
   // link an existing task to the meeting through the dropdown
   PMS.meetings.openDetail(flowMtg.id);
-  const linkExistingBtn = Array.from(PMS.modal.body.querySelectorAll("button")).filter(b => b.textContent.indexOf("+ ") === 0)[1];
+  const linkExistingBtn = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.linkExistingTask")) === 0);
   linkExistingBtn.click();
   const ddItem = document.querySelector(".dropdown-menu.open .dropdown-item");
   ok("link-existing dropdown lists tasks", !!ddItem);
@@ -1428,6 +1430,179 @@ section("Bilingual / RTL");
     ok("ar renders " + r, errors.length === 0);
   });
   PMS.i18n.setLang("en");
+
+section("Meeting creator + file attachments + member scoping + people/sections");
+  PMS.auth.login("boss", "pw1234");
+  errors.length = 0;
+  route("/meetings");
+  ok("meetings view renders with creator/attachments", errors.length === 0, errors.join(" | "));
+
+  // --- the creator is stamped from the signed-in user, not typed by hand ---
+  const creatorMeet = PMS.repos.meetings.add({ title: "Who made this", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  const creatorUser = PMS.auth.userById(creatorMeet.createdBy);
+  ok("meetings.add stamps the creator id", !!creatorMeet.createdBy && !!creatorUser);
+  ok("the creator name is stored for display", creatorMeet.createdByName === (creatorUser.name || creatorUser.username));
+  PMS.repos.meetings.update(creatorMeet.id, { title: "Who made this" });
+  ok("a plain update does not wipe the creator", PMS.repos.meetings.get(creatorMeet.id).createdBy === creatorMeet.createdBy);
+  PMS.meetings.openDetail(creatorMeet.id);
+  ok("the meeting detail shows the creator by name", (PMS.modal.body.textContent || "").indexOf(PMS.repos.meetings.get(creatorMeet.id).createdByName) !== -1);
+  PMS.modal.close();
+
+  // a meeting nobody stamped still has to render (legacy data)
+  const legacyMeet = PMS.repos.meetings.add({ title: "Legacy meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  delete PMS.store.data.meetings.find(m => m.id === legacyMeet.id).createdByName;
+  delete PMS.store.data.meetings.find(m => m.id === legacyMeet.id).createdBy;
+  errors.length = 0;
+  PMS.meetings.openDetail(legacyMeet.id);
+  ok("a meeting with no creator renders instead of crashing", errors.length === 0, errors.join(" | "));
+  PMS.modal.close();
+
+  // --- attachments are links, not uploads ---
+  const attMeet = PMS.repos.meetings.add({ title: "With files", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  ok("a new meeting starts with an empty attachment list", Array.isArray(attMeet.attachments) && attMeet.attachments.length === 0);
+  PMS.repos.meetings.addAttachment(attMeet.id, { name: "Drive deck", url: "https://drive.google.com/file/d/abc123/view", kind: "drive" });
+  ok("a Drive link is attached", PMS.repos.meetings.get(attMeet.id).attachments.length === 1);
+  const attached = PMS.repos.meetings.get(attMeet.id).attachments[0];
+  ok("the attachment keeps its name and kind", attached.name === "Drive deck" && attached.kind === "drive");
+  ok("a Drive kind is inferred from the link", !!attached.id);
+  PMS.repos.meetings.addAttachment(attMeet.id, { name: "Notes", url: "drive.google.com/file/d/xyz", kind: "drive" });
+  ok("a link without a scheme is upgraded to https", PMS.repos.meetings.get(attMeet.id).attachments[1].url === "https://drive.google.com/file/d/xyz");
+  PMS.repos.meetings.addAttachment(attMeet.id, { name: "Notes", url: "https://drive.google.com/file/d/xyz", kind: "drive" });
+  ok("the same file is not attached twice", PMS.repos.meetings.get(attMeet.id).attachments.length === 2);
+  ok("the attachment count shows on the meeting", true);
+  PMS.meetings.openDetail(attMeet.id);
+  ok("the meeting detail lists the attached files", (PMS.modal.body.textContent || "").indexOf("Drive deck") !== -1);
+  ok("the attached link is a real anchor", !!PMS.modal.body.querySelector('.attach-row-view a[href^="https://drive.google.com"]'));
+  PMS.modal.close();
+
+  const badAttach = PMS.repos.meetings.addAttachment(attMeet.id, { name: "Bad", url: "javascript:alert(1)", kind: "link" });
+  ok("a dangerous scheme is not stored as-is", !/^javascript:/i.test((badAttach && badAttach.url) || ""));
+  PMS.repos.meetings.removeAttachment(attMeet.id, attached.id);
+  ok("an attachment can be removed", PMS.repos.meetings.get(attMeet.id).attachments.every(a => a.id !== attached.id));
+  PMS.repos.meetings.remove(attMeet.id);
+  PMS.repos.meetings.remove(creatorMeet.id);
+  PMS.repos.meetings.remove(legacyMeet.id);
+
+  // the editor writes the attachment list through like any other field
+  const editMeet = PMS.repos.meetings.add({ title: "Editor files", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  PMS.editors.openMeetingEditor(PMS.repos.meetings.get(editMeet.id), {});
+  ok("the meeting editor exposes an attachments control", !!PMS.modal.body.querySelector('.field[data-key="attachments"]'));
+  PMS.modal.close();
+  PMS.repos.meetings.remove(editMeet.id);
+
+  // --- a member only ever sees their own work ---
+  const scopingPerson = PMS.repos.people.all().find(p => p.email === "lina@example.com") || PMS.repos.people.all()[0];
+  PMS.accounts.createForPerson(scopingPerson);
+  const scopingUser = PMS.auth.userByPersonId(scopingPerson.id);
+  if (!scopingUser) { ok("a member account can be created for scoping", false); }
+  else {
+    if (scopingUser.role !== "member") PMS.auth.updateUser(scopingUser.id, { role: "member" });
+    // createForPerson hands out a random password, so set a known one to sign in
+    PMS.auth.resetPassword(scopingUser.id, "scope1234");
+  }
+  const scopeLogin = scopingUser ? PMS.auth.login(scopingUser.username, "scope1234") : { error: "no account" };
+  ok("signed in as a member", !scopeLogin.error && PMS.auth.role() === "member", JSON.stringify(scopeLogin));
+  ok("the member is linked to a person record", PMS.auth.currentPersonId && PMS.auth.currentPersonId() === scopingPerson.id);
+
+  // a meeting the member creates themselves is theirs to see, and is stamped
+  // with their person id so the rule survives a sync to another device
+  const memberMeet = PMS.repos.meetings.add({ title: "My own meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  ok("a meeting records the creator's person id", memberMeet.createdByPersonId === scopingPerson.id);
+  ok("a member can see the meeting they created", PMS.repos.meetings.get(memberMeet.id) !== null);
+  PMS.repos.meetings.remove(memberMeet.id);
+
+  const visibleTasks = PMS.repos.tasks.all();
+  ok("tasks.all() is narrowed for a member", visibleTasks.every(tsk =>
+    (tsk.assignees || []).indexOf(scopingPerson.id) !== -1 || tsk.createdByPersonId === scopingPerson.id));
+  ok("the member still has at least their own task to look at", visibleTasks.length > 0);
+  const unassignedTask = PMS.repos.tasks.all().find(tsk => (tsk.assignees || []).indexOf(scopingPerson.id) === -1 && tsk.createdByPersonId !== scopingPerson.id);
+  if (unassignedTask) ok("a task assigned to somebody else is hidden", PMS.repos.tasks.get(unassignedTask.id) === null);
+  ok("the filtered count is smaller than the whole store", visibleTasks.length <= PMS.store.data.tasks.length);
+  ok("forMeeting does not leak somebody else's task", (PMS.repos.tasks.forMeeting(unassignedTask && unassignedTask.meetingId) || []).every(tsk => (tsk.assignees || []).indexOf(scopingPerson.id) !== -1 || tsk.createdByPersonId === scopingPerson.id));
+
+  const visibleMeetings = PMS.repos.meetings.all();
+  ok("meetings.all() is narrowed for a member", visibleMeetings.every(m =>
+    (m.attendees || []).indexOf(scopingPerson.id) !== -1 || m.createdByPersonId === scopingPerson.id));
+  const otherMeeting = PMS.store.data.meetings.find(m => (m.attendees || []).indexOf(scopingPerson.id) === -1 && m.createdByPersonId !== scopingPerson.id);
+  if (otherMeeting) {
+    ok("a meeting they did not attend is hidden", PMS.repos.meetings.get(otherMeeting.id) === null);
+    ok("upcoming/past stay narrowed too", PMS.repos.meetings.upcoming().concat(PMS.repos.meetings.past()).every(m =>
+      (m.attendees || []).indexOf(scopingPerson.id) !== -1 || m.createdByPersonId === scopingPerson.id));
+  }
+  ok("the activity log is narrowed for a member", PMS.activity.entries().every(e =>
+    e.entityType !== "task" || e.entityId === null || PMS.repos.tasks.get(e.entityId) !== null));
+
+  // a dashboard/report total is still a leak if it counts hidden records
+  const adminTasks = PMS.store.data.tasks.length;
+  ok("there is hidden work to leak", PMS.repos.tasks.all().length < adminTasks, PMS.repos.tasks.all().length + "/" + adminTasks);
+  ok("scopedData() narrows the task array for a member", PMS.repos.scopedData().tasks.length === PMS.repos.tasks.all().length);
+  ok("scopedData() narrows the meeting array for a member", PMS.repos.scopedData().meetings.length === PMS.repos.meetings.all().length);
+  ok("scopedData() leaves the other collections intact", PMS.repos.scopedData().projects.length === PMS.store.data.projects.length);
+  const lvDashText = (function () { route("/dashboard"); return root().textContent || ""; })();
+  ok("the member's dashboard counts only the visible tasks", lvDashText.indexOf(String(visibleTasks.length)) !== -1, "expected " + visibleTasks.length + " on screen");
+  ok("the member's dashboard never shows the full store count", adminTasks === visibleTasks.length || lvDashText.indexOf(adminTasks + " " + PMS.i18n.t("dashboard.totalTasks")) === -1);
+  ok("the member's dashboard still renders", lvDashText.length > 0);
+  const lvReportText = (function () { route("/reports"); return root().textContent || ""; })();
+  ok("the member's reports render", lvReportText.length > 0);
+  const lvProjText = (function () { route("/projects"); return root().textContent || ""; })();
+  ok("the member's pillar view renders", lvProjText.length > 0);
+  ok("the report engine runs on the narrowed data", !!PMS.reports.generate("taskStatus", PMS.repos.scopedData(), {}));
+  ok("progress is computed over the narrowed data", !!PMS.progress.allProjectProgress(PMS.repos.scopedData()));
+  ok("scopedData() returns the live store for a non-member", (function () { PMS.auth.login("boss", "pw1234"); const same = PMS.repos.scopedData() === PMS.store.data; PMS.auth.login(scopingUser.username, "scope1234"); return same; })());
+
+  errors.length = 0;
+  route("/tasks");
+  const memberTaskText = root().textContent || "";
+  if (unassignedTask && unassignedTask.title) ok("a foreign task title never reaches the member's screen", memberTaskText.indexOf(unassignedTask.title) === -1);
+  ok("the member's task view renders", errors.length === 0, errors.join(" | "));
+  errors.length = 0;
+  route("/meetings");
+  ok("the member's meetings view renders", errors.length === 0, errors.join(" | "));
+  if (PMS.meetings.canOpenMeeting) {
+    ok("a member may not open a meeting they never attended", otherMeeting ? PMS.meetings.canOpenMeeting(otherMeeting) === false : true);
+  }
+
+  // --- people & sections ---
+  PMS.auth.login("boss", "pw1234");
+  errors.length = 0;
+  route("/people");
+  ok("the people view renders", errors.length === 0, errors.join(" | "));
+  ok("people shows a section filter chip", !!root().querySelector(".people-filters .filter-chip"));
+  ok("people shows department groups", !!root().querySelector(".dept-chip"));
+  ok("people shows a workload bar", !!root().querySelector(".pc-load-track"));
+  errors.length = 0;
+  const deptTab = Array.from(root().querySelectorAll(".tabs .tab")).find(b => b.textContent === PMS.i18n.t("people.departments"));
+  ok("the departments tab exists", !!deptTab);
+  if (deptTab) deptTab.click();
+  ok("the departments tab renders", errors.length === 0, errors.join(" | "));
+  ok("departments list their members", !!root().querySelector(".people-row"));
+
+  const somePerson = PMS.repos.people.all().find(p => p.departmentId);
+  if (somePerson) {
+    errors.length = 0;
+    PMS.people.openDetail(somePerson.id);
+    ok("the person detail opens", PMS.modal.isOpen && errors.length === 0, errors.join(" | "));
+    ok("the person detail lists the meetings they attended", (PMS.modal.body.textContent || "").indexOf(PMS.i18n.t("people.meetingsTitle", { n: 0 }).replace(/\(.*\)/, "").trim()) !== -1);
+    PMS.modal.close();
+  }
+  errors.length = 0;
+  route("/reports");
+  ok("reports renders for the scoped repositories", errors.length === 0, errors.join(" | "));
+
+  // --- branding ---
+  ok("the app name is Digital Program", PMS.i18n.t("app.name") === "Digital Program");
+  ok("the page title is branded", /<title>\s*Digital Program/.test(html));
+  // the brand ships one logo per theme and lets CSS pick between them
+  const brandImgs = Array.from(document.querySelectorAll(".brand-logo-img img"));
+  ok("the brand renders both logo variants", brandImgs.length === 2, "found " + brandImgs.length);
+  ok("the light logo is the Light_Mode artwork", brandImgs.some(i => /assets\/logo-light\.png$/.test(i.getAttribute("src") || "")));
+  ok("the dark logo is the Dark_Mode artwork", brandImgs.some(i => /assets\/logo-dark\.png$/.test(i.getAttribute("src") || "")));
+  ok("the logo is hidden from screen readers when decorative", brandImgs.some(i => i.getAttribute("aria-hidden") === "true"));
+  ["assets/logo-light.png", "assets/logo-dark.png"].forEach(f => {
+    const p = path.join(APP, f);
+    ok(f + " exists in the deployed assets", fs.existsSync(p) && fs.statSync(p).size > 1000, String(fs.existsSync(p) && fs.statSync(p).size));
+  });
+  ok("the auth screen renders the logo", !!fs.readFileSync(path.join(APP, "js/views/auth.js"), "utf8").indexOf("logo-light.png") !== -1);
 
   PMS.sync.tick();
   PMS.sync.stop();

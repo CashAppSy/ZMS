@@ -20,7 +20,9 @@
     header.appendChild(actions);
     container.appendChild(header);
 
-    if (!PMS.store.data.tasks.length) {
+    // the scoped count, not the raw store: a member with no visible task must
+    // not be told the database is empty (and must never be offered the seeder)
+    if (!PMS.repos.tasks.all().length) {
       var hint = h("div.card", { style: { marginBlockEnd: "16px" } });
       var hintBody = [h("p.u-muted", { text: t("reports.empty") })];
       if (PMS.auth ? PMS.auth.can("data.manage") : true) hintBody.push(h("button.btn.btn-sm", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
@@ -34,7 +36,8 @@
   }
 
   function reportCard(def) {
-    var data = PMS.store.data;
+    // scoped: report totals must not count records the reader may not see
+    var data = PMS.repos.scopedData();
     var result = PMS.reports.generate(def.id, data, {});
     if (!result) return h("div");
 

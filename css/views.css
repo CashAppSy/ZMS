@@ -100,6 +100,65 @@
 .person-card .pc-top { display: flex; gap: 12px; align-items: center; }
 .person-card .pc-name { font-weight: 700; }
 
+/* ---------- People: sections, contact lines, workload ---------- */
+.people-toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-block-end: var(--space-3);
+}
+.people-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-chip { cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); }
+.filter-chip.is-active {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+.person-card .dept-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: .75rem;
+}
+.person-card .pc-contact,
+.person-contact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: .8rem;
+}
+a.contact-line {
+  color: var(--text-muted);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.contact-line:hover { color: var(--primary); text-decoration: underline; }
+.pc-load { margin-block-start: auto; }
+.pc-load-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.pc-load-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--success);
+}
+.person-detail-head { display: flex; gap: var(--space-3); align-items: center; }
+.people-rows { display: flex; flex-direction: column; gap: 2px; }
+.people-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 6px 0;
+  border-block-end: 1px solid var(--border);
+}
+.people-row:last-child { border-block-end: none; }
+.people-row:hover { background: var(--bg-subtle); }
+
 /* ---------- Reports ---------- */
 .report-card { margin-block-end: var(--space-5); }
 .report-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }

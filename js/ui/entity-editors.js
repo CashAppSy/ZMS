@@ -187,6 +187,7 @@
       { key: "attendees", label: t("meetings.attendees"), type: "multiselect", options: people.map(function (p) { return { label: p.name, value: p.id }; }), allowCreatePerson: true, full: true },
       { key: "agenda", label: t("meetings.agenda"), type: "tags", placeholder: t("meetings.agendaPlaceholder"), full: true },
       { key: "projectIds", label: t("meetings.pillars"), type: "multiselect", options: projects.map(function (p) { return { label: p.name, value: p.id }; }), full: true },
+      { key: "attachments", label: t("meetings.attachments"), type: "attachments", full: true, hint: t("meetings.attachmentsHint") },
       { key: "notes", label: t("meetings.notes"), type: "textarea", full: true }
     ];
   }
@@ -576,6 +577,7 @@
             var payload = {
               title: v.title, date: v.date || null, time: v.time || null, location: v.location || null,
               attendees: v.attendees || [], agenda: v.agenda || [], projectIds: v.projectIds || [],
+              attachments: v.attachments || [],
               notes: v.notes || ""
             };
             var saved;

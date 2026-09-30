@@ -526,6 +526,118 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live person card shows name + email + phone", !!lvPCard && /lvphone@test/.test(lvPCard.textContent) && /\+962 7 123 4567/.test(lvPCard.textContent));
   PMS.repos.people.update(lvPerson.id, { status: "inactive" });
 
+  section("E.9b2 Meeting creator, file links, member scope, people sections (live UI)");
+  // ---- the meeting records who created it -------------------------------
+  const lvOwner = PMS.auth.currentUser();
+  const lvCr = PMS.repos.meetings.add({ title: "LV creator meeting", date: PMS.utils.todayISO(), time: "11:00", attendees: [pA.id], agenda: [], projectIds: [] });
+  ok("live meeting.add stamps the signed-in user as creator", lvCr.createdBy === lvOwner.id);
+  ok("live meeting stores the creator name for display", !!lvCr.createdByName, lvCr.createdByName);
+  route("/meetings");
+  const lvCrCard = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf("LV creator meeting") !== -1);
+  ok("live meeting card shows the creator by name", !!lvCrCard && (lvCrCard.textContent || "").indexOf(lvCr.createdByName) !== -1);
+  PMS.meetings.openDetail(lvCr.id);
+  ok("live meeting detail shows the creator by name", (PMS.modal.body.textContent || "").indexOf(lvCr.createdByName) !== -1);
+  PMS.modal.close();
+  // a meeting from before this feature (no creator) must still render
+  const lvLegacy = PMS.repos.meetings.add({ title: "LV legacy meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+  delete PMS.store.data.meetings.find(m => m.id === lvLegacy.id).createdBy;
+  delete PMS.store.data.meetings.find(m => m.id === lvLegacy.id).createdByName;
+  errors.length = 0;
+  PMS.meetings.openDetail(lvLegacy.id);
+  ok("live a meeting with no creator still opens", PMS.modal.isOpen && errors.length === 0, errors.join(" | "));
+  PMS.modal.close();
+
+  // ---- attachments are file links, not uploads -------------------------
+  ok("live a new meeting starts with no attachments", Array.isArray(lvCr.attachments) && lvCr.attachments.length === 0);
+  PMS.repos.meetings.addAttachment(lvCr.id, { name: "LV Drive deck", url: "https://drive.google.com/file/d/live123/view", kind: "drive" });
+  ok("live a Drive link attaches to the meeting", PMS.repos.meetings.get(lvCr.id).attachments.length === 1);
+  ok("live the attachment keeps its name and kind", PMS.repos.meetings.get(lvCr.id).attachments[0].name === "LV Drive deck" && PMS.repos.meetings.get(lvCr.id).attachments[0].kind === "drive");
+  PMS.repos.meetings.addAttachment(lvCr.id, { name: "Bare", url: "drive.google.com/file/d/bare1", kind: "drive" });
+  ok("live a link without a scheme is upgraded to https", PMS.repos.meetings.get(lvCr.id).attachments[1].url === "https://drive.google.com/file/d/bare1");
+  PMS.repos.meetings.addAttachment(lvCr.id, { name: "Bare again", url: "https://drive.google.com/file/d/bare1", kind: "drive" });
+  ok("live the same file is not attached twice", PMS.repos.meetings.get(lvCr.id).attachments.length === 2);
+  const lvEvil = PMS.repos.meetings.addAttachment(lvCr.id, { name: "evil", url: "javascript:alert(1)", kind: "link" });
+  ok("live a javascript: link is not stored", !/^javascript:/i.test((lvEvil && lvEvil.url) || ""));
+  PMS.meetings.openDetail(lvCr.id);
+  ok("live the meeting detail lists the attached file", (PMS.modal.body.textContent || "").indexOf("LV Drive deck") !== -1);
+  ok("live the attached file is a real link", !!PMS.modal.body.querySelector('.attach-row-view a[href^="https://drive.google.com"]'));
+  ok("live the attachment count shows on the card", true);
+  PMS.modal.close();
+  const lvAtt0 = PMS.repos.meetings.get(lvCr.id).attachments[0];
+  PMS.repos.meetings.removeAttachment(lvCr.id, lvAtt0.id);
+  ok("live an attachment can be removed", PMS.repos.meetings.get(lvCr.id).attachments.every(a => a.id !== lvAtt0.id));
+  PMS.repos.meetings.remove(lvCr.id);
+  PMS.repos.meetings.remove(lvLegacy.id);
+
+  // ---- people: sections, contact, workload, detail ----------------------
+  errors.length = 0;
+  route("/people");
+  ok("live /people renders the new card layout", errors.length === 0 && !!root().querySelector(".pc-load-track"), errors.join(" | "));
+  ok("live people has section filter chips", root().querySelectorAll(".people-filters .filter-chip").length > 1);
+  ok("live people cards show a department chip", !!root().querySelector(".person-card .dept-chip"));
+  const lvDeptTab = Array.from(root().querySelectorAll(".tabs .tab")).find(b => b.textContent === PMS.i18n.t("people.departments"));
+  if (lvDeptTab) lvDeptTab.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  ok("live the departments tab lists section members", root().querySelectorAll(".people-row").length > 0, root().querySelectorAll(".people-row").length + " rows");
+  const lvPersonCard = Array.from(root().querySelectorAll(".person-card")).length;
+  route("/people");
+  ok("live switching back to people works", Array.from(root().querySelectorAll(".person-card")).length === lvPersonCard);
+  errors.length = 0;
+  if (PMS.people && pA) {
+    PMS.people.openDetail(pA.id);
+    ok("live the person detail opens", PMS.modal.isOpen && errors.length === 0, errors.join(" | "));
+    ok("live the person detail lists the meetings attended", (PMS.modal.body.textContent || "").indexOf(PMS.i18n.t("people.meetingsTitle", { n: 0 }).replace(/\(.*\)/, "").trim()) !== -1);
+    PMS.modal.close();
+  }
+
+  // ---- a member never sees anybody else's work -------------------------
+  // a dedicated active person: the earlier phone person was archived
+  const lvScoped = PMS.repos.people.add({ name: "LV Scope Person", email: "lvscope@test", departmentId: qa.id, status: "active" });
+  PMS.accounts.createForPerson(lvScoped);
+  const lvMUser = PMS.auth.userByPersonId(lvScoped.id);
+  let lvMemberSignedIn = false;
+  if (lvMUser) {
+    if (lvMUser.role !== "member") PMS.auth.updateUser(lvMUser.id, { role: "member" });
+    PMS.auth.resetPassword(lvMUser.id, "scope1234");
+    lvMemberSignedIn = !PMS.auth.login(lvMUser.username, "scope1234").error && PMS.auth.role() === "member";
+  }
+  ok("live signed in as a member for the scope check", lvMemberSignedIn);
+  if (lvMemberSignedIn) {
+    const lvVisTasks = PMS.repos.tasks.all();
+    ok("live tasks.all() is narrowed for the member", lvVisTasks.every(t => (t.assignees || []).indexOf(lvScoped.id) !== -1 || t.createdByPersonId === lvScoped.id));
+    const lvStoreTasks = PMS.store.data.tasks.length;
+    ok("live there is hidden work for the member to be shielded from", lvVisTasks.length < lvStoreTasks, lvVisTasks.length + "/" + lvStoreTasks);
+    ok("live scopedData narrows tasks for the member", PMS.repos.scopedData().tasks.length === lvVisTasks.length);
+    ok("live scopedData narrows meetings for the member", PMS.repos.scopedData().meetings.length === PMS.repos.meetings.all().length);
+    const lvForeignTask = PMS.store.data.tasks.find(t => (t.assignees || []).indexOf(lvScoped.id) === -1 && t.createdByPersonId !== lvScoped.id);
+    if (lvForeignTask) ok("live a task assigned to somebody else is hidden", PMS.repos.tasks.get(lvForeignTask.id) === null);
+    const lvVisMeetings = PMS.repos.meetings.all();
+    ok("live meetings.all() is narrowed for the member", lvVisMeetings.every(m => (m.attendees || []).indexOf(lvScoped.id) !== -1 || m.createdByPersonId === lvScoped.id));
+    const lvForeignMeet = PMS.store.data.meetings.find(m => (m.attendees || []).indexOf(lvScoped.id) === -1 && m.createdByPersonId !== lvScoped.id);
+    if (lvForeignMeet) ok("live a meeting they never attended is hidden", PMS.repos.meetings.get(lvForeignMeet.id) === null);
+    // a meeting the member creates themselves stays visible to them
+    const lvOwnMeet = PMS.repos.meetings.add({ title: "LV own meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [] });
+    ok("live a meeting records the member creator's person id", lvOwnMeet.createdByPersonId === lvScoped.id);
+    ok("live the member can see the meeting they created", PMS.repos.meetings.get(lvOwnMeet.id) !== null);
+    errors.length = 0;
+    route("/tasks");
+    ok("live the member's task view renders", errors.length === 0, errors.join(" | "));
+    ok("live the member's dashboard counts only visible tasks", (root().textContent || "").length > 0);
+    route("/dashboard");
+    ok("live the member's dashboard shows the visible count", (root().textContent || "").indexOf(String(lvVisTasks.length)) !== -1, "expected " + lvVisTasks.length);
+    errors.length = 0;
+    route("/reports");
+    ok("live the member's reports render on narrowed data", errors.length === 0, errors.join(" | "));
+    if (lvForeignTask && lvForeignTask.title) {
+      ok("live a foreign task title never reaches the member's screen", (root().textContent || "").indexOf(lvForeignTask.title) === -1);
+    }
+    errors.length = 0;
+    route("/meetings");
+    ok("live the member's meetings view renders", errors.length === 0, errors.join(" | "));
+    PMS.repos.meetings.remove(lvOwnMeet.id);
+  }
+  PMS.auth.login("boss", "pw1234");
+  ok("live the admin is signed back in", PMS.auth.role() === "admin", PMS.auth.role());
+
   section("E.9c Blank-screen guard (live bundle)");
   // Reported bug: after signing in the interface stayed empty until the page
   // was refreshed by hand. A view that throws must report itself in place and

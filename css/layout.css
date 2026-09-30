@@ -41,6 +41,17 @@
   justify-content: center;
   font-size: 0.95rem;
 }
+.sidebar-brand .brand-logo-img {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.sidebar-brand .brand-logo-img img {
+  height: 34px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+}
 
 .sidebar-nav {
   padding: var(--space-3) var(--space-2);

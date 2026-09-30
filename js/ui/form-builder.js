@@ -229,6 +229,68 @@
         };
         break;
 
+      case "attachments":
+        // A repeatable list of file LINKS (Google Drive, docs, any web link).
+        // Only the url is required; the name is guessed from it when empty.
+        self.el = h("div.attach-input");
+        var rows = h("div.attach-rows");
+        self.el.appendChild(rows);
+        var addBtn = h("button.btn.btn-sm", {
+          text: "+ " + t("meetings.addAttachment"),
+          type: "button",
+          on: { click: function () { addRow(); } }
+        });
+        self.el.appendChild(h("div.u-flex", { style: { marginBlockStart: "6px" } }, [addBtn]));
+
+        function addRow(entry) {
+          entry = entry || { name: "", url: "", kind: "drive" };
+          var row = h("div.attach-row");
+          var nameIn = h("input.input", {
+            type: "text",
+            value: entry.name || "",
+            attrs: { placeholder: t("meetings.attachmentName") }
+          });
+          var urlIn = h("input.input", {
+            type: "url",
+            value: entry.url || "",
+            attrs: { placeholder: t("meetings.attachmentUrl"), spellcheck: "false" }
+          });
+          var kindSel = h("select.select");
+          [["drive", t("meetings.kindDrive")], ["link", t("meetings.kindLink")]].forEach(function (o) {
+            kindSel.appendChild(h("option", { value: o[0], text: o[1] }));
+          });
+          kindSel.value = entry.kind || "drive";
+          var del = h("button.btn.btn-sm.btn-soft-danger", {
+            text: "✕",
+            type: "button",
+            attrs: { title: t("common.delete") },
+            on: { click: function () { row.remove(); } }
+          });
+          row.appendChild(h("div.attach-row-main", [nameIn, urlIn]));
+          row.appendChild(h("div.attach-row-side", [kindSel, del]));
+          rows.appendChild(row);
+          urlIn.addEventListener("input", function () {
+            // a pasted drive link tells you what it is
+            if (/drive\.google\.com|docs\.google\.com/i.test(urlIn.value)) kindSel.value = "drive";
+          });
+        }
+        (Array.isArray(value) ? value : []).forEach(addRow);
+        self.getValue = function () {
+          var out = [];
+          rows.querySelectorAll(".attach-row").forEach(function (row) {
+            var url = row.querySelector('input[type="url"]').value.trim();
+            if (!url) return;                       // a row with no link is not an attachment
+            if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+            out.push({
+              name: row.querySelector('input[type="text"]').value.trim(),
+              url: url,
+              kind: row.querySelector("select").value
+            });
+          });
+          return out;
+        };
+        break;
+
       case "link":
         self.el = h("input.input", Object.assign({ type: "url" }, props));
         self.getValue = function () { return self.el.value.trim() || null; };

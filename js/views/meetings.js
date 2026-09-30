@@ -14,6 +14,26 @@
   // visible until the user narrows it down.
   var state = { tab: "all", query: "" };
 
+  // Who created a meeting. The name is stored with the record, so it survives
+  // a cloud round-trip to a device that has no user account for that id.
+  function creatorName(m) {
+    if (!m) return "";
+    if (m.createdByName) return m.createdByName;
+    if (m.createdBy && PMS.auth && PMS.auth.userById) {
+      var u = PMS.auth.userById(m.createdBy);
+      if (u) return u.name || u.username || u.email || "";
+    }
+    if (m.createdByPersonId) {
+      var p = PMS.repos.people.get(m.createdByPersonId);
+      if (p) return p.name;
+    }
+    return "";
+  }
+
+  function attachmentsOf(m) {
+    return (m && Array.isArray(m.attachments)) ? m.attachments : [];
+  }
+
   /* ---------------- list ---------------- */
 
   function visibleMeetings() {
@@ -52,6 +72,12 @@
     }
     header.appendChild(actions);
     container.appendChild(header);
+
+    // A member is only shown the meetings they attended, so say so rather than
+    // leaving them wondering where the other meetings went.
+    if (PMS.auth && PMS.auth.currentUser && PMS.auth.role && PMS.auth.role() === "member") {
+      container.appendChild(h("div.scope-note", { text: t("meetings.memberScope") }));
+    }
 
     var search = h("input.input.search-inline", {
       value: state.query,
@@ -156,6 +182,16 @@
       atts.slice(0, 6).forEach(function (p) { av.appendChild(PMS.vformat.avatar(p)); });
       foot.appendChild(av);
     }
+    // who called the meeting, plus the files attached to it
+    var by = creatorName(m);
+    if (by) foot.appendChild(h("span.chip.meeting-by", { text: t("meetings.byWho", { name: by }) }));
+    var files = attachmentsOf(m);
+    if (files.length) {
+      foot.appendChild(h("span.chip.meeting-attach-chip", {
+        text: "📎 " + t("meetings.attachmentsCount", { n: files.length }),
+        attrs: { title: files.map(function (a) { return a.name; }).join("\n") }
+      }));
+    }
     body.appendChild(foot);
     card.appendChild(body);
     return card;
@@ -213,8 +249,7 @@
     meta.appendChild(detailItem(t("meetings.date"), PMS.utils.formatDate(m.date, PMS.i18n)));
     if (m.time) meta.appendChild(detailItem(t("meetings.time"), m.time));
     if (m.location) meta.appendChild(detailItem(t("meetings.location"), m.location));
-    var u = m.createdBy ? PMS.auth.userById(m.createdBy) : null;
-    meta.appendChild(detailItem(t("meetings.createdBy"), u ? (u.name || u.username) : "—"));
+    meta.appendChild(detailItem(t("meetings.createdBy"), creatorName(m) || "—"));
     node.appendChild(meta);
 
     // attendees
@@ -237,6 +272,21 @@
     }
 
     if (m.notes) node.appendChild(h("div.card", [h("div.card-body", [h("p", { text: m.notes })])]));
+
+    // attachments - the linked files (Google Drive and plain links)
+    node.appendChild(h("div.section-title", [h("span", { text: t("meetings.attachments") })]));
+    var files = attachmentsOf(m);
+    if (!files.length) node.appendChild(h("div.u-muted", { text: t("meetings.noAttachments") }));
+    else {
+      var arow2 = h("div.stack.attach-list");
+      files.forEach(function (a) { arow2.appendChild(attachmentRow(m, a)); });
+      node.appendChild(arow2);
+    }
+    if (PMS.auth ? PMS.auth.canEditMeeting(m) : true) {
+      var quick = h("div.u-flex", { style: { gap: "6px", marginBlockStart: "8px" } });
+      quick.appendChild(h("button.btn.btn-sm", { text: "+ " + t("meetings.addAttachment"), on: { click: function () { addAttachmentDialog(m); } } }));
+      node.appendChild(quick);
+    }
 
     // pillars
     node.appendChild(h("div.section-title", [h("span", { text: t("meetings.pillars") })]));
@@ -293,8 +343,80 @@
   function detailItem(label, value) {
     var d = h("div.detail-item");
     d.appendChild(h("div.dl-label", { text: label }));
-    d.appendChild(h("div.dl-value", { text: value || "—" }));
+    d.appendChild(dlValue(value));
     return d;
+  }
+
+  function dlValue(value) {
+    var v = h("div.dl-value", { text: value || "—" });
+    if (String(value || "").indexOf("http") === 0) {
+      v.innerHTML = "";
+      var link = h("a", { text: value });
+      link.href = value;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      v.appendChild(link);
+    }
+    return v;
+  }
+
+  // One attachment line: a Drive file or a plain link, opened in a new tab.
+  // The href is only ever an http(s) URL (see repos.meetings.addAttachment).
+  function attachmentRow(m, a) {
+    var row = h("div.attach-row-view");
+    var isDrive = a.kind !== "link" && /drive\.google\.com|docs\.google\.com/i.test(a.url || "");
+    var icon = h("span.attach-icon", { text: isDrive ? "🔺" : "🔗" });
+    var main = h("div.attach-main");
+    var link = h("a.attach-name.u-ellipsis", { text: a.name || a.url });
+    link.href = a.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.title = a.url;
+    main.appendChild(link);
+    var sub = [];
+    if (isDrive) sub.push(t("meetings.kindDrive"));
+    if (a.addedBy) sub.push(t("meetings.addedBy", { name: a.addedBy }));
+    if (a.addedAt) sub.push(PMS.utils.formatDate(String(a.addedAt).slice(0, 10), PMS.i18n));
+    if (sub.length) main.appendChild(h("div.u-muted", { text: sub.join(" · "), style: { fontSize: "0.75rem" } }));
+    row.appendChild(icon);
+    row.appendChild(main);
+    if (PMS.auth ? PMS.auth.canEditMeeting(m) : true) {
+      row.appendChild(h("button.btn.btn-sm.btn-ghost", {
+        text: "✕",
+        attrs: { title: t("common.delete") },
+        on: {
+          click: function () {
+            PMS.repos.meetings.removeAttachment(m.id, a.id);
+            PMS.toast.show(t("common.delete") + " ✓", "success");
+          }
+        }
+      }));
+    }
+    return row;
+  }
+
+  // Attach a file link without opening the whole meeting editor.
+  function addAttachmentDialog(m) {
+    var box = PMS.forms.build([
+      { key: "url", label: t("meetings.attachmentUrl"), type: "text", full: true, required: true },
+      { key: "name", label: t("meetings.attachmentName"), type: "text", full: true },
+      { key: "kind", label: t("meetings.attachmentKind"), type: "select", options: [{ label: t("meetings.kindDrive"), value: "drive" }, { label: t("meetings.kindLink"), value: "link" }], full: true }
+    ], { kind: "drive" });
+    PMS.modal.open({
+      title: t("meetings.addAttachment"),
+      content: box,
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        { label: t("common.add"), class: "btn-primary", onClick: function (_, body) {
+          var form = body.querySelector("form");
+          var v = form._getValues();
+          if (!v.url) { PMS.toast.show(t("validation.urlRequired"), "error"); return; }
+          PMS.repos.meetings.addAttachment(m.id, { name: v.name, url: v.url, kind: v.kind });
+          PMS.modal.close();
+          PMS.toast.show(t("meetings.attachmentAdded"), "success");
+        } }
+      ]
+    });
   }
 
   function meetingTaskRow(task) {

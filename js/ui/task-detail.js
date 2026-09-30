@@ -10,8 +10,11 @@
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
   function open(taskId) {
+    // repos.tasks.get already hides a task the signed-in member may not see,
+    // so this is the single gate: a task outside their scope simply does not
+    // open, from any screen that links to it.
     var task = PMS.repos.tasks.get(taskId);
-    if (!task) return;
+    if (!task) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); return; }
     currentTaskId = taskId;
     detailOpen = true;
     renderBody(task);

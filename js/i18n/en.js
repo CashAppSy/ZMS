@@ -7,7 +7,7 @@
   PMS.i18nFiles = PMS.i18nFiles || {};
 
   PMS.i18nFiles.en = {
-    app: { name: "Project Manager" },
+    app: { name: "Digital Program" },
     nav: {
       dashboard: "Dashboard",
       projects: "Pillars",
@@ -132,9 +132,24 @@
       detail: "Meeting details", deleteIfEmpty: "This meeting has no tasks left. Delete it?",
       taskCreated: "Task added to the meeting and to the Tasks tab",
       taskLinked: "Task linked to the meeting",
-      onlyManagers: "Only admins and managers can create meetings.",
-      createdBy: "Created by"
-    },
+  onlyManagers: "Only admins and managers can create meetings.",
+  createdBy: "Created by",
+  byWho: "by {name}",
+  attachments: "Attachments",
+  attachmentsHint: "Paste a Google Drive file link (or any link) with the name to show beside it.",
+  addAttachment: "Add attachment",
+  attachmentAdded: "Attachment added",
+  attachmentName: "File name",
+  attachmentUrl: "File link",
+  attachmentKind: "Type",
+  attachmentsCount: "{n} files",
+  noAttachments: "No files attached yet",
+  kindDrive: "Drive file",
+  kindLink: "Link",
+  addedBy: "added by {name}",
+  memberScope: "You see the meetings you attended (and the ones you created)."
+  },
+
     kanban: {
       title: "Kanban", addCard: "Add", total: "Total", collapseCol: "Collapse"
     },
@@ -153,6 +168,14 @@
       email: "Email", phone: "Phone", active: "Active", inactive: "Inactive",
       notes: "Notes", addPerson: "Add person", editPerson: "Edit person",
       addDepartment: "Add department", editDepartment: "Edit department",
+  allSections: "All sections", noDepartment: "No department",
+  sectionsSummary: "{depts} sections · {people} people",
+  sectionLoad: "{open} open · {done} done · {hours}h estimated",
+  noContact: "No email or phone on file",
+  account: "Account",
+  meetingsCount: "{n} meetings attended",
+  meetingsTitle: "Meetings attended ({n})",
+  noMeetings: "Has not attended any meeting yet",
       tasksCount: "{n} tasks", workload: "Workload", loadInHours: "{n}h estimated",
       noTasks: "No tasks assigned", deletePerson: "Archive person",
       openTasks: "Open tasks", doneTasks: "Done tasks", lateTasks: "Late tasks",
@@ -244,7 +267,8 @@
       invalidDate: "Invalid date",
       endBeforeStart: "End date is before start date",
       invalidEmail: "Invalid email address",
-      titleRequired: "Please enter a title (or a name) — an empty title cannot be saved."
+      titleRequired: "Please enter a title (or a name) — an empty title cannot be saved.",
+      urlRequired: "Please paste the file link."
     },
     statuses: {
       task: {
