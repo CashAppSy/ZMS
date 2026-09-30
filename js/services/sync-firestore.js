@@ -16,8 +16,14 @@
        * the assignees of a task (the caller's personId inside assignees) may
          change only the STATUS of that task (status/progress/activity/
          updatedAt — the exact fields the status UI writes);
-       * everything else on projects/tasks stays admin-only, and deleting a
-         project/task record is ALWAYS admin-only.
+        * everything else on projects/tasks stays admin-only, and deleting a
+          project/task record is ALWAYS admin-only.
+    - MEETINGS are also per record (zms_meetings/<id>), written by admins and
+      managers (the same roles that may create/edit a meeting in the UI) and
+      deleted by admins only. They are read by every active member, exactly
+      like tasks and projects; PMS.auth.canViewMeeting() then narrows what a
+      MEMBER sees (the meetings they attend or created) in the single read
+      path, so the client-side scope rule is unchanged by syncing them.
    - The global ACTIVITY LOG (round 6) is a per-record append-only collection
      (zms_activities/<id>): any ACTIVE user may create an entry (recording
      their own action), everyone reads it, only admins delete (e.g. clearing
@@ -64,7 +70,10 @@
   var WHOLE_COLS = ["departments", "people", "taskStatuses", "projectStatuses",
     "priorities", "customFieldDefs", "savedFilters"];
   // Per-record collections (round-4 layout): one document PER project/task.
-  var RECORD_COLS = ["projects", "tasks"];
+  // MEETINGS live here too: they are shared team data, so they must travel
+  // with everything else. They used to be absent from this list entirely,
+  // which kept every meeting locked to the browser that created it.
+  var RECORD_COLS = ["projects", "tasks", "meetings"];
   // Append-only per-record collections (round-6 layout): the global activity
   // log. Entries are only ever created (any active user) and deleted (admin,
   // e.g. clearing the log) — a push uploads new local entries the mirror has
@@ -564,6 +573,15 @@
       JSON.stringify(a.activity || null) === JSON.stringify(b.activity || null);
   }
 
+  // Mirror entry for a per-record document. Tasks/projects track the status
+  // fields (for the assignee status-only path); a MEETING has no status,
+  // progress or activity, so tracking them would store meaningless nulls and
+  // make the mirror misleading — its updatedAt alone decides changed/not.
+  function recordTrack(cname, rec) {
+    if (cname === "meetings") return { updatedAt: (rec && rec.updatedAt) || null };
+    return statusTrack(rec);
+  }
+
   // Serialized equality for a single status field (activity is an array).
   function statusFieldEquals(key, localRec, snap) {
     if (key === "activity") {
@@ -616,6 +634,14 @@
         // admin pushes any project; otherwise only the project whose managerId
         // matches the caller's personId
         allow = idn.isAdmin || (idn.personId && rec.managerId && rec.managerId === idn.personId);
+      } else if (cname === "meetings") {
+        // Meetings are created and edited by admins AND managers
+        // (auth.js canCreateMeeting/canEditMeeting) and are read-only for
+        // members, so a plain member never emits a write here. isAdmin alone
+        // is NOT enough: a manager is a legitimate meeting editor but is not
+        // an admin, and must still be able to publish their meetings.
+        // Deletions stay admin-only (handled in the loop above).
+        allow = idn.isAdmin || idn.role === "manager";
       } else {
         // tasks: admin = all; manager-of-project = full; assignee = status only
         if (idn.isAdmin) allow = true;
@@ -631,7 +657,7 @@
         // has no create right), so skip — it will arrive via a manager/admin.
         if (statusOnly) return;
         ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
-        mirrorUpdates[rec.id] = statusTrack(rec);
+        mirrorUpdates[rec.id] = recordTrack(cname, rec);
         return;
       }
 
@@ -647,11 +673,11 @@
           if (!statusFieldEquals(k, rec, snap)) payload[k] = rec[k];
         });
         ops.push(recordRef(cname, rec.id).update(payload));
-        mirrorUpdates[rec.id] = statusTrack(rec);
+        mirrorUpdates[rec.id] = recordTrack(cname, rec);
       } else {
         if (snap.updatedAt === rec.updatedAt) return;
         ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
-        mirrorUpdates[rec.id] = statusTrack(rec);
+        mirrorUpdates[rec.id] = recordTrack(cname, rec);
       }
     });
 
@@ -854,7 +880,7 @@
       })).then(function (snaps) {
         var obj = {
           schemaVersion: PMS.schema.VERSION,
-          departments: [], people: [], projects: [], tasks: [],
+          departments: [], people: [], projects: [], tasks: [], meetings: [],
           taskStatuses: [], projectStatuses: [], priorities: [],
           customFieldDefs: [], savedFilters: [],
           meta: { updatedAt: remoteUpdated }
@@ -888,7 +914,7 @@
       COLLECTIONS.forEach(function (cname) {
         var map = {};
         (rawRemote[cname] || []).forEach(function (rec) {
-          if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? statusTrack(rec) : true;
+          if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : true;
         });
         setMirrorFor(cname, map);
       });
@@ -918,16 +944,28 @@
   //  - same id   -> the writer with the newer per-item updatedAt wins
   //                 (this is what lets a status change made by the admin show
   //                 up on every other device)
-  //  - local-only id last touched at or before the remote's latest push was
+  //  - a local-only id last touched at or before the remote's latest push was
   //    deleted by that push's writer -> dropped (remote deletions reach all
   //    devices). A local item edited or created AFTER that push is kept, so
   //    offline edits are never silently discarded.
+  //  - MEETINGS are the one exception: a local-only meeting the mirror has
+  //    never seen is always kept. That heuristic above assumes both sides sync
+  //    the same collection, so "old + missing remotely" can only mean a remote
+  //    delete — but meetings were never syncable at all, so an empty meeting
+  //    mirror is the normal state, not evidence of a lost one. Applying the
+  //    rule here would silently destroy every meeting created before this fix
+  //    on the first pull; the next push then publishes them for the first time.
+  //    The guard is deliberately NOT applied to projects/tasks: there a missing
+  //    mirror really does mean "we lost our mirror" (cleared storage), and
+  //    trusting it would stop remote deletions from ever being applied, so
+  //    deleted records would come back to life on every device.
   function mergeWithLocal(remoteObj) {
     var merged = PMS.utils.deepClone(PMS.store.data);
     var remoteAt = remoteObj.meta && remoteObj.meta.updatedAt;
     COLLECTIONS.forEach(function (cname) {
       var incoming = remoteObj[cname] || [];
       var existing = merged[cname] || [];
+      var mtgMirror = cname === "meetings" ? mirrorFor(cname) : null;
       incoming.forEach(function (item) {
         var idx = -1;
         for (var i = 0; i < existing.length; i++) {
@@ -937,6 +975,7 @@
         if (!isNewer(existing[idx].updatedAt, item.updatedAt)) existing[idx] = item;
       });
       merged[cname] = existing.filter(function (e) {
+        if (mtgMirror && !mtgMirror[e.id]) return true;   // meeting never published -> keep
         if (!(remoteAt && e.updatedAt && String(e.updatedAt) <= String(remoteAt))) return true;
         return incoming.some(function (r) { return r.id === e.id; });
       });

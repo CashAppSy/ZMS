@@ -19,6 +19,10 @@ rules_version = '2';
 //   The global activity log (zms_activities, round 6) is an append-only
 //   per-record collection: any ACTIVE team member may create an entry,
 //   everyone may read, only admins may delete (clearing the log).
+//   MEETINGS are per record too (zms_meetings/<meetingId>), written by admins
+//   and managers (the roles that may create/edit a meeting) and deleted by
+//   admins only. They were added because the app was storing them per-device
+//   in localStorage, which meant a meeting never reached any other user.
 //   The other collections (departments, people, statuses,
 //   priorities, custom field defs, saved filters) stay in the
 //   whole-document model where members are read-only and managers
@@ -173,6 +177,24 @@ service cloud.firestore {
       allow update: if isAdmin(request.auth.uid)
         || isTaskProjectManaged(request.auth.uid, resource.data)
         || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // ---- per-record: meetings ----
+    // The client stores meetings PER RECORD (zms_meetings/<meetingId>). They
+    // were previously never pushed at all, so the app kept them in one
+    // browser's localStorage only and no other user could ever see them.
+    // read        : any ACTIVE team member — same as tasks/projects. The
+    //               attendee/creator scope is a READ-SIDE UI policy enforced in
+    //               the single read path (PMS.auth.canViewMeeting), exactly
+    //               like tasks; it is not a write-level restriction.
+    // create/update : admin or manager, mirroring auth.js canCreateMeeting /
+    //               canEditMeeting. Members are read-only for meetings.
+    // delete      : admin only, consistent with the per-record collections.
+    match /zms_meetings/{meetingId} {
+      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      allow create: if isManagerOrAdmin(request.auth.uid);
+      allow update: if isManagerOrAdmin(request.auth.uid);
       allow delete: if isAdmin(request.auth.uid);
     }
 

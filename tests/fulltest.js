@@ -1286,6 +1286,75 @@ section("Cloud sync (offline-safe API)");
       PMS.store.setData(saved);
       return mergedOk;
     })());
+
+  // MEETINGS must travel with the rest of the shared data. They were missing
+  // from the synced collections entirely, so a meeting never left the browser
+  // that created it and no other user could ever see it. This also covers the
+  // merge rules that decide whether a local-only meeting survives a pull.
+  {
+    const mtgSaved = PMS.utils.deepClone(PMS.store.data);
+    const mtgSavedMirror = window.localStorage.getItem("pms-cloud-mirror");
+    const mkBase = function () {
+      const d = PMS.schema.defaultData();
+      d.users = PMS.utils.deepClone(mtgSaved.users || []);
+      d.settings = PMS.utils.deepClone(mtgSaved.settings || {});
+      d.meta = { updatedAt: "2026-01-01T00:00:00.000Z" };
+      return d;
+    };
+    const mtgRemote = mkBase();
+    mtgRemote.meta = { updatedAt: "2026-01-05T00:00:00.000Z" };
+    mtgRemote.meetings = [
+      { id: "m-remote-new", title: "From the cloud", updatedAt: "2026-01-05T00:00:00.000Z" },
+      { id: "m-edit", title: "Before", updatedAt: "2026-01-01T00:00:00.000Z" }
+    ];
+    const mtgLocal = mkBase();
+    mtgLocal.meetings = [
+      { id: "m-edit", title: "After", updatedAt: "2026-01-02T00:00:00.000Z" },
+      { id: "m-unpublished", title: "Never synced", updatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "m-deleted-remotely", title: "Gone", updatedAt: "2026-01-01T00:00:00.000Z" }
+    ];
+    // The mirror knows m-edit and m-deleted-remotely (both were published
+    // before) but NOT m-unpublished, which predates meetings being syncable.
+    window.localStorage.setItem("pms-cloud-mirror", JSON.stringify({
+      meetings: {
+        "m-edit": { updatedAt: "2026-01-01T00:00:00.000Z" },
+        "m-deleted-remotely": { updatedAt: "2026-01-01T00:00:00.000Z" }
+      }
+    }));
+    PMS.store.setData(mtgLocal);
+    let mtgMergeOk = false;
+    try {
+      const merged = PMS.cloudsync._mergeForTest(mtgRemote);
+      const byId = {};
+      merged.meetings.forEach(function (m) { byId[m.id] = m; });
+      mtgMergeOk = !!byId["m-remote-new"] &&                              // arrives from the cloud
+        !!byId["m-edit"] && byId["m-edit"].title === "After" &&          // newer local edit wins
+        !!byId["m-unpublished"] &&                                       // never published -> NOT dropped
+        !byId["m-deleted-remotely"];                                     // known deletion -> applied
+    } catch (e) { mtgMergeOk = false; }
+    PMS.store.setData(mtgSaved);
+    if (mtgSavedMirror === null) window.localStorage.removeItem("pms-cloud-mirror");
+    else window.localStorage.setItem("pms-cloud-mirror", mtgSavedMirror);
+    ok("a pull imports meetings, keeps never-synced ones and applies deletions", mtgMergeOk);
+  }
+  {
+    const mtgSyncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    ok("meetings are a synced per-record collection",
+      /var RECORD_COLS = \["projects", "tasks", "meetings"\]/.test(mtgSyncSrc));
+    // store.setData() REPLACES the whole dataset, so any collection missing
+    // from the pull skeleton is silently reset to [] on every applied pull.
+    ok("the pull skeleton includes meetings (a pull must not wipe them)",
+      /departments: \[\], people: \[\], projects: \[\], tasks: \[\], meetings: \[\]/.test(mtgSyncSrc));
+    ok("a manager can publish meetings even though a manager is not an admin",
+      /cname === "meetings"[\s\S]{0,900}allow = idn\.isAdmin \|\| idn\.role === "manager"/.test(mtgSyncSrc));
+    const mtgRules = fs.readFileSync(path.join(APP, "firestore.rules"), "utf8");
+    ok("the rules define the zms_meetings collection",
+      /match \/zms_meetings\/\{meetingId\}/.test(mtgRules));
+    ok("only an admin or manager may create or edit a meeting in the cloud",
+      /match \/zms_meetings\/\{meetingId\}[\s\S]{0,500}allow create: if isManagerOrAdmin[\s\S]{0,160}allow update: if isManagerOrAdmin/.test(mtgRules));
+    ok("only an admin may delete a meeting record",
+      /match \/zms_meetings\/\{meetingId\}[\s\S]{0,600}allow delete: if isAdmin/.test(mtgRules));
+  }
   PMS.auth.login("lina", "newpass1");
   ok("member canDelete/requireDelete returns false",
     PMS.auth.currentUser().role === "member" && PMS.auth.canDelete() === false && PMS.auth.requireDelete() === false);
