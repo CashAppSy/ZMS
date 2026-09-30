@@ -639,6 +639,10 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   ok("live the admin is signed back in", PMS.auth.role() === "admin", PMS.auth.role());
 
   section("E.9b3 Creator-first meeting cards, bigger logo, tab icon (live UI)");
+  // an earlier section logged out, which tore the shell down, so re-init to get
+  // the sidebar (and the logo in it) back into the DOM
+  PMS.app.init();
+  ok("live the app shell is back", document.querySelectorAll(".sidebar-brand").length === 1);
   // ---- the creator leads the card ---------------------------------------
   const lcUser = PMS.auth.currentUser();
   const lcMeet = PMS.repos.meetings.add({ title: "LC lead meeting", date: PMS.utils.todayISO(), time: "09:00", attendees: [pA.id], agenda: ["a"], projectIds: [] });
@@ -666,7 +670,10 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   const lcW = lcLight.readUInt32BE(16), lcH = lcLight.readUInt32BE(20);
   ok("live the logo keeps its wordmark ratio", lcW / lcH > 3 && lcW / lcH < 4.2, lcW + "x" + lcH);
   ok("live the logo is bigger than it used to be", lcH > 100, lcH + "px tall asset");
-  ok("live the brand renders both logo variants", document.querySelectorAll(".brand-logo-img img").length === 2);
+  const lcBrandImgs = document.querySelectorAll(".brand-logo-img img");
+  ok("live the brand renders both logo variants", lcBrandImgs.length === 2, lcBrandImgs.length + " images");
+  ok("live the brand logo points at the real logo files", lcBrandImgs.length === 2 && /logo-light\.png$/.test(lcBrandImgs[0].getAttribute("src") || "") && /logo-dark\.png$/.test(lcBrandImgs[1].getAttribute("src") || ""));
+  ok("live the app name is still announced to screen readers", document.querySelectorAll(".sidebar-brand .u-sr-only").length === 1);
   ["favicon.ico", "favicon-16.png", "favicon-32.png", "favicon-16-dark.png", "favicon-32-dark.png", "apple-touch-icon.png"].forEach(f => {
     const p = path.join(APP, "assets", f);
     ok("live tab icon " + f + " is deployed", fs.existsSync(p) && fs.statSync(p).size > 100);

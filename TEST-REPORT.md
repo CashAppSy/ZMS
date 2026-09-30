@@ -1,6 +1,6 @@
 # ZMS Live-Site Automated Test Report
 
-**Date:** 2026-09-30T08:44:45.993Z
+**Date:** 2026-09-30T09:14:50.461Z
 
 **Target:** https://mtn-syr.github.io/ZMS/ (deployed main branch â€” DEVELOPMENT build, cloud = zain-management-tool; live cashappsy.github.io/ZMS keeps test-d371d untouched)
 
@@ -10,7 +10,7 @@
 
 | Result | Count |
 |---|---|
-| **Passed** | 212 |
+| **Passed** | 241 |
 | **Failed** | 0 |
 | Overall | STABLE & FULLY FUNCTIONAL âœ… |
 
@@ -18,9 +18,9 @@
 
 | Metric | Value |
 |---|---|
-| App boot (store init from live bundle) | 11 ms |
-| Mean route render | ~18 ms |
-| Slowest route | ~50 ms |
+| App boot (store init from live bundle) | 10 ms |
+| Mean route render | ~17 ms |
+| Slowest route | ~48 ms |
 | Repeated renders (12x dashboard) | 0 errors |
 
 ## Coverage Highlights
@@ -50,7 +50,7 @@
 |---|---|---|
 | 1 | all 55 scripts evaluated without error | PASS |
 | 2 | PMS namespace + core modules present | PASS |
-| 3 | PMS.store.init resolves from live bundle (11ms) | PASS |
+| 3 | PMS.store.init resolves from live bundle (10ms) | PASS |
 | 4 | zero window errors during boot | PASS |
 | 5 | PMS.network monitor present | PASS |
 | 6 | PMS.loadingBox present | PASS |
@@ -141,7 +141,7 @@
 |---|---|---|
 | 1 | route / renders clean | PASS |
 | 2 | route /projects renders clean | PASS |
-| 3 | route /projects/551c8242-e46a-43eb-8871-e8294b355bfb renders clean | PASS |
+| 3 | route /projects/5d57491c-b00b-4f21-a78f-ecdd78666d86 renders clean | PASS |
 | 4 | route /tasks renders clean | PASS |
 | 5 | route /tasks/kanban renders clean | PASS |
 | 6 | route /tasks/gantt renders clean | PASS |
@@ -310,6 +310,40 @@
 | 37 | live a foreign task title never reaches the member's screen | PASS |
 | 38 | live the member's meetings view renders | PASS |
 | 39 | live the admin is signed back in | PASS |
+
+### E.9b3 Creator-first meeting cards, bigger logo, tab icon (live UI)
+
+| # | Check | Status |
+|---|---|---|
+| 1 | live the app shell is back | PASS |
+| 2 | live the meeting card renders | PASS |
+| 3 | live the card shows a creator line | PASS |
+| 4 | live the creator line is first on the card | PASS |
+| 5 | live the creator precedes the date and title | PASS |
+| 6 | live the creator line carries the name | PASS |
+| 7 | live the creator line is labelled | PASS |
+| 8 | live the footer creator chip is gone | PASS |
+| 9 | live the date and title are still on the card | PASS |
+| 10 | live the light logo is deployed | PASS |
+| 11 | live the dark logo is deployed | PASS |
+| 12 | live the logo is a real PNG | PASS |
+| 13 | live the logo keeps its wordmark ratio | PASS |
+| 14 | live the logo is bigger than it used to be | PASS |
+| 15 | live the brand renders both logo variants | PASS |
+| 16 | live the brand logo points at the real logo files | PASS |
+| 17 | live the app name is still announced to screen readers | PASS |
+| 18 | live tab icon favicon.ico is deployed | PASS |
+| 19 | live tab icon favicon-16.png is deployed | PASS |
+| 20 | live tab icon favicon-32.png is deployed | PASS |
+| 21 | live tab icon favicon-16-dark.png is deployed | PASS |
+| 22 | live tab icon favicon-32-dark.png is deployed | PASS |
+| 23 | live tab icon apple-touch-icon.png is deployed | PASS |
+| 24 | live the tab icon is a real ICONDIR | PASS |
+| 25 | live the tab icon has several sizes | PASS |
+| 26 | live index.html links the ico | PASS |
+| 27 | live index.html links the apple touch icon | PASS |
+| 28 | live index.html serves a favicon per colour scheme | PASS |
+| 29 | live the tab icon is a real file, not a data URI | PASS |
 
 ### E.9c Blank-screen guard (live bundle)
 
