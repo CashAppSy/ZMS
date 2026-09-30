@@ -14,7 +14,7 @@
 (function (PMS) {
   "use strict";
   PMS.cloudConfig = {
-    projectId: "zain-management-tool",
+    projectId: "test-d371d",
     apiKey: "AIzaSyCSHOLGz3uqlWB4kVUWJ1-HKvNcFickwKI",
     authDomain: "zain-management-tool.firebaseapp.com",
     storageBucket: "zain-management-tool.firebasestorage.app",
