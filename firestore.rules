@@ -122,6 +122,20 @@ service cloud.firestore {
         && isProjectManagerOf(uid, taskData.projectId);
     }
 
+    // CREATING a task is deliberately WIDER than managing one. auth.js
+    // canCreateTask lets an admin or a manager create a task in ANY pillar:
+    // an unassigned task belongs to nobody, so it has to be reachable from
+    // every pillar. Requiring the caller to manage the target pillar made
+    // canCreateTask and these rules disagree, and the client's push then
+    // silently skipped the record — it never reached the cloud, and the next
+    // pull deleted the local copy as if a remote writer had removed it.
+    // Editing stays narrower: whoever created it in a foreign pillar does not
+    // thereby gain the right to rewrite it (that remains the pillar manager's
+    // or an admin's).
+    function canCreateTask(uid) {
+      return isManagerOrAdmin(uid);
+    }
+
     // Is the caller one of the ASSIGNEES of task `taskId`?
     function isTaskAssigneeOf(uid, taskId) {
       return isActiveUser(uid)
@@ -166,14 +180,13 @@ service cloud.firestore {
 
     // ---- per-record: tasks ----
     // read        : any ACTIVE team member
-    // create      : admin, or the manager of the task's project
+    // create      : an admin or a manager, in ANY pillar (canCreateTask)
     // update      : admin, or the manager of the task's project (full edit),
     //               or an ASSIGNEE changing ONLY the status of that task
     // delete      : admin only
     match /zms_tasks/{taskId} {
       allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create: if isAdmin(request.auth.uid)
-        || isTaskProjectManaged(request.auth.uid, request.resource.data);
+      allow create: if canCreateTask(request.auth.uid);
       allow update: if isAdmin(request.auth.uid)
         || isTaskProjectManaged(request.auth.uid, resource.data)
         || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());

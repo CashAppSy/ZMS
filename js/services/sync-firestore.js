@@ -864,6 +864,12 @@
       mirrorUpdates[id] = null;
     });
 
+    // Records this device is not allowed to write. They stay local and will be
+    // dropped by the next pull's merge heuristic, which is what made a skipped
+    // task look like it "vanished". Collecting them lets push() say so out loud
+    // instead of reporting success while quietly leaving data behind.
+    var skipped = [];
+
     local.forEach(function (rec) {
       if (!rec || !rec.id) return;
       var allow = false;
@@ -881,12 +887,22 @@
         // Deletions stay admin-only (handled in the loop above).
         allow = idn.isAdmin || idn.role === "manager";
       } else {
-        // tasks: admin = all; manager-of-project = full; assignee = status only
+        // tasks. CREATE and UPDATE have different rights, so they are decided
+        // separately: `snap` below tells a brand-new record from an existing
+        // one. Checking them together was what silently dropped a task.
+        //  - CREATE: an admin anywhere, and a manager in ANY pillar
+        //    (auth.js canCreateTask), because an unassigned task belongs to
+        //    nobody and must be creatable from every pillar.
+        //  - UPDATE: an admin anywhere, the manager OF THAT PILLAR in full, or
+        //    an assignee for the status fields only.
+        // A manager who creates a task in someone else's pillar may not
+        // therefore rewrite it afterwards; that stays with the pillar manager.
         if (idn.isAdmin) allow = true;
+        else if (idn.role === "manager" && !mirror[rec.id]) allow = true;
         else if (!allow && idn.personId && projectManagerOf(d, rec.projectId) === idn.personId) allow = true;
         else if (!allow && idn.personId && Array.isArray(rec.assignees) && rec.assignees.indexOf(idn.personId) !== -1) { allow = true; statusOnly = true; }
       }
-      if (!allow) return;
+      if (!allow) { skipped.push(rec.id); return; }
 
       var snap = mirror[rec.id];
       if (!snap) {
@@ -919,7 +935,7 @@
       }
     });
 
-    return { ops: ops, mirror: mirrorUpdates };
+    return { ops: ops, mirror: mirrorUpdates, skipped: skipped };
   }
 
   // Builds the ops to push an append-only collection (the global activity
@@ -1005,10 +1021,12 @@
           }
           // per-record collections (projects/tasks)
           var mirrorPatches = {};
+          var skippedByCol = {};
           RECORD_COLS.forEach(function (cname) {
             var built = buildRecordOps(cname, d, idn, t);
             ops = ops.concat(built.ops);
             if (built.mirror) mirrorPatches[cname] = built.mirror;
+            if (built.skipped && built.skipped.length) skippedByCol[cname] = built.skipped;
           });
           // append-only per-record collections (activity log)
           APPEND_COLS.forEach(function (cname) {
@@ -1052,6 +1070,13 @@
               var summarized = {};
               COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
               console.info("[cloudsync] push ok", summarized);
+              // Never let a refused write pass as a clean push. These records
+              // are still only local, and the next pull will drop them as if a
+              // remote writer had deleted them, so surface the reason now.
+              if (Object.keys(skippedByCol).length) {
+                console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
+                PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
+              }
               return true;
             });
           });
@@ -1209,7 +1234,14 @@
     COLLECTIONS.forEach(function (cname) {
       var incoming = remoteObj[cname] || [];
       var existing = merged[cname] || [];
-      var mtgMirror = cname === "meetings" ? mirrorFor(cname) : null;
+      // Per-record collections carry a mirror of every id this device has
+      // actually published, so "not in the mirror" means "the cloud has never
+      // seen this record". Such a record must never be judged by the
+      // remote-clock heuristic below: that heuristic is meant to detect a
+      // record a remote writer DELETED, and treating a never-uploaded local
+      // record that way destroys work silently (a task a manager created in a
+      // pillar they do not manage was lost exactly this way).
+      var recMirror = RECORD_COLS.indexOf(cname) !== -1 ? mirrorFor(cname) : null;
       incoming.forEach(function (item) {
         var idx = -1;
         for (var i = 0; i < existing.length; i++) {
@@ -1219,7 +1251,7 @@
         if (!isNewer(existing[idx].updatedAt, item.updatedAt)) existing[idx] = item;
       });
       merged[cname] = existing.filter(function (e) {
-        if (mtgMirror && !mtgMirror[e.id]) return true;   // meeting never published -> keep
+        if (recMirror && !recMirror[e.id]) return true;   // never published -> keep
         if (!(remoteAt && e.updatedAt && String(e.updatedAt) <= String(remoteAt))) return true;
         return incoming.some(function (r) { return r.id === e.id; });
       });
@@ -1519,5 +1551,7 @@
   if (typeof window !== "undefined" && window.__ZMS_TEST__) {
     PMS.cloudsync._mergeForTest = mergeWithLocal;
     PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
+    PMS.cloudsync._getMirrorForTest = mirrorFor;
+    PMS.cloudsync._setMirrorForTest = setMirrorFor;
   }
 })(window.PMS);

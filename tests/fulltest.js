@@ -1262,9 +1262,22 @@ section("Cloud sync (offline-safe API)");
       local.tasks = [
         { id: "t1", title: "Old", statusId: "s1", updatedAt: "2026-01-01T00:00:00.000Z" },
         { id: "t2", title: "To delete", updatedAt: "2026-01-01T00:00:00.000Z" },
-        { id: "t3", title: "Edited locally after push", updatedAt: "2026-01-03T00:00:00.000Z" }
+        { id: "t3", title: "Edited locally after push", updatedAt: "2026-01-03T00:00:00.000Z" },
+        { id: "t4", title: "Never published", updatedAt: "2026-01-01T00:00:00.000Z" }
       ];
       local.meta = { updatedAt: "2026-01-01T00:00:00.000Z" };
+      // The per-record mirror is what separates "a remote writer deleted this"
+      // from "this was never uploaded". t1/t2/t3 were published by this device,
+      // so the remote clock may judge them; t4 was never published, so it must
+      // survive the pull even though it is absent from the remote snapshot.
+      const mirrorSaved = PMS.cloudsync._getMirrorForTest("tasks");
+      PMS.cloudsync._setMirrorForTest("tasks", {
+        t1: { updatedAt: "2026-01-01T00:00:00.000Z" },
+        t2: { updatedAt: "2026-01-01T00:00:00.000Z" },
+        t3: { updatedAt: "2026-01-01T00:00:00.000Z" }
+      });
+      const projMirrorSaved = PMS.cloudsync._getMirrorForTest("projects");
+      PMS.cloudsync._setMirrorForTest("projects", { p1: { updatedAt: "2026-01-01T00:00:00.000Z" } });
       const remote = PMS.utils.deepClone(local);
       remote.projects = [{ id: "p1", name: "After", updatedAt: "2026-01-02T00:00:00.000Z" }];
       remote.tasks = [{ id: "t1", title: "New", statusId: "s2", updatedAt: "2026-01-02T00:00:00.000Z" }];
@@ -1276,14 +1289,18 @@ section("Cloud sync (offline-safe API)");
         const t1 = merged.tasks.find(function (t) { return t.id === "t1"; });
         const t2 = merged.tasks.find(function (t) { return t.id === "t2"; });
         const t3 = merged.tasks.find(function (t) { return t.id === "t3"; });
+        const t4 = merged.tasks.find(function (t) { return t.id === "t4"; });
         const p1 = merged.projects.find(function (p) { return p.id === "p1"; });
         mergedOk = t1 && t1.title === "New" && t1.statusId === "s2" &&   // edit propagated
           !t2 &&                                                         // remote deletion applied
           t3 && t3.id === "t3" &&                                        // offline local edit kept
+          t4 && t4.title === "Never published" &&                        // never-uploaded record kept
           p1 && p1.name === "After" &&                                   // project edit propagated
           merged.meta.updatedAt === "2026-01-02T00:00:00.000Z";
       } catch (e) { mergedOk = false; }
       PMS.store.setData(saved);
+      PMS.cloudsync._setMirrorForTest("tasks", mirrorSaved);
+      PMS.cloudsync._setMirrorForTest("projects", projMirrorSaved);
       return mergedOk;
     })());
 
@@ -1399,6 +1416,37 @@ section("Cloud sync (offline-safe API)");
       /PMS\.cloudsync\.loadBackup\(id\)/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
     ok("a local-only snapshot is labelled as such",
       /settings\.backupLocalOnly/.test(fs.readFileSync(path.join(APP, "js", "views", "settings.js"), "utf8")));
+  }
+  // --- a task a manager created in a pillar they do NOT manage ---
+  {
+    const rulesSrc = fs.readFileSync(path.join(APP, "firestore.rules"), "utf8");
+    const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    const authSrc = fs.readFileSync(path.join(APP, "js", "core", "auth.js"), "utf8");
+
+    // The symptom was: the task appeared for the manager, never reached anyone
+    // else, and then vanished. canCreateTask allows a manager to create a task
+    // in ANY pillar (an unassigned task belongs to nobody), so the rules must
+    // not demand that the caller manage the target pillar.
+    ok("canCreateTask still lets a manager create a task in any pillar",
+      /u\.role === "manager"\) return true/.test(authSrc));
+    ok("the rules create a task for a manager in any pillar",
+      /function canCreateTask\(uid\)\s*\{\s*return isManagerOrAdmin\(uid\)/.test(rulesSrc) &&
+      /match \/zms_tasks\/\{taskId\}[\s\S]{0,300}allow create: if canCreateTask/.test(rulesSrc));
+    ok("creating a task is no longer gated on managing its pillar",
+      /isTaskProjectManaged/.test(rulesSrc) === false ||
+      /allow create: if isAdmin[\s\S]{0,120}isTaskProjectManaged/.test(rulesSrc) === false);
+    // The client must agree with the rules, which is the actual defect: the
+    // push engine dropped the record and the pull then deleted it locally.
+    ok("the push engine lets a manager create (but not rewrite) a task in a foreign pillar",
+      /idn\.role === "manager" && !mirror\[rec\.id\]/.test(syncSrc));
+    ok("a record that was never published survives a pull",
+      /if \(recMirror && !recMirror\[e\.id\]\) return true/.test(syncSrc));
+    ok("a refused write is reported instead of passing as a clean push",
+      /cloud:skipped/.test(syncSrc) && /not uploaded \(no write right/.test(syncSrc));
+    // The narrower update right must survive the widening of create.
+    ok("editing a task in a foreign pillar stays with its manager",
+      /projectManagerOf\(d, rec\.projectId\) === idn\.personId/.test(syncSrc) &&
+      /allow update: if isAdmin\(request\.auth\.uid\)\s*\|\|\s*isTaskProjectManaged\(request\.auth\.uid, resource\.data\)/.test(rulesSrc));
   }
   {
     const mtgSyncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
