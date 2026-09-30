@@ -758,7 +758,32 @@ table.tbl {
 .attach-main { flex: 1 1 auto; min-width: 0; }
 .attach-name { font-weight: 600; color: var(--primary); text-decoration: none; }
 .attach-name:hover { text-decoration: underline; }
-.meeting-by, .meeting-attach-chip { font-size: .75rem; }
+.meeting-attach-chip { font-size: .75rem; }
+
+/* Creator line: leads the meeting card, above the date and title */
+.meeting-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 8px;
+  padding-block-end: 8px;
+  border-block-end: 1px dashed var(--border);
+  font-size: .84rem;
+}
+.meeting-by-avatar {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: .78rem;
+}
+.meeting-by-label { color: var(--text-muted); margin-inline-end: 5px; }
 
 /* a quiet note explaining a narrowed view (e.g. a member's own scope) */
 .scope-note {

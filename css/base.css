@@ -78,6 +78,20 @@ code, pre, tt {
 
 /* Utility helpers */
 .u-hidden { display: none !important; }
+/* for text a screen reader still needs but nobody should see (e.g. the app
+   name next to a logo that already spells it out) */
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .u-muted { color: var(--text-muted); }
 .u-faint { color: var(--text-faint); }
 .u-bold { font-weight: 600; }

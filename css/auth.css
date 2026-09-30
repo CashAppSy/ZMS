@@ -34,18 +34,22 @@
   color: var(--text);
 }
 
+/* The wordmark is sized by height and given its width by the aspect ratio,
+   so it scales cleanly and never distorts. `max-width: 100%` keeps it inside
+   the card on a narrow screen. */
 .auth-logo {
-  width: 40px;
-  height: 40px;
   font-size: 1rem;
   display: inline-flex;
   align-items: center;
-  flex: 0 0 auto;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 .auth-logo img {
-  height: 44px;
+  height: 56px;
   width: auto;
-  max-width: 190px;
+  max-width: 100%;
   object-fit: contain;
 }
 

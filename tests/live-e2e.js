@@ -638,6 +638,48 @@ let PMS; // bound AFTER the deployed scripts are evaluated below
   PMS.auth.login("boss", "pw1234");
   ok("live the admin is signed back in", PMS.auth.role() === "admin", PMS.auth.role());
 
+  section("E.9b3 Creator-first meeting cards, bigger logo, tab icon (live UI)");
+  // ---- the creator leads the card ---------------------------------------
+  const lcUser = PMS.auth.currentUser();
+  const lcMeet = PMS.repos.meetings.add({ title: "LC lead meeting", date: PMS.utils.todayISO(), time: "09:00", attendees: [pA.id], agenda: ["a"], projectIds: [] });
+  route("/meetings");
+  const lcCard = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf("LC lead meeting") !== -1);
+  ok("live the meeting card renders", !!lcCard);
+  const lcByline = lcCard && lcCard.querySelector(".meeting-byline");
+  ok("live the card shows a creator line", !!lcByline);
+  const lcBody = lcCard && lcCard.querySelector(".card-body");
+  const lcByIdx = lcByline && lcBody ? Array.prototype.indexOf.call(lcBody.children, lcByline) : -1;
+  const lcDateIdx = lcBody ? Array.prototype.indexOf.call(lcBody.children, lcBody.querySelector(":scope > .u-flex")) : -1;
+  ok("live the creator line is first on the card", lcByIdx === 0, "index " + lcByIdx);
+  ok("live the creator precedes the date and title", lcByIdx >= 0 && lcDateIdx > lcByIdx, "by " + lcByIdx + " date " + lcDateIdx);
+  ok("live the creator line carries the name", !!lcByline && (lcByline.textContent || "").indexOf(lcMeet.createdByName) !== -1);
+  ok("live the creator line is labelled", !!lcByline && (lcByline.textContent || "").indexOf(PMS.i18n.t("meetings.createdBy")) !== -1);
+  ok("live the footer creator chip is gone", !!lcCard && !lcCard.querySelector(".meeting-by"));
+  ok("live the date and title are still on the card", (lcCard.textContent || "").indexOf("09:00") !== -1);
+  PMS.repos.meetings.remove(lcMeet.id);
+
+  // ---- the deployed logo and tab icon -----------------------------------
+  ok("live the light logo is deployed", fs.existsSync(path.join(APP, "assets", "logo-light.png")));
+  ok("live the dark logo is deployed", fs.existsSync(path.join(APP, "assets", "logo-dark.png")));
+  const lcLight = fs.readFileSync(path.join(APP, "assets", "logo-light.png"));
+  ok("live the logo is a real PNG", lcLight[0] === 0x89 && lcLight[1] === 0x50 && lcLight[2] === 0x4E && lcLight[3] === 0x47);
+  const lcW = lcLight.readUInt32BE(16), lcH = lcLight.readUInt32BE(20);
+  ok("live the logo keeps its wordmark ratio", lcW / lcH > 3 && lcW / lcH < 4.2, lcW + "x" + lcH);
+  ok("live the logo is bigger than it used to be", lcH > 100, lcH + "px tall asset");
+  ok("live the brand renders both logo variants", document.querySelectorAll(".brand-logo-img img").length === 2);
+  ["favicon.ico", "favicon-16.png", "favicon-32.png", "favicon-16-dark.png", "favicon-32-dark.png", "apple-touch-icon.png"].forEach(f => {
+    const p = path.join(APP, "assets", f);
+    ok("live tab icon " + f + " is deployed", fs.existsSync(p) && fs.statSync(p).size > 100);
+  });
+  const lcIco = fs.readFileSync(path.join(APP, "assets", "favicon.ico"));
+  ok("live the tab icon is a real ICONDIR", lcIco[0] === 0 && lcIco[1] === 0 && lcIco[2] === 1 && lcIco[3] === 0);
+  ok("live the tab icon has several sizes", (lcIco[4] | (lcIco[5] << 8)) >= 3);
+  const lcPage = fs.readFileSync(path.join(APP, "index.html"), "utf8");
+  ok("live index.html links the ico", /rel="icon"[^>]*favicon\.ico/.test(lcPage));
+  ok("live index.html links the apple touch icon", /rel="apple-touch-icon"/.test(lcPage));
+  ok("live index.html serves a favicon per colour scheme", /favicon-32-dark\.png[^>]*prefers-color-scheme:\s*dark/.test(lcPage));
+  ok("live the tab icon is a real file, not a data URI", !/rel="icon"[^>]*href="data:/.test(lcPage));
+
   section("E.9c Blank-screen guard (live bundle)");
   // Reported bug: after signing in the interface stayed empty until the page
   // was refreshed by hand. A view that throws must report itself in place and

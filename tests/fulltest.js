@@ -1604,6 +1604,94 @@ section("Meeting creator + file attachments + member scoping + people/sections")
   });
   ok("the auth screen renders the logo", !!fs.readFileSync(path.join(APP, "js/views/auth.js"), "utf8").indexOf("logo-light.png") !== -1);
 
+section("Meeting card leads with the creator, logo + favicon");
+  PMS.auth.login("boss", "pw1234");
+  const leadAttendee = PMS.repos.people.all()[0];
+  const leadMeet = PMS.repos.meetings.add({ title: "Lead meeting", date: PMS.utils.todayISO(), time: "09:00", attendees: leadAttendee ? [leadAttendee.id] : [], agenda: ["a"], projectIds: [] });
+  const leadName = PMS.repos.meetings.get(leadMeet.id).createdByName;
+  route("/meetings");
+  const leadCard = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf("Lead meeting") !== -1);
+  ok("the meeting card renders", !!leadCard);
+  // the creator has to come BEFORE the date and the title
+  const byline = leadCard && leadCard.querySelector(".meeting-byline");
+  ok("the card shows a creator line", !!byline);
+  const byIdx = byline ? Array.prototype.indexOf.call(leadCard.querySelector(".card-body").children, byline) : -1;
+  const dateIdx = leadCard ? Array.prototype.indexOf.call(leadCard.querySelector(".card-body").children, leadCard.querySelector(".card-body > .u-flex")) : -1;
+  ok("the creator line is the first thing on the card", byIdx === 0, "index " + byIdx);
+  ok("the creator line comes before the date and title", byIdx >= 0 && dateIdx > byIdx, "by " + byIdx + " date " + dateIdx);
+  ok("the creator line carries the name", !!byline && (byline.textContent || "").indexOf(leadName) !== -1);
+  ok("the creator line is labelled", !!byline && (byline.textContent || "").indexOf(PMS.i18n.t("meetings.createdBy")) !== -1);
+  ok("the old footer creator chip is gone", !leadCard.querySelector(".meeting-by"));
+  ok("the date is still on the card", (leadCard.textContent || "").indexOf(PMS.utils.formatDate(leadMeet.date, PMS.i18n)) !== -1);
+  ok("the title is still on the card", (leadCard.textContent || "").indexOf("Lead meeting") !== -1);
+  ok("the rest of the card is unchanged", (leadCard.textContent || "").indexOf("09:00") !== -1 && (leadCard.textContent || "").indexOf("📋") !== -1);
+
+  // a meeting with no creator must not render an empty line
+  delete PMS.store.data.meetings.find(m => m.id === leadMeet.id).createdByName;
+  delete PMS.store.data.meetings.find(m => m.id === leadMeet.id).createdBy;
+  route("/meetings");
+  const leadCard2 = Array.from(root().querySelectorAll(".meeting-card")).find(c => (c.textContent || "").indexOf("Lead meeting") !== -1);
+  ok("a meeting with no creator shows no creator line", !!leadCard2 && !leadCard2.querySelector(".meeting-byline"));
+  PMS.repos.meetings.remove(leadMeet.id);
+
+  // the logo: real artwork with the transparent padding taken out
+  const lightPath = path.join(APP, "assets", "logo-light.png");
+  const darkPath = path.join(APP, "assets", "logo-dark.png");
+  ok("the light logo asset exists", fs.existsSync(lightPath));
+  ok("the dark logo asset exists", fs.existsSync(darkPath));
+  const lightBytes = fs.readFileSync(lightPath);
+  const darkBytes = fs.readFileSync(darkPath);
+  ok("the light logo is a real PNG", lightBytes[0] === 0x89 && lightBytes[1] === 0x50 && lightBytes[2] === 0x4E && lightBytes[3] === 0x47);
+  ok("the dark logo is a real PNG", darkBytes[0] === 0x89 && darkBytes[1] === 0x50 && darkBytes[2] === 0x4E && darkBytes[3] === 0x47);
+  // PNG width/height live in the IHDR chunk, bytes 16..23, big-endian
+  const pngSize = b => ({ w: b.readUInt32BE(16), h: b.readUInt32BE(20) });
+  const ls = pngSize(lightBytes), dk = pngSize(darkBytes);
+  ok("the two logos are the same size", ls.w === dk.w && ls.h === dk.h, ls.w + "x" + ls.h + " vs " + dk.w + "x" + dk.h);
+  ok("the logo keeps its wide wordmark ratio", ls.w / ls.h > 3 && ls.w / ls.h < 4.2, (ls.w / ls.h).toFixed(3));
+  ok("the logo no longer carries the old dead padding", ls.w < 640 && ls.h < 295, ls.w + "x" + ls.h);
+
+  // the logo is rendered by height with `width: auto`, so it cannot distort
+  const layoutCss = fs.readFileSync(path.join(APP, "css", "layout.css"), "utf8");
+  const brandBlock = (layoutCss.split(".sidebar-brand .brand-logo-img img")[1] || "").split("}")[0];
+  ok("the sidebar logo is sized by height", /height:\s*\d+px/.test(brandBlock), brandBlock.replace(/\s+/g, " ").trim());
+  ok("the sidebar logo width follows the aspect ratio", /width:\s*auto/.test(brandBlock));
+  ok("the sidebar logo is capped so it cannot push the sidebar", /max-width:\s*100%/.test(brandBlock));
+  ok("the sidebar logo may shrink rather than overflow", /flex:\s*0 1 auto/.test(layoutCss.split(".sidebar-brand .brand-logo-img")[1] || ""));
+  // the sidebar itself must not grow
+  ok("the sidebar width is still fixed", /--sidebar-width:\s*250px/.test(fs.readFileSync(path.join(APP, "css", "variables.css"), "utf8")));
+  // the visible name is kept for screen readers
+  ok("the app name is still available to screen readers", fs.readFileSync(path.join(APP, "js", "core", "app.js"), "utf8").indexOf("u-sr-only") !== -1);
+  ok("a screen-reader-only utility exists", fs.readFileSync(path.join(APP, "css", "base.css"), "utf8").indexOf(".u-sr-only") !== -1);
+
+  // the browser tab icon
+  ["favicon.ico", "favicon-16.png", "favicon-32.png", "favicon-16-dark.png", "favicon-32-dark.png", "apple-touch-icon.png"].forEach(f => {
+    const p = path.join(APP, "assets", f);
+    ok("favicon asset " + f + " exists and is not empty", fs.existsSync(p) && fs.statSync(p).size > 100);
+  });
+  const ico = fs.readFileSync(path.join(APP, "assets", "favicon.ico"));
+  ok("favicon.ico is a real ICONDIR", ico[0] === 0 && ico[1] === 0 && ico[2] === 1 && ico[3] === 0);
+  const icoCount = ico[4] | (ico[5] << 8);
+  ok("favicon.ico holds several sizes", icoCount >= 3, icoCount + " sizes");
+  const icoSizes = [];
+  for (let i = 0; i < icoCount; i++) {
+    const o = 6 + i * 16;
+    icoSizes.push(ico[o] || 256);
+    const len = ico.readUInt32LE(o + 8);
+    const off = ico.readUInt32LE(o + 12);
+    ok("favicon.ico entry " + ico[o] + " payload is inside the file", off + len <= ico.length, off + "+" + len + " of " + ico.length);
+  }
+  ok("favicon.ico covers 16/32/48", [16, 32, 48].every(s => icoSizes.indexOf(s) !== -1), icoSizes.join(","));
+  const apple = pngSize(fs.readFileSync(path.join(APP, "assets", "apple-touch-icon.png")));
+  ok("the apple touch icon is 180x180", apple.w === 180 && apple.h === 180, apple.w + "x" + apple.h);
+  // index.html must actually reference them
+  const pageHtml = fs.readFileSync(path.join(APP, "index.html"), "utf8");
+  ok("index.html links the ico", /rel="icon"[^>]*favicon\.ico/.test(pageHtml));
+  ok("index.html links the apple touch icon", /rel="apple-touch-icon"[^>]*apple-touch-icon\.png/.test(pageHtml));
+  ok("index.html links a favicon per colour scheme", /favicon-32-dark\.png[^>]*prefers-color-scheme:\s*dark/.test(pageHtml));
+  ok("the old inline SVG favicon is gone", pageHtml.indexOf("data:image/svg+xml") === -1);
+  ok("the tab icon is a real file, not a data URI", !/rel="icon"[^>]*href="data:/.test(pageHtml));
+  ok("the page title is still the new name", /<title>\s*Digital Program/.test(pageHtml));
+
   PMS.sync.tick();
   PMS.sync.stop();
   ok("sync.tick safe when unbound", true);

@@ -58,9 +58,11 @@
     var sidebar = document.getElementById("sidebar");
     sidebar.innerHTML = "";
     // brand: the PM logo, swapped by theme (the light file is for light mode)
-    var brand = h("div.sidebar-brand");
+    var brand = h("div.sidebar-brand", { attrs: { title: t("app.name") } });
     brand.appendChild(logoImage("brand-logo-img"));
-    brand.appendChild(h("span", { text: t("app.name") }));
+    // the logo is a wordmark that already spells the app name, so the name is
+    // kept for assistive tech and the hover tooltip rather than printed twice
+    brand.appendChild(h("span.u-sr-only", { text: t("app.name") }));
     sidebar.appendChild(brand);
     var nav = h("nav.sidebar-nav", { attrs: { "aria-label": "Main" } });
     PMS.registry.allViews().filter(function (v) { return v.nav; }).forEach(function (v) {

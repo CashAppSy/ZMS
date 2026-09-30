@@ -115,6 +115,20 @@
   function meetingCard(m) {
     var card = h("div.card.meeting-card", { on: { click: function () { openDetail(m.id); } } });
     var body = h("div.card-body");
+
+    // who called the meeting leads the card: it answers "what is this and who
+    // do I ask about it" before the date, the agenda and the linked work
+    var by = creatorName(m);
+    if (by) {
+      body.appendChild(h("div.meeting-byline", {}, [
+        h("span.meeting-by-avatar", { text: by.trim().charAt(0).toUpperCase() }),
+        h("span.u-grow", {}, [
+          h("span.meeting-by-label", { text: t("meetings.createdBy") }),
+          h("span.u-bold", { text: by })
+        ])
+      ]));
+    }
+
     var top = h("div.u-flex", { style: { gap: "10px", alignItems: "baseline" } });
     top.appendChild(h("span.meeting-date", { text: PMS.utils.formatDate(m.date, PMS.i18n) }));
     top.appendChild(h("span.u-bold", { text: m.title }));
@@ -182,9 +196,7 @@
       atts.slice(0, 6).forEach(function (p) { av.appendChild(PMS.vformat.avatar(p)); });
       foot.appendChild(av);
     }
-    // who called the meeting, plus the files attached to it
-    var by = creatorName(m);
-    if (by) foot.appendChild(h("span.chip.meeting-by", { text: t("meetings.byWho", { name: by }) }));
+    // the files attached to the meeting (the creator is shown at the top)
     var files = attachmentsOf(m);
     if (files.length) {
       foot.appendChild(h("span.chip.meeting-attach-chip", {
