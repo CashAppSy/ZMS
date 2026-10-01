@@ -185,6 +185,14 @@
 .modal-close:hover { background: var(--bg-hover); color: var(--text); }
 
 .modal-body { padding: var(--space-5); overflow-y: auto; }
+/* explains an action that is deliberately not offered (see modal.js `note`) */
+.modal-note {
+  padding: var(--space-2) var(--space-5);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border-block-start: 1px solid var(--border);
+}
 .modal-footer {
   padding: var(--space-3) var(--space-5);
   border-block-start: 1px solid var(--border);

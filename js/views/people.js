@@ -36,9 +36,12 @@
     var header = h("div.page-header");
     header.appendChild(h("h1", { text: t("people.title") }));
     var canWrite = PMS.auth ? PMS.auth.can("people.write") : true;
+    // Sections are read-only for a manager: they can see how work is grouped
+    // and pick people from them, but only the admin restructures the org.
+    var isAdmin = PMS.auth ? PMS.auth.isAdmin() : true;
     if (canWrite) {
       var actions = h("div.actions");
-      actions.appendChild(h("button.btn", { text: "+ " + t("people.addDepartment"), on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { activeSection = "depts"; render(container); }); } } }));
+      if (isAdmin) actions.appendChild(h("button.btn", { text: "+ " + t("people.addDepartment"), on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { activeSection = "depts"; render(container); }); } } }));
       actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("people.addPerson"), on: { click: function () { PMS.editors.openPersonEditor(null, function () { activeSection = "people"; render(container); }); } } }));
       header.appendChild(actions);
     }
@@ -197,10 +200,15 @@
     // actions
     var canWrite = PMS.auth ? PMS.auth.can("people.write") : true;
     var isAdmin = PMS.auth ? PMS.auth.isAdmin() : false;
+    // A manager may correct their OWN record only (canEditPerson), even though
+    // they may add new people to the org.
+    var canEditThis = PMS.auth ? PMS.auth.canEditPerson(person) : true;
     var acc = isAdmin ? personAccount(person) : null;
     if (canWrite) {
       var actions = h("div.u-flex", { style: { marginTop: "8px" } });
-      actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function (e) { e.stopPropagation(); PMS.editors.openPersonEditor(person, function () { render(document.getElementById("view-root")); }); } } }));
+      if (canEditThis) {
+        actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function (e) { e.stopPropagation(); PMS.editors.openPersonEditor(person, function () { render(document.getElementById("view-root")); }); } } }));
+      }
       if (isAdmin) {
         if (acc) {
           actions.appendChild(h("span.chip", { text: "🔑 " + t("people.hasAccount"), style: acc.cloudUid ? { background: "var(--info-soft)", color: "var(--info)" } : { background: "var(--bg-subtle)", color: "var(--text-faint)" } }));
@@ -210,12 +218,17 @@
           actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("people.createAccount"), on: { click: function (e) { e.stopPropagation(); createPersonAccountDialog(person); } } }));
         }
       }
-      if (person.status !== "inactive") {
-        actions.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("common.archive"), on: { click: function (e) { e.stopPropagation(); archivePerson(person); } } }));
-      } else {
-        actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.restore"), on: { click: function (e) { e.stopPropagation(); PMS.repos.people.update(person.id, { status: "active" }); if (PMS.accounts && PMS.accounts.setActiveForPerson) PMS.accounts.setActiveForPerson(PMS.repos.people.get(person.id)); render(document.getElementById("view-root")); } } }));
+      // Archiving hides somebody from every active list, so it is the admin's
+      // alone. It used to be offered to any manager and then refused at the
+      // confirm step, which read as a broken button.
+      if (isAdmin) {
+        if (person.status !== "inactive") {
+          actions.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("common.archive"), on: { click: function (e) { e.stopPropagation(); archivePerson(person); } } }));
+        } else {
+          actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.restore"), on: { click: function (e) { e.stopPropagation(); PMS.repos.people.update(person.id, { status: "active" }); if (PMS.accounts && PMS.accounts.setActiveForPerson) PMS.accounts.setActiveForPerson(PMS.repos.people.get(person.id)); render(document.getElementById("view-root")); } } }));
+        }
       }
-      card.appendChild(actions);
+      if (actions.childNodes.length) card.appendChild(actions);
     }
     card.addEventListener("click", function () { openPersonDetail(person); });
     return card;
@@ -389,7 +402,7 @@
         });
         wrap.appendChild(mlist);
 
-        if (PMS.auth ? PMS.auth.can("people.write") : true) {
+        if (PMS.auth ? PMS.auth.canEditPerson(person) : true) {
           var openBtn = h("button.btn.btn-sm", { text: t("common.edit"), on: { click: function () { PMS.modal.close(); PMS.editors.openPersonEditor(person, function () {}); } } });
           wrap.appendChild(openBtn);
         }
@@ -415,7 +428,7 @@
     summary.appendChild(h("div.u-muted", {
       text: t("people.sectionsSummary", { depts: depts.length, people: everyone.length })
     }));
-    if (PMS.auth ? PMS.auth.can("people.write") : true) {
+    if (PMS.auth ? PMS.auth.isAdmin() : true) {
       summary.appendChild(h("button.btn.btn-sm", {
         text: "+ " + t("people.addDepartment"),
         on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { render(document.getElementById("view-root")); }); } }
@@ -454,7 +467,10 @@
           t("people.sectionLoad", { open: open.total - open.done, done: open.done, hours: Math.round(open.hours) })
       })
     ]));
-    if (PMS.auth ? PMS.auth.can("people.write") : true) {
+    // Sections are read-only for a manager: renaming or deleting one restructures
+    // the whole org. requireDelete() refuses the delete anyway; showing a
+    // button that only ever answers with an error toast read as a bug.
+    if (PMS.auth ? PMS.auth.isAdmin() : true) {
       head.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.edit"), on: { click: function () { PMS.editors.openDepartmentEditor(dept, function () { render(document.getElementById("view-root")); }); } } }));
       head.appendChild(h("button.btn.btn-sm.btn-soft-danger", { text: t("common.delete"), on: { click: function () { deleteDept(dept); } } }));
     }

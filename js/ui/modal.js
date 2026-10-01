@@ -27,6 +27,11 @@
     modal.appendChild(header);
     modal.appendChild(body);
 
+    // An optional line between the body and the actions, for explaining an
+    // option that is deliberately NOT offered (e.g. "you may delete only what
+    // you created"). Absent actions with no explanation read as a broken app.
+    if (opts.note) modal.appendChild(h("div.modal-note", { text: opts.note }));
+
     var footer = h("div.modal-footer");
     if (opts.footer) {
       opts.footer.forEach(function (btn) {

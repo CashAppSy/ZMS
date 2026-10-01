@@ -123,7 +123,8 @@
       },
       footer: [
         // No delete button for a manager on a task they did not create: the
-        // option is absent rather than present-then-refused.
+        // option is absent rather than present-then-refused, and the hint
+        // below says why instead of leaving the user guessing.
         canDeleteTask(task) ? {
           label: t("common.delete"), class: "btn-soft-danger",
           onClick: function (m, body) {
@@ -132,8 +133,15 @@
           }
         } : null,
         { label: t("common.close"), onClick: function () { markClosed(); PMS.modal.close(); } }
-      ].filter(Boolean)
+      ].filter(Boolean),
+      note: deleteHint(task)
     });
+  }
+
+  // Shown under the modal: "you may delete only what you created".
+  function deleteHint(task) {
+    if (PMS.auth && PMS.auth.deleteBlockedHint) return PMS.auth.deleteBlockedHint(task);
+    return null;
   }
 
   // ---------------- task <-> task links ----------------

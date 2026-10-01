@@ -233,7 +233,9 @@
       title: m.title,
       size: "lg",
       content: function () { return detailBody(m); },
-      footer: meetingFooter(m)
+      footer: meetingFooter(m),
+      note: PMS.auth && PMS.auth.deleteBlockedHint && !PMS.auth.canDeleteRecord(m)
+        ? PMS.auth.deleteBlockedHint(m) : null
     });
   }
 
@@ -468,20 +470,78 @@
     });
   }
 
+  // link an EXISTING task to this meeting. It used to be a plain dropdown of
+  // the first 60 matches with no way to search, so in a workspace with more than
+  // 60 tasks the rest were simply never offered and linking looked impossible.
+  // This is an inline search panel instead (a modal cannot stack over the open
+  // detail). The result list is capped only to stay readable, and the count of
+  // what is hidden is spelled out.
   function linkExistingTask(m, trigger) {
-    var items = PMS.repos.tasks.all().filter(function (x) { return x.meetingId !== m.id; })
-      .slice(0, 60).map(function (x) {
+    var picker = h("div.link-picker", { style: { marginBlockStart: "8px" } });
+    var search = h("input.input.input-sm", { placeholder: t("meetings.linkExistingTaskSearch") });
+    var results = h("div.link-results");
+    picker.appendChild(search);
+    picker.appendChild(results);
+
+    function close() {
+      if (picker.parentNode) picker.parentNode.removeChild(picker);
+    }
+
+    function hasQuery() { return (search.value || "").trim().length > 0; }
+
+    function matches() {
+      var q = (search.value || "").trim().toLowerCase();
+      var pool = PMS.repos.tasks.all().filter(function (x) { return x.meetingId !== m.id; });
+      if (q) {
+        pool = pool.filter(function (x) {
+          var p = PMS.repos.projects.get(x.projectId);
+          var hay = String(x.title || "") + " " + String(p ? p.name : "");
+          return hay.toLowerCase().indexOf(q) !== -1;
+        });
+      }
+      return pool;
+    }
+
+    function paint() {
+      PMS.dom.clear(results);
+      var list = matches();
+      if (!list.length) {
+        results.appendChild(h("div.u-muted", { text: hasQuery() ? t("common.noResults") : t("meetings.linkExistingTaskHint") }));
+        return;
+      }
+      list.slice(0, 30).forEach(function (x) {
         var p = PMS.repos.projects.get(x.projectId);
-        return {
-          label: x.title + (p ? "  ·  " + p.name : ""),
-          onClick: function () {
+        var row = h("div.link-result", {
+          on: { click: function () {
             PMS.repos.tasks.update(x.id, { meetingId: m.id });
             PMS.toast.show(t("meetings.taskLinked"), "success");
-          }
-        };
+            close();
+          } }
+        });
+        row.appendChild(h("span.u-ellipsis", { text: x.title }));
+        row.appendChild(h("span.u-muted", { text: p ? p.name : "" }));
+        results.appendChild(row);
       });
-    if (!items.length) items.push({ separator: true, header: t("common.noResults") });
-    PMS.dropdown.attach(trigger, items, { alignEnd: true });
+      if (list.length > 30) {
+        results.appendChild(h("div.u-muted", { style: { fontSize: "0.78rem" }, text: t("meetings.moreMatches", { n: list.length - 30 }) }));
+      }
+    }
+
+    search.addEventListener("input", paint);
+    search.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+
+    // Opened from the button itself; Escape or picking a task closes it.
+    // Clicking the trigger again must toggle, not stack a second panel.
+    if (trigger.parentNode) {
+      var existing = trigger.parentNode.querySelector(".link-picker");
+      if (existing) {
+        var box = existing.querySelector("input");
+        if (box) box.focus();
+        return;
+      }
+      trigger.parentNode.insertBefore(picker, trigger.nextSibling);
+    }
+    setTimeout(function () { search.focus(); paint(); }, 0);
   }
 
   function confirmDelete(m) {

@@ -369,10 +369,17 @@
      Used by every "assign / owner / members" control: when the person being
      assigned does not exist yet, create them from the same screen instead of
      opening the People page in another tab. A modal cannot be stacked (the
-     modal API replaces the open one), so the popup is an inline panel. */
+     modal API replaces the open one), so the popup is an inline panel.
+     It asks for the SAME fields as the full person editor (entity-editors.js
+     personSchema), so a person created here is a complete record rather than a
+     half-one that has to be finished later. Creating people is an admin or
+     manager right (people.write): a member gets no "+ person" affordance. */
   function personCreator(onCreated) {
     var wrap = h("div.person-create");
     var panel = h("div.person-create-panel", { style: { display: "none" } });
+
+    // Without auth (a bare local session) keep the old open behaviour.
+    if (PMS.auth && PMS.auth.can && !PMS.auth.can("people.write")) return { el: wrap, panel: panel };
 
     var btn = h("button.btn.btn-sm.btn-ghost", {
       type: "button",
@@ -386,13 +393,18 @@
     wrap.appendChild(btn);
 
     var nameInput = h("input.input", { placeholder: t("people.name"), required: true });
-    var emailInput = h("input.input", { type: "email", placeholder: t("people.email") });
+    var jobInput = h("input.input", { placeholder: t("people.jobTitle") });
+    var emailInput = h("input.input", { type: "email", placeholder: t("people.email"), required: true });
     var phoneInput = h("input.input", { type: "tel", placeholder: t("people.phone") });
     var deptSel = h("select.select");
     deptSel.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
     PMS.repos.departments.all().forEach(function (d) {
       deptSel.appendChild(h("option", { value: d.id, text: d.name }));
     });
+    var statusSel = h("select.select");
+    statusSel.appendChild(h("option", { value: "active", text: t("people.active") }));
+    statusSel.appendChild(h("option", { value: "inactive", text: t("people.inactive") }));
+    var notesInput = h("textarea.textarea", { placeholder: t("people.notes"), rows: 2 });
 
     var err = h("div.hint.person-create-error", { style: { color: "var(--danger)", display: "none" } });
     function showError(msg) { err.textContent = msg; err.style.display = "block"; }
@@ -412,15 +424,16 @@
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError(t("validation.invalidEmail")); return; }
         var person = PMS.repos.people.add({
           name: name,
+          jobTitle: jobInput.value.trim(),
           email: email,
           phone: phoneInput.value.trim(),
           departmentId: deptSel.value || null,
-          jobTitle: "",
-          notes: "",
-          status: "active"
+          status: statusSel.value || "active",
+          notes: notesInput.value.trim()
         });
         if (onCreated) onCreated(person);
-        nameInput.value = ""; emailInput.value = ""; phoneInput.value = "";
+        nameInput.value = ""; jobInput.value = ""; emailInput.value = ""; phoneInput.value = "";
+        notesInput.value = ""; statusSel.value = "active";
         panel.style.display = "none";
         clearError();
         PMS.toast.show(t("people.personAdded", { name: person.name }), "success");
@@ -433,9 +446,12 @@
 
     panel.appendChild(h("div.person-create-title", { text: t("people.newPerson") }));
     panel.appendChild(nameInput);
+    panel.appendChild(jobInput);
     panel.appendChild(emailInput);
     panel.appendChild(phoneInput);
     panel.appendChild(deptSel);
+    panel.appendChild(statusSel);
+    panel.appendChild(notesInput);
     panel.appendChild(err);
     panel.appendChild(h("div.hint", { text: t("people.personCreateHint") }));
     var actions = h("div.u-flex", { style: { gap: "6px" } });

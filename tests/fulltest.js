@@ -596,19 +596,51 @@ const root = () => document.getElementById("view-root");
   const againBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
   againBtns[againBtns.length - 1].click();
   ok("editing a meeting task keeps its back-link", PMS.repos.tasks.get(flowTask.id).meetingId === flowMtg.id);
-  // link an existing task to the meeting through the dropdown
+  // link an existing task to the meeting through the search panel
   PMS.meetings.openDetail(flowMtg.id);
   const linkExistingBtn = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.linkExistingTask")) === 0);
   linkExistingBtn.click();
-  const ddItem = document.querySelector(".dropdown-menu.open .dropdown-item");
-  ok("link-existing dropdown lists tasks", !!ddItem);
-  const linkedTitle = ddItem ? ddItem.textContent.split("  ·  ")[0] : "";
-  ddItem.click();
-  const linked = PMS.repos.meetings.tasksOf(flowMtg.id).filter(t => t.title === linkedTitle);
-  ok("an existing task is attached to the meeting", linked.length === 1);
+  const linkSearch = PMS.modal.body.querySelector(".link-picker input");
+  ok("link-existing opens a searchable picker", !!linkSearch);
+  // clicking the trigger again must not stack a second panel
+  const trig = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.linkExistingTask")) === 0);
+  if (trig) trig.click();
+  const openBoxes = document.getElementById("modal-root").querySelectorAll(".link-picker");
+  ok("re-opening the picker reuses the panel instead of stacking", openBoxes.length === 1, openBoxes.length + " panels");
+  const unlinked = PMS.repos.tasks.all().filter(t => t.meetingId !== flowMtg.id);
+  const linkTarget = unlinked[unlinked.length - 1];
+  linkSearch.value = linkTarget.title;
+  linkSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const row = Array.from(PMS.modal.body.querySelectorAll(".link-result")).find(r => (r.textContent || "").indexOf(linkTarget.title) !== -1);
+  ok("typing a title narrows the list to that task", !!row);
+  row.click();
+  ok("an existing task is attached to the meeting",
+    PMS.repos.meetings.tasksOf(flowMtg.id).filter(t => t.id === linkTarget.id).length === 1);
   ok("the meeting now lists two tasks", PMS.repos.meetings.tasksOf(flowMtg.id).length === 2);
   PMS.modal.close();
   PMS.repos.meetings.remove(flowMtg.id);
+
+  // Regression: the picker used to be a dropdown of the first 60 tasks with no
+  // search, so anything past the 60th could not be linked at all.
+  {
+    const manyMtg = PMS.repos.meetings.add({ title: "Many tasks meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [], projectIds: [pillar.id] });
+    const filler = [];
+    for (let i = 0; i < 70; i++) filler.push(PMS.repos.tasks.add({ title: "Filler " + i, projectId: pillar.id, status: "todo" }));
+    const deep = PMS.repos.tasks.add({ title: "Deep tail needle", projectId: pillar.id, status: "todo" });
+    PMS.meetings.openDetail(manyMtg.id);
+    Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.linkExistingTask")) === 0).click();
+    const manySearch = PMS.modal.body.querySelector(".link-picker input");
+    manySearch.value = "Deep tail needle";
+    manySearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const deepRow = Array.from(PMS.modal.body.querySelectorAll(".link-result")).find(r => (r.textContent || "").indexOf("Deep tail needle") !== -1);
+    ok("a task past the old 60-item cap is still linkable", !!deepRow);
+    if (deepRow) deepRow.click();
+    ok("the far-past-cap task really got linked", PMS.repos.meetings.tasksOf(manyMtg.id).map(t => t.title).indexOf("Deep tail needle") !== -1);
+    PMS.modal.close();
+    PMS.repos.meetings.remove(manyMtg.id);
+    filler.forEach(t => PMS.repos.tasks.remove(t.id));
+    PMS.repos.tasks.remove(deep.id);
+  }
 
   // task <-> task links
   const linkA = PMS.repos.tasks.add({ title: "Link A", projectId: pillar.id, status: "todo" });
@@ -811,17 +843,27 @@ const root = () => document.getElementById("view-root");
   pSearch.value = "";
   pSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
   PMS.repos.people.update(phonePerson.id, { status: "inactive" }); // people are archived, not deleted
-  // the inline "+ person" popup captures the phone too
+  // the inline "+ person" popup must capture the FULL person record, not just a
+  // name, because it is offered from every assign/owner/members control
   const popupCtl = PMS.forms.buildControl({ key: "assignees", type: "multiselect", options: [], allowCreatePerson: true }, []);
   const pWrap = popupCtl.el.querySelector(".person-create");
   pWrap.querySelector(".btn").click();
-  const pInputs = pWrap.querySelectorAll(".person-create-panel input");
-  pInputs[0].value = "Popup Person";
-  pInputs[1].value = "popup@example.com";
-  pInputs[2].value = "+962 7 555 000";
-  pWrap.querySelector(".person-create-panel .btn-primary").click();
+  const pPanel = pWrap.querySelector(".person-create-panel");
+  const byPlaceholder = (ph) => Array.from(pPanel.querySelectorAll("input,textarea")).find(el => (el.placeholder || "") === ph);
+  byPlaceholder(PMS.i18n.t("people.name")).value = "Popup Person";
+  byPlaceholder(PMS.i18n.t("people.jobTitle")).value = "Inspector";
+  byPlaceholder(PMS.i18n.t("people.email")).value = "popup@example.com";
+  byPlaceholder(PMS.i18n.t("people.phone")).value = "+962 7 555 000";
+  byPlaceholder(PMS.i18n.t("people.notes")).value = "added from a task";
+  const deptOpts = pPanel.querySelectorAll("select")[0];
+  if (deptOpts.options.length > 1) deptOpts.value = deptOpts.options[1].value;
+  pPanel.querySelector(".btn-primary").click();
   const popupPerson = PMS.repos.people.all().find(p => p.name === "Popup Person");
   ok("the +person popup saves the phone", !!popupPerson && popupPerson.phone === "+962 7 555 000");
+  ok("the +person popup also saves job title and notes (full record)",
+    !!popupPerson && popupPerson.jobTitle === "Inspector" && popupPerson.notes === "added from a task");
+  ok("the +person popup saves the department it was given",
+    !!popupPerson && !!popupPerson.departmentId && popupPerson.departmentId !== null);
   if (popupPerson) PMS.repos.people.update(popupPerson.id, { status: "inactive" });
 
   section("Forms + charts + dom");
@@ -1564,6 +1606,141 @@ section("Cloud sync (offline-safe API)");
       PMS.auth.canDeleteRecord(theirs) === true && PMS.auth.canDelete() === true && PMS.auth.requireDelete(theirs) === true);
     PMS.store.setData(saved2);
   }
+
+  // --- the silence fix: when a manager sees no Delete at all, the screen says
+  // --- why instead of looking broken -----------------------------------------
+  {
+    const savedH = PMS.utils.deepClone(PMS.store.data);
+    const theirs = PMS.repos.tasks.add({ title: "Author's task", status: "todo" });
+    const mgrU = PMS.auth.createUser({ username: "hana@z", password: "pw12345", name: "Hana" }).user;
+    PMS.auth.updateUser(mgrU.id, { role: "manager" });
+    PMS.auth.login("hana@z", "pw12345");
+    // created BY the manager, so it is the one they are allowed to delete
+    const mine = PMS.repos.tasks.add({ title: "Manager's task", status: "todo" });
+    ok("a manager may delete a task they created",
+      PMS.auth.canDeleteRecord(mine) === true && PMS.auth.canDeleteRecord(theirs) === false);
+    ok("a manager on somebody else's record is told the deletion rule",
+      typeof PMS.auth.deleteBlockedHint(theirs) === "string" &&
+      PMS.auth.deleteBlockedHint(theirs).indexOf(PMS.i18n.t("auth.deleteOwnOnly")) === 0);
+    ok("a manager on their own record is not nagged",
+      PMS.auth.deleteBlockedHint(mine) === null);
+    ok("a member is not nagged either", (function () {
+      PMS.auth.login("lina", "newpass1");
+      const m = PMS.auth.deleteBlockedHint(theirs) === null;
+      return m;
+    })());
+
+    // and it actually reaches the screen the manager is looking at
+    PMS.auth.login("hana@z", "pw12345");
+    PMS.taskDetail.open(theirs.id);
+    ok("the task screen shows the explanation when no Delete is offered",
+      !!document.querySelector(".modal-note") && !document.querySelector(".modal-footer .btn-soft-danger"));
+    PMS.modal.close();
+    PMS.taskDetail.open(mine.id);
+    ok("the manager's own task shows Delete and no explanation",
+      !!document.querySelector(".modal-footer .btn-soft-danger") && !document.querySelector(".modal-note"));
+    PMS.modal.close();
+    PMS.auth.login("boss", "pw1234");
+    PMS.taskDetail.open(theirs.id);
+    ok("an admin is neither blocked nor explained",
+      !!document.querySelector(".modal-footer .btn-soft-danger") && !document.querySelector(".modal-note"));
+    PMS.modal.close();
+
+    // a manager links an existing task into a meeting of their own
+    PMS.auth.login("hana@z", "pw12345");
+    const mtg = PMS.repos.meetings.add({ title: "Manager meeting", date: PMS.utils.todayISO(), attendees: [], agenda: [] });
+    const free = PMS.repos.tasks.all().find(t => !t.meetingId);
+    PMS.meetings.openDetail(mtg.id);
+    const lb = Array.from(PMS.modal.body.querySelectorAll("button")).find(b => b.textContent.indexOf("+ " + PMS.i18n.t("meetings.linkExistingTask")) === 0);
+    ok("a manager is offered the searchable task picker", !!lb);
+    if (lb) {
+      lb.click();
+      const box = PMS.modal.body.querySelector(".link-picker input");
+      box.value = free.title;
+      box.dispatchEvent(new window.Event("input", { bubbles: true }));
+      const hit = Array.from(PMS.modal.body.querySelectorAll(".link-result")).find(r => (r.textContent || "").indexOf(free.title) !== -1);
+      hit.click();
+    }
+    ok("a manager really attached an existing task to their meeting",
+      PMS.repos.meetings.tasksOf(mtg.id).some(t => t.id === free.id));
+    PMS.modal.close();
+    PMS.store.setData(savedH);
+    PMS.auth.login("boss", "pw1234");
+  }
+
+  // --- people + departments: a manager may look and may add, but must not
+  // --- rewrite or remove another person's record -----------------------------
+  {
+    const savedP = PMS.utils.deepClone(PMS.store.data);
+    const other = PMS.repos.people.all()[0];
+    const made = PMS.auth.createUser({ username: "mira@z", password: "pw12345", name: "Mira" });
+    const mgr = made.user;
+    ok("a promoted manager can add people but cannot edit other people",
+      PMS.auth.updateUser(mgr.id, { role: "manager", personId: other.id }).ok === true &&
+      PMS.auth.can("people.write") === true && PMS.auth.canEditPerson(other) === true);
+    PMS.auth.login("mira@z", "pw12345");
+    ok("a manager is signed in and linked to their person",
+      PMS.auth.currentUser().role === "manager" && PMS.auth.currentUser().personId === other.id);
+
+    const meP = PMS.repos.people.get(other.id);
+    const another = PMS.repos.people.all().find(p => p.id !== other.id);
+    ok("a manager may edit their own person record", PMS.auth.canEditPerson(meP) === true);
+    ok("a manager may NOT edit somebody else's person record", PMS.auth.canEditPerson(another) === false);
+
+    // the person editor refuses it too, not just the button that is hidden
+    PMS.editors.openPersonEditor(another, function () {});
+    ok("the person editor refuses to open for another person", !PMS.modal.isOpen);
+    PMS.editors.openPersonEditor(meP, function () {});
+    ok("the person editor opens for their own record", PMS.modal.isOpen);
+    PMS.modal.close();
+
+    // people screen: edit on own card only, and no archive offered
+    route("/people");
+    const myCard = Array.from(root().querySelectorAll(".person-card")).find(c => (c.textContent || "").indexOf(meP.name) !== -1);
+    const otherCard = Array.from(root().querySelectorAll(".person-card")).find(c => (c.textContent || "").indexOf(another.name) !== -1);
+    ok("the manager's own person card offers Edit",
+      !!myCard && Array.from(myCard.querySelectorAll(".btn")).some(b => b.textContent.indexOf(PMS.i18n.t("common.edit")) === 0));
+    ok("another person's card offers the manager no Edit",
+      !!otherCard && Array.from(otherCard.querySelectorAll(".btn")).every(b => b.textContent.indexOf(PMS.i18n.t("common.edit")) !== 0));
+    ok("no card offers the manager Archive (admin only)",
+      !Array.from(root().querySelectorAll(".person-card .btn")).some(b => b.textContent.indexOf(PMS.i18n.t("common.archive")) === 0));
+    ok("the manager still gets the Add person action",
+      Array.from(root().querySelectorAll(".page-header button")).some(b => (b.textContent || "").indexOf(PMS.i18n.t("people.addPerson")) !== -1));
+    ok("the manager does NOT get the Add department action (sections are read-only)",
+      !Array.from(root().querySelectorAll(".page-header button")).some(b => (b.textContent || "").indexOf(PMS.i18n.t("people.addDepartment")) !== -1));
+    // departments: readable, editable, but never deletable by a manager
+    Array.from(root().querySelectorAll(".tab")).find(t => (t.textContent || "") === PMS.i18n.t("people.departments")).click();
+    ok("the manager can see the departments list", (root().textContent || "").indexOf(PMS.i18n.t("people.departments")) !== -1);
+    const deptWrite = Array.from(root().querySelectorAll(".btn")).filter(b => b.textContent.indexOf(PMS.i18n.t("common.delete")) === 0 || b.textContent.indexOf(PMS.i18n.t("common.edit")) === 0);
+    ok("departments are read-only for a manager (no Edit, no Delete)", deptWrite.length === 0, deptWrite.length + " shown");
+    ok("the manager gets no Add department button inside the departments tab",
+      !Array.from(root().querySelectorAll("button")).some(b => (b.textContent || "").indexOf(PMS.i18n.t("people.addDepartment")) !== -1));
+    // leave the view on the People tab: the tab choice is module state and
+    // later assertions expect the default section
+    Array.from(root().querySelectorAll(".tab")).find(t => (t.textContent || "") === PMS.i18n.t("people.people")).click();
+
+    // a manager whose account was never linked to a person owns no record
+    PMS.auth.login("boss", "pw1234");
+    const nolink = PMS.auth.createUser({ username: "niko@z", password: "pw12345", name: "Niko" }).user;
+    PMS.auth.updateUser(nolink.id, { role: "manager" });
+    PMS.auth.login("niko@z", "pw12345");
+    ok("a manager with no linked person owns no person record",
+      PMS.auth.currentPersonId() === null && PMS.auth.canEditPerson(meP) === false && PMS.auth.canEditPerson(another) === false);
+    ok("but a manager with no linked person may still add people", PMS.auth.can("people.write") === true);
+
+    // a member gets no way to create a person at all
+    PMS.auth.login("lina", "newpass1");
+    const memCtl = PMS.forms.buildControl({ key: "assignees", type: "multiselect", options: [], allowCreatePerson: true }, []);
+    ok("a member gets no inline +person affordance",
+      !memCtl.el.querySelector(".person-create .btn") && PMS.auth.can("people.write") === false);
+    ok("a member cannot open the person editor", PMS.editors.canOpenPerson(meP) === false);
+
+    PMS.auth.login("boss", "pw1234");
+    ok("an admin may still edit and open any person",
+      PMS.auth.canEditPerson(another) === true && PMS.auth.canEditPerson(meP) === true);
+    PMS.store.setData(savedP);
+    PMS.auth.login("boss", "pw1234");
+  }
   PMS.auth.login("lina", "newpass1");
   ok("member canDelete/requireDelete returns false",
     PMS.auth.currentUser().role === "member" && PMS.auth.canDelete() === false && PMS.auth.requireDelete() === false);
@@ -1909,6 +2086,12 @@ section("Meeting creator + file attachments + member scoping + people/sections")
   if (deptTab) deptTab.click();
   ok("the departments tab renders", errors.length === 0, errors.join(" | "));
   ok("departments list their members", !!root().querySelector(".people-row"));
+  // the admin is the one who restructures the org, so the section buttons stay
+  ok("the admin still gets Edit and Delete on a department",
+    !!Array.from(root().querySelectorAll(".btn")).find(b => b.textContent.indexOf(PMS.i18n.t("common.edit")) === 0) &&
+    !!Array.from(root().querySelectorAll(".btn")).find(b => b.textContent.indexOf(PMS.i18n.t("common.delete")) === 0));
+  ok("the admin still gets Add department",
+    Array.from(root().querySelectorAll("button")).some(b => (b.textContent || "").indexOf(PMS.i18n.t("people.addDepartment")) !== -1));
 
   const somePerson = PMS.repos.people.all().find(p => p.departmentId);
   if (somePerson) {

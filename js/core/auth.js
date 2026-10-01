@@ -490,6 +490,20 @@
     return false;
   }
 
+  // May the current user open the FULL person editor for THIS person? Admins:
+  // anyone. A manager may correct their own profile and nothing else — they can
+  // add people to the org (people.write) but must not rewrite somebody else's
+  // record. Members: never. Without a linked person a manager owns nothing, so
+  // they get no person editor at all rather than everyone's.
+  function canEditPerson(person) {
+    var u = currentUser();
+    if (!u) return false;
+    if (u.role === "admin") return true;
+    if (u.role !== "manager") return false;
+    var pid = currentPersonId();
+    return !!pid && !!person && person.id === pid;
+  }
+
   // Confirms the current admin session by re-entering the local password
   // (used before destructive operations like restore/import-replace).
   // Returns:
@@ -535,6 +549,17 @@
     if (r === "admin") return true;
     if (r === "manager") return createdByCurrentUser(rec);
     return false;
+  }
+
+  // A manager looking at somebody else's record finds no delete button at all.
+  // That is the rule working, but with no explanation it reads as a broken
+  // app, so the screens show this line instead of leaving the user guessing.
+  // Returns null whenever the question does not apply (admin, their own
+  // record, a member).
+  function deleteBlockedHint(rec) {
+    if (role() !== "manager") return null;
+    if (canDeleteRecord(rec)) return null;
+    return PMS.i18n && PMS.i18n.t ? PMS.i18n.t("auth.deleteOwnOnly") : "You can delete only the records you created.";
   }
 
   // Gate used by delete entry points: returns true for the admin, otherwise
@@ -728,9 +753,11 @@ PMS.auth = {
     canCreateMeeting: canCreateMeeting,
     canEditMeeting: canEditMeeting,
     canEditProject: canEditProject,
+    canEditPerson: canEditPerson,
     canDelete: canDelete,
     requireDelete: requireDelete,
     canDeleteRecord: canDeleteRecord,
+    deleteBlockedHint: deleteBlockedHint,
     createdByCurrentUser: createdByCurrentUser,
     reauthenticateAdmin: reauthenticateAdmin,
     // ZMS-R16: sensitive-action gate (local + cloud admin password).

@@ -86,8 +86,12 @@
     var owner = managerId ? PMS.repos.people.get(managerId) : null;
     var wrap = h("span.chip.chip-owner", { attrs: { title: t("projects.owner") } });
     wrap.appendChild(h("span", { text: "👤 " + t("projects.owner") + ": " + (owner ? owner.name : t("common.none")) }));
-    if (owner) wrap.style.cursor = "pointer";
-    if (owner) {
+    // The chip is a shortcut into the person editor, so it is only clickable
+    // for someone allowed to edit that person: otherwise a plain click on a
+    // name would answer with a "forbidden" toast.
+    var canEditOwner = owner && (!PMS.auth || !PMS.auth.canEditPerson || PMS.auth.canEditPerson(owner));
+    if (canEditOwner) wrap.style.cursor = "pointer";
+    if (canEditOwner) {
       wrap.addEventListener("click", function (e) {
         e.stopPropagation();
         PMS.editors.openPersonEditor(owner, function () {});
@@ -185,6 +189,13 @@
       actions.appendChild(h("button.btn.btn-soft-danger", {
         text: t("common.delete"),
         on: { click: function () { deleteProject(proj); } }
+      }));
+    } else if (PMS.auth && PMS.auth.deleteBlockedHint) {
+      // no delete for a pillar the manager did not create: say so, otherwise
+      // the missing button looks like a bug
+      actions.appendChild(h("span.u-muted", {
+        text: PMS.auth.deleteBlockedHint(proj),
+        style: { fontSize: "0.78rem", maxWidth: "320px" }
       }));
     }
     if (canEdit) {

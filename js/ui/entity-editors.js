@@ -31,9 +31,13 @@
     return PMS.auth.canEditProject(project) ? true : deny();
   }
 
-  function canOpenPerson() {
+  function canOpenPerson(person) {
     if (!PMS.auth) return true;
-    return PMS.auth.can("people.write") ? true : deny();
+    if (!PMS.auth.can("people.write")) return deny();
+    // Adding somebody is a different right from rewriting an existing record:
+    // a manager may create people but may only edit their own entry.
+    if (person && PMS.auth.canEditPerson && !PMS.auth.canEditPerson(person)) return deny();
+    return true;
   }
 
   function canOpenDepartment() {
@@ -238,7 +242,7 @@
   }
 
   function openPersonEditor(person, onSaved) {
-    if (!canOpenPerson()) return;
+    if (!canOpenPerson(person)) return;
     var isEdit = !!person;
     var isAdmin = PMS.auth && PMS.auth.isAdmin ? PMS.auth.isAdmin() : false;
     PMS.modal.open({
