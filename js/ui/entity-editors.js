@@ -439,6 +439,7 @@
               managerId: v.managerId || null, memberIds: v.memberIds || [],
               startDate: v.startDate, endDate: v.endDate, budget: v.budget,
               weight: v.weight === "" || v.weight === undefined || v.weight === null ? 1 : Number(v.weight),
+              plannedTaskCount: (v.plannedTaskCount === "" || v.plannedTaskCount === undefined || v.plannedTaskCount === null) ? 0 : Number(v.plannedTaskCount),
               tags: v.tags || [], links: parseLinks(v.links), notes: v.notes, customFields: cf
             };
             var check = PMS.validation.check("project", payload);
