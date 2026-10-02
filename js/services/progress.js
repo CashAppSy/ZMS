@@ -154,18 +154,8 @@
         }
       });
       var plannedWeight = planned * DEFAULT_PLANNED_WEIGHT;
-      if (plannedWeight <= 0) {
-        var total2 = 0, weight2 = 0;
-        (data.tasks || []).forEach(function (t) {
-          if (isInProjectTree(data, t, projectId)) {
-            var w2 = taskWeightAttr(data, t, weightByTime);
-            total2 += w2 * taskProgress(data, t.id, weightByTime);
-            weight2 += w2;
-          }
-        });
-        return clampProgress(weight2 ? total2 / weight2 : 0);
-      }
-      return clampProgress(Math.min(100, Math.round((total * 100) / plannedWeight)));
+      if (plannedWeight <= 0) return clampProgress(weight ? total / weight : 0);
+      return clampProgress(Math.min(100, (total * 100) / plannedWeight));
     }
     var total = 0, weight = 0;
     items.forEach(function (it) {
