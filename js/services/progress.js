@@ -155,7 +155,8 @@
       });
       var plannedWeight = planned * DEFAULT_PLANNED_WEIGHT;
       if (plannedWeight <= 0) return clampProgress(weight ? total / weight : 0);
-      return clampProgress(Math.min(100, (total * 100) / plannedWeight));
+      var pctRes = (total * 100) / plannedWeight;
+      return clampProgress(Math.min(100, pctRes));
     }
     var total = 0, weight = 0;
     items.forEach(function (it) {
