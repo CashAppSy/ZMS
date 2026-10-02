@@ -20,6 +20,15 @@
     planned: 0, active: 45, completed: 100, cancelled: 0, onhold: 10
   };
 
+  // Priority weight (when not weighting by estimated hours)
+  var PRIORITY_WEIGHT = {
+    low: 0.5,
+    medium: 1.0,
+    high: 1.5,
+    urgent: 2.0
+  };
+  var DEFAULT_PLANNED_WEIGHT = PRIORITY_WEIGHT.medium;
+
   function taskChildren(data, id) {
     return (data.tasks || []).filter(function (t) { return t.parentTaskId === id; });
   }
@@ -81,11 +90,20 @@
   function taskWeightAttr(data, task, weightByTime) {
     var children = taskChildren(data, task.id);
     if (!children.length) {
-      return weightByTime && task.estimatedHours ? Number(task.estimatedHours) || 1 : 1;
+      if (weightByTime && task.estimatedHours) {
+        return Number(task.estimatedHours) || priorityWeight(task);
+      }
+      return priorityWeight(task);
     }
     var sum = 0;
     children.forEach(function (c) { sum += taskWeightAttr(data, c, weightByTime); });
     return sum;
+  }
+
+  function priorityWeight(task) {
+    var p = task && task.priority;
+    if (PRIORITY_WEIGHT[p] !== undefined) return PRIORITY_WEIGHT[p];
+    return PRIORITY_WEIGHT.medium;
   }
 
   // aggregate progress for a flat list of tasks at the same nesting level
@@ -127,11 +145,27 @@
     // planned/actual: if a plan exists, measure toward it from done tasks
     var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
     if (planned > 0) {
-      var done = 0;
+      var total = 0, weight = 0;
       (data.tasks || []).forEach(function (t) {
-        if (isInProjectTree(data, t, projectId) && statusPct(data, t.status) >= 99.5) done++;
+        if (isInProjectTree(data, t, projectId)) {
+          var w = taskWeightAttr(data, t, weightByTime);
+          total += w * taskProgress(data, t.id, weightByTime);
+          weight += w;
+        }
       });
-      return clampProgress(Math.min(100, Math.round((done * 100) / planned)));
+      var plannedWeight = planned * DEFAULT_PLANNED_WEIGHT;
+      if (plannedWeight <= 0) {
+        var total2 = 0, weight2 = 0;
+        (data.tasks || []).forEach(function (t) {
+          if (isInProjectTree(data, t, projectId)) {
+            var w2 = taskWeightAttr(data, t, weightByTime);
+            total2 += w2 * taskProgress(data, t.id, weightByTime);
+            weight2 += w2;
+          }
+        });
+        return clampProgress(weight2 ? total2 / weight2 : 0);
+      }
+      return clampProgress(Math.min(100, Math.round((total * 100) / plannedWeight)));
     }
     var total = 0, weight = 0;
     items.forEach(function (it) {
