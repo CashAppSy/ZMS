@@ -143,6 +143,7 @@
       { key: "endDate", label: t("projects.endDate"), type: "date" },
       { key: "budget", label: t("projects.budget"), type: "number" },
       { key: "weight", label: t("projects.weight"), type: "number", hint: t("projects.weightHint") },
+      { key: "plannedTaskCount", label: t("projects.plannedCount"), type: "number" },
       { key: "tags", label: t("common.tags"), type: "tags", full: true },
       { key: "links", label: t("projects.links"), type: "text", hint: t("common.typeHere") },
       { key: "notes", label: t("common.notes"), type: "textarea", full: true }

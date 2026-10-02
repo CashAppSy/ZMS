@@ -40,6 +40,19 @@
     return out;
   }
 
+  function isInProjectTree(data, task, projectId) {
+    if (!task || !projectId) return false;
+    if (task.projectId === projectId) return true;
+    // check if task's project is descendant of projectId
+    function isDesc(pid, target) {
+      if (!pid) return false;
+      if (pid === target) return true;
+      var p = (data.projects || []).find(function (x) { return x.id === pid; });
+      return p && p.parentId ? isDesc(p.parentId, target) : false;
+    }
+    return isDesc(task.projectId, projectId);
+  }
+
   // percentage a single status maps to (0-100); falls back by key name
   function statusPct(data, statusKey) {
     var s = (data.taskStatuses || []).find(function (x) { return x.key === statusKey; });
@@ -107,8 +120,19 @@
   // total progress for a project = aggregate of its root tasks and sub-projects
   function projectProgress(data, projectId, projectProgressOverride) {
     var weightByTime = !!(data.settings && data.settings.weightByTime);
+    var proj = (data.projects || []).find(function (p) { return p.id === projectId; });
+    if (proj && proj.status === "completed") return 100;
     var items = collectTreeLeaves(data, projectId, weightByTime);
     if (!items.length) return projectProgressOverride || 0;
+    // planned/actual: if a plan exists, measure toward it from done tasks
+    var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
+    if (planned > 0) {
+      var done = 0;
+      (data.tasks || []).forEach(function (t) {
+        if (isInProjectTree(data, t, projectId) && statusPct(data, t.status) >= 99.5) done++;
+      });
+      return clampProgress(Math.min(100, Math.round((done * 100) / planned)));
+    }
     var total = 0, weight = 0;
     items.forEach(function (it) {
       total += it.weight * it.value;

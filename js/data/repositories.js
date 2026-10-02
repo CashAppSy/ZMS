@@ -262,9 +262,17 @@
         // created, and it can only answer that if the creator was stamped.
         // Without this a manager who created a pillar could never delete it.
         stampCreator(obj);
+        // plannedTaskCount is the target number of tasks for this pillar.
+        if (obj.plannedTaskCount === undefined || obj.plannedTaskCount === null) obj.plannedTaskCount = 0;
+        else obj.plannedTaskCount = Math.max(0, parseInt(obj.plannedTaskCount, 10) || 0);
         return add("projects", obj);
       },
-      update: function (id, patch) { return update("projects", id, patch); },
+      update: function (id, patch) {
+        if (patch && patch.plannedTaskCount !== undefined && patch.plannedTaskCount !== null) {
+          patch.plannedTaskCount = Math.max(0, parseInt(patch.plannedTaskCount, 10) || 0);
+        }
+        return update("projects", id, patch);
+      },
       // cascade delete: sub-projects and their tasks
       remove: function (id) {
         var toDelete = [];

@@ -199,7 +199,12 @@
       }));
     }
     if (canEdit) {
-      actions.appendChild(h("button.btn.btn-primary", { text: "+ " + t("projects.addSubProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { defaults: { parentId: proj.id }, onSaved: function () {} }); } } }));
+      actions.appendChild(h("button.btn", { text: t("projects.addSubProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { defaults: { parentId: proj.id }, onSaved: function () {} }); } } }));
+    }
+    // Mark as completed
+    var canMarkCompleted = canEdit || (PMS.auth && PMS.auth.isAdmin && PMS.auth.isAdmin());
+    if (canMarkCompleted && proj.status !== "completed") {
+      actions.appendChild(h("button.btn", { text: t("projects.markAsCompleted"), on: { click: function () { markCompleted(proj, allData); } } }));
     }
     header.appendChild(actions);
     container.appendChild(header);
@@ -209,7 +214,29 @@
     var main = h("div.ph-main.card");
     main.appendChild(h("div.card-body", [
       h("div.detail-list", [
-        metaItem(t("projects.progress"), PMS.utils.pct(prog)),
+        metaItem(t("projects.progress"), PMS.utils.pct(prog) + (function(){
+          var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
+          if (!planned) return "";
+          var done = (function(){
+            var pct = PMS.progress.statusPct;
+            return (allData.tasks||[]).filter(function(t){
+              var inTree=false; if(t.projectId===proj.id) inTree=true;
+              else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
+              return inTree && pct(allData,t.status)>=99.5;
+            }).length;
+          })();
+          var totalInTree = (function(){
+            return (allData.tasks||[]).filter(function(t){
+              var inTree=false; if(t.projectId===proj.id) inTree=true;
+              else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
+              return inTree;
+            }).length;
+          })();
+          var beyond = Math.max(0, totalInTree - planned);
+          if (beyond > 0) return " (" + done + "/" + planned + " " + t("projects.planned") + "; " + t("projects.scopeBeyondPlan",{n:beyond,count:planned}) + ")";
+          return " (" + done + "/" + planned + " " + t("projects.planned") + ")";
+        })()),
+        metaItem(t("projects.plannedCount"), String(proj.plannedTaskCount || 0)),
         metaItem(t("projects.startDate"), PMS.utils.formatDate(proj.startDate, PMS.i18n)),
         metaItem(t("projects.endDate"), PMS.utils.formatDate(proj.endDate, PMS.i18n)),
         metaItem(t("projects.budget"), PMS.utils.money(proj.budget, (data().settings && data().settings.currency), PMS.i18n)),
@@ -307,6 +334,34 @@
       row.appendChild(PMS.vformat.priorityBadge(tsk.priority));
       return row;
     });
+  }
+
+  function markCompleted(proj, allData) {
+    var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
+    var pct = PMS.progress.statusPct;
+    var done = (allData.tasks||[]).filter(function(t){
+      var inTree=false; if(t.projectId===proj.id) inTree=true;
+      else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
+      return inTree && pct(allData,t.status)>=99.5;
+    }).length;
+    var plannedLeft = Math.max(0, planned - done);
+    function doIt() {
+      PMS.repos.projects.update(proj.id, { status: "completed", progress: 100 });
+      PMS.toast.show(t("projects.markAsCompleted"), "success");
+    }
+    if (planned > 0 && plannedLeft > 0) {
+      var tasksWord = plannedLeft===1 ? t("projects.tasksSingular") : t("projects.tasksPlural");
+      PMS.modal.open({
+        title: t("projects.markCompletedTitle"),
+        content: h("p", { text: t("projects.markCompletedConfirm", { n: plannedLeft, tasks: tasksWord }) }),
+        footer: [
+          { label: t("common.cancel"), onClick: function(){ PMS.modal.close(); } },
+          { label: t("common.confirm"), class: "btn-primary", onClick: function(){ PMS.modal.close(); doIt(); } }
+        ]
+      });
+      return;
+    }
+    doIt();
   }
 
   function deleteProject(proj) {
