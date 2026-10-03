@@ -143,18 +143,12 @@
       { key: "endDate", label: t("projects.endDate"), type: "date" },
       { key: "budget", label: t("projects.budget"), type: "number" },
       { key: "weight", label: t("projects.weight"), type: "number", hint: t("projects.weightHint") },
-      { key: "plannedTaskCount", label: t("projects.plannedCount"), type: "number" },
-      // Program progress model: the pillar's raw (relative) weight, the planned
-      // scope it is measured against, and the importance its un-created planned
-      // task slots carry.
-      { key: "rawWeight", label: t("projects.rawWeight"), type: "number", hint: t("projects.rawWeightHint") },
-      { key: "plannedTasks", label: t("projects.plannedScope"), type: "number", hint: t("projects.plannedScopeHint") },
+      // Program progress model: one weight field (the pre-existing `weight`) and one
+      // planned-scope field. `plannedTaskCount` is kept in sync underneath, and
+      // `rawWeight` / `defaultTaskImportance` are gone for good.
       {
-        key: "defaultTaskImportance", label: t("projects.defaultImportance"), type: "select",
-        options: PMS.programProgress.IMPORTANCE_LEVELS.map(function (k) {
-          return { label: PMS.programProgress.importanceWeights(PMS.store.data)[k], value: k };
-        }),
-        hint: t("projects.defaultImportanceHint")
+        key: "plannedTasks", label: t("projects.plannedScope"), type: "number",
+        hint: t("projects.plannedScopeHint")
       },
       { key: "tags", label: t("common.tags"), type: "tags", full: true },
       { key: "links", label: t("projects.links"), type: "text", hint: t("common.typeHere") },
@@ -187,15 +181,9 @@
       { key: "dueDate", label: t("tasks.dueDate"), type: "date" },
       { key: "estimatedHours", label: t("tasks.estimated"), type: "number" },
       { key: "actualHours", label: t("tasks.actual"), type: "number" },
-      // Program progress model: the task's importance fixes its weight, and the
-      // planned subtask scope is what the sub-tasks are measured against.
-      {
-        key: "importance", label: t("projects.defaultImportance"), type: "select",
-        options: PMS.programProgress.IMPORTANCE_LEVELS.map(function (k) {
-          return { label: k + " (" + PMS.programProgress.importanceWeights(PMS.store.data)[k] + ")", value: k };
-        }),
-        hint: t("projects.defaultImportanceHint")
-      },
+      // Program progress model: the task's `priority` (shown above) is what
+      // fixes its weight, so there is no second importance field here. Only the
+      // planned subtask scope is extra.
       { key: "plannedSubtasks", label: t("projects.plannedSubtasks"), type: "number", hint: t("projects.plannedSubtasksHint") },
       { key: "linkedTaskIds", label: t("tasks.linkedTasks"), type: "linkedTask", excludeId: taskId || null, full: true, hint: t("tasks.linkedTasksHint") },
       { key: "tags", label: t("common.tags"), type: "tags", full: true }
@@ -461,10 +449,8 @@
               managerId: v.managerId || null, memberIds: v.memberIds || [],
               startDate: v.startDate, endDate: v.endDate, budget: v.budget,
               weight: v.weight === "" || v.weight === undefined || v.weight === null ? 1 : Number(v.weight),
-              plannedTaskCount: (v.plannedTaskCount === "" || v.plannedTaskCount === undefined || v.plannedTaskCount === null) ? 0 : Number(v.plannedTaskCount),
-              rawWeight: PMS.programProgress.isValidRawWeight(v.rawWeight) ? Number(v.rawWeight) : 1,
-              plannedTasks: PMS.programProgress.isNonNegativeInt(v.plannedTasks) ? Number(v.plannedTasks) : Number(v.plannedTaskCount) || 0,
-              defaultTaskImportance: PMS.programProgress.isValidImportance(v.defaultTaskImportance) ? v.defaultTaskImportance : "medium",
+              plannedTaskCount: PMS.programProgress.isNonNegativeInt(v.plannedTasks) ? Number(v.plannedTasks) : 0,
+              plannedTasks: PMS.programProgress.isNonNegativeInt(v.plannedTasks) ? Number(v.plannedTasks) : 0,
               tags: v.tags || [], links: parseLinks(v.links), notes: v.notes, customFields: cf
             };
             var check = PMS.validation.check("project", payload);
@@ -549,10 +535,10 @@
               payload = {
                 title: v.title, description: v.description, projectId: v.projectId || null,
                 parentTaskId: v.parentTaskId || null, status: v.status || "todo",
-                priority: v.priority || "medium", assignees: v.assignees || [],
+                priority: PMS.programProgress.isValidImportance(v.priority) ? v.priority : "medium",
+                assignees: v.assignees || [],
                 startDate: v.startDate, dueDate: v.dueDate,
                 estimatedHours: v.estimatedHours || 0, actualHours: v.actualHours || 0,
-                importance: PMS.programProgress.isValidImportance(v.importance) ? v.importance : "medium",
                 plannedSubtasks: PMS.programProgress.isNonNegativeInt(v.plannedSubtasks)
                   ? Number(v.plannedSubtasks)
                   : PMS.programProgress.defaultPlannedSubtasks(PMS.store.data),
@@ -563,9 +549,15 @@
               if (restricted) {
                 // status-only path: gate with the status permission
                 if (PMS.auth && !PMS.auth.canChangeStatus(task)) { deny(); return; }
-                PMS.repos.tasks.update(task.id, payload);
+                var statusOnly = PMS.repos.tasks.setStatus(task.id, payload.status);
+                if (statusOnly && statusOnly.error) { PMS.modal.close(); return; }
               } else {
-                if (!PMS.auth || PMS.auth.canEditTask(task)) PMS.repos.tasks.update(task.id, payload);
+                if (!PMS.auth || PMS.auth.canEditTask(task)) {
+                  var saved = PMS.repos.tasks.update(task.id, payload);
+                  // A refused "done" (open sub-tasks) is reported by the repo and
+                  // nothing was written, so keep the form open with the user's input.
+                  if (saved && saved.error) return;
+                }
                 else { deny(); return; }
                 // task-to-task links are stored on BOTH sides, so apply the diff
                 applyLinkDiff(task, v.linkedTaskIds || []);

@@ -54,7 +54,9 @@
         if (tsk && tsk.status !== st.key) {
           // status change rules: admins any; managers own projects; members assigned only
           if (PMS.auth && !PMS.auth.canChangeStatus(tsk)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); return; }
-          PMS.repos.tasks.update(id, { status: st.key }); // repos.logUpdate records the change
+          // refuses "done" while sub-tasks are open; put the card back where it was
+          var moved = PMS.repos.tasks.setStatus(id, st.key);
+          if (moved && moved.error) body.appendChild(card(tsk, st));
         }
       });
 

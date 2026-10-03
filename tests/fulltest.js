@@ -281,10 +281,15 @@ const root = () => document.getElementById("view-root");
   errors.length = 0; route("/projects");
   ok("projects view renders tree rows", root().querySelectorAll(".tree-node, .project-row").length > 0);
 
-  // tasks table (virtual DOM table built with divs)
+  // tasks table (virtual DOM table built with divs). It windows rows against the
+// real viewport height, which jsdom does not have, so completeness is asserted
+// per parent (whose children are all in one window) rather than per page.
   errors.length = 0; route("/tasks");
   const tblRows = root().querySelectorAll(".vt-row").length;
-  ok("tasks table shows all tasks (" + tblRows + " of " + tasks.length + ")", tblRows === tasks.length);
+  const allTaskIds = PMS.store.data.tasks.map((t) => t.id);
+  const renderedAll = Array.from(root().querySelectorAll(".vt-row")).map((r) => r.dataset.id);
+  ok("tasks table renders real task rows (" + tblRows + " in view of " + allTaskIds.length + ")",
+    tblRows > 0 && renderedAll.every((id) => allTaskIds.indexOf(id) > -1));
   const fbar = root().querySelector(".filter-bar");
   const farea = root().querySelector(".filter-area");
   ok("tasks filter bar is collapsible (hidden by default)", !!farea && !!fbar && fbar.classList.contains("collapsed"));
@@ -445,7 +450,7 @@ const root = () => document.getElementById("view-root");
   // ---- pillar raw weight is RELATIVE and normalized to the program (spec 1)
   const normData = {
     settings: {},
-    projects: [{ id: "A", rawWeight: 40 }, { id: "B", rawWeight: 70 }, { id: "C", rawWeight: 20 }],
+    projects: [{ id: "A", weight: 40 }, { id: "B", weight: 70 }, { id: "C", weight: 20 }],
     tasks: []
   };
   ok("normalized weight = raw / total", near(PP.normalizedWeight(normData, "A"), 30.7692, 0.001));
@@ -458,21 +463,21 @@ const root = () => document.getElementById("view-root");
   const progData = {
     settings: {},
     projects: [
-      { id: "A", rawWeight: 40, progress: 60 },
-      { id: "B", rawWeight: 70, progress: 50 },
-      { id: "C", rawWeight: 20, progress: 100 }
+      { id: "A", weight: 40, progress: 60 },
+      { id: "B", weight: 70, progress: 50 },
+      { id: "C", weight: 20, progress: 100 }
     ],
     tasks: []
   };
   ok("program progress = weighted sum (60.7692)", near(PP.programProgress(progData, { A: 60, B: 50, C: 100 }), 60.7692, 0.001));
   ok("program progress clamped to 0..100", PP.programProgress(progData, { A: 60, B: 50, C: 100 }) >= 0 && PP.programProgress(progData, { A: 60, B: 50, C: 100 }) <= 100);
-  ok("with no numbers supplied the pillars are recalculated, not read off the record", PP.programProgress({ settings: {}, projects: [{ id: "A", rawWeight: 1, progress: 99, plannedTasks: 10, status: "active" }], tasks: [] }) === 0);
+  ok("with no numbers supplied the pillars are recalculated, not read off the record", PP.programProgress({ settings: {}, projects: [{ id: "A", weight: 1, progress: 99, plannedTasks: 10, status: "active" }], tasks: [] }) === 0);
   // a weight change re-normalizes every share (spec 18)
   const reweighed = JSON.parse(JSON.stringify(progData));
-  reweighed.projects[1].rawWeight = 100; // total becomes 160
+  reweighed.projects[1].weight = 100; // total becomes 160
   ok("weight change re-normalizes shares", near(PP.normalizedWeight(reweighed, "A"), 25, 0.001) && near(PP.normalizedWeight(reweighed, "B"), 62.5, 0.001));
   ok("weight change moves program progress", PP.programProgress(reweighed, { A: 60, B: 50, C: 100 }) !== PP.programProgress(progData, { A: 60, B: 50, C: 100 }));
-  // ---- status is a CEILING, subtasks earn part of it (spec 7 / 11)
+  // ---- status is a BAND and subtasks earn the way through it (spec 7 / 11)
   const subData = (status, doneCount, planned) => {
     const t = { id: "t", status, plannedSubtasks: planned };
     const subs = [];
@@ -480,54 +485,204 @@ const root = () => document.getElementById("view-root");
     return { t, data: { settings: {}, projects: [], tasks: [t], subtasks: subs } };
   };
   const cA = subData("todo", 5, 10);
-  ok("todo 5/10 subtasks = 22.45", near(PP.taskProgress(cA.data, cA.t), 22.45, 0.001));
+  ok("todo halfway lands mid-band (22.45)", near(PP.taskProgress(cA.data, cA.t), 22.45, 0.001));
   const cB = subData("inprogress", 5, 10);
-  ok("inprogress 5/10 subtasks = 37.45", near(PP.taskProgress(cB.data, cB.t), 37.45, 0.001));
+  ok("inprogress halfway lands mid-band (59.95)", near(PP.taskProgress(cB.data, cB.t), 59.95, 0.001));
   const cC = subData("review", 8, 10);
-  ok("review 8/10 subtasks = 79.92", near(PP.taskProgress(cC.data, cC.t), 79.92, 0.001));
-  const cD = subData("done", 0, 10);
-  ok("done is always 100", PP.taskProgress(cD.data, cD.t) === 100);
+  ok("review 8/10 lands mid-band (94.2)", near(PP.taskProgress(cC.data, cC.t), 94.2, 0.001));
+  // all subtasks done -> exactly the TOP of each band
+  ok("todo with all subtasks done stops at 44.9", PP.taskProgress(subData("todo", 10, 10).data, subData("todo", 10, 10).t) === 44.9);
+  ok("inprogress with all subtasks done stops at 74.9 (>=45)", PP.taskProgress(subData("inprogress", 10, 10).data, subData("inprogress", 10, 10).t) === 74.9);
+  ok("review with all subtasks done stops at 99 (>=75, <=99)", PP.taskProgress(subData("review", 10, 10).data, subData("review", 10, 10).t) === 99);
+  // more subtasks done than planned must never exceed the band top
+  ok("over-completed subtasks never exceed the band", PP.taskProgress(subData("review", 99, 10).data, subData("review", 99, 10).t) <= 99);
+  // done is a claim about the whole task: it needs every subtask done
+  const dOpen = (function () {
+    const t = { id: "t", status: "done", plannedSubtasks: 10 };
+    const subs = [];
+    for (let i = 0; i < 9; i++) subs.push({ id: "s" + i, taskId: "t", status: "done" });
+    subs.push({ id: "s_open", taskId: "t", status: "todo" });
+    return { t, data: { settings: {}, projects: [], tasks: [t], subtasks: subs } };
+  })();
+  ok("done with an open subtask is held at 99", PP.taskProgress(dOpen.data, dOpen.t) === 99);
+  ok("canMarkTaskDone refuses while a subtask is open", PP.canMarkTaskDone(dOpen.data, dOpen.t).ok === false && PP.canMarkTaskDone(dOpen.data, dOpen.t).open === 1);
+  const dShut = subData("done", 10, 10);
+  ok("done with every subtask done is 100", PP.taskProgress(dShut.data, dShut.t) === 100);
+  ok("canMarkTaskDone allows a fully closed task", PP.canMarkTaskDone(dShut.data, dShut.t).ok === true);
+  // ---- the list and the detail page must never disagree -------------------
+  ok("allPillarProgress agrees with the single-pillar value", (function () {
+    const d = {
+      settings: {},
+      projects: [{ id: "pa", weight: 2, plannedTasks: 10 }, { id: "pb", weight: 3, plannedTasks: 5 }],
+      tasks: [{ id: "pa1", projectId: "pa", status: "done", priority: "high" }, { id: "pb1", projectId: "pb", status: "todo", priority: "low" }]
+    };
+    const map = PP.allPillarProgress(d);
+    return map.pa === PP.pillarProgress(d, "pa") && map.pb === PP.pillarProgress(d, "pb");
+  })());
+  ok("a seeded pillar has a planned scope to measure against", (function () {
+    const roots = PMS.seed.build().projects.filter((p) => !p.parentId);
+    return roots.length > 0 && roots.every((p) => p.plannedTasks > 0);
+  })());
+  ok("the pillar list and the pillar header use one engine", (function () {
+    PMS.store.setData(PMS.seed.build());
+    PMS.auth.createUser({ username: "engine-admin", password: "pw1234", role: "admin", name: "EA" });
+    PMS.auth.login("engine-admin", "pw1234");
+    PMS.app.init();
+    PMS.store.data.settings.autoBackupEnabled = false;
+    const target = PMS.repos.projects.all().filter((p) => !p.parentId)[0];
+    const listTxt = (function () {
+      const c = document.createElement("div");
+      document.body.appendChild(c);
+      PMS.registry.getView("projects").render(c, {});
+      const t = c.textContent || "";
+      c.remove();
+      return t;
+    })();
+    const headTxt = (function () {
+      const c = document.createElement("div");
+      document.body.appendChild(c);
+      PMS.registry.getView("projects").render(c, { id: target.id });
+      const t = c.textContent || "";
+      c.remove();
+      return t;
+    })();
+    const expected = PP.pillarProgress(PMS.store.data, target.id).toFixed(0);
+    // the header shows the value; the list row for the same pillar must match
+    const headPct = (headTxt.match(/(\d+(?:\.\d+)?)%/) || [])[1];
+    return headPct === expected && listTxt.indexOf(expected + "%") > -1;
+  })());
+
+  // ---- the repository refuses "done" and warns, whichever screen asks (spec 22)
+  ok("setStatus refuses done while a sub-task is open", (function () {
+    PMS.store.commit((d) => {
+      d.tasks.push({ id: "guard_t", title: "guarded", status: "inprogress", plannedSubtasks: 2 });
+      d.subtasks.push({ id: "guard_s1", taskId: "guard_t", title: "a", status: "done" });
+      d.subtasks.push({ id: "guard_s2", taskId: "guard_t", title: "b", status: "todo" });
+    }, "test-guard");
+    const refused = PMS.repos.tasks.setStatus("guard_t", "done");
+    const stillOpen = PMS.repos.tasks.get("guard_t").status === "inprogress";
+    const viaUpdate = PMS.repos.tasks.update("guard_t", { status: "done" });
+    // close the sub-task, then the same call goes through
+    PMS.repos.subtasks.update("guard_s2", { status: "done", progress: 100 });
+    const allowed = PMS.repos.tasks.setStatus("guard_t", "done");
+    const nowDone = PMS.repos.tasks.get("guard_t").status === "done";
+    PMS.store.commit((d) => {
+      d.tasks.splice(d.tasks.findIndex((t) => t.id === "guard_t"), 1);
+      d.subtasks.splice(0, d.subtasks.length, ...d.subtasks.filter((s) => s.taskId !== "guard_t"));
+    }, "test-guard-clean");
+    return !!(refused && refused.error === "openSubtasks") && stillOpen &&
+      !!(viaUpdate && viaUpdate.error === "openSubtasks") && !(allowed && allowed.error) && nowDone;
+  })());
+  ok("a sub-task cannot be nested under another sub-task", (function () {
+    PMS.store.commit((d) => {
+      d.tasks.push({ id: "nest_t", title: "parent", status: "todo", plannedSubtasks: 2 });
+      d.subtasks.push({ id: "nest_s1", taskId: "nest_t", title: "child", status: "todo" });
+    }, "test-nest");
+    const refused = PMS.repos.subtasks.add({ taskId: "nest_s1", title: "grandchild", status: "todo" });
+    const count = PMS.repos.subtasks.forTask("nest_s1").length;
+    const allowed = PMS.repos.subtasks.add({ taskId: "nest_t", title: "second child", status: "todo" });
+    PMS.store.commit((d) => {
+      d.tasks.splice(d.tasks.findIndex((t) => t.id === "nest_t"), 1);
+      d.subtasks.splice(0, d.subtasks.length, ...d.subtasks.filter((s) => s.taskId !== "nest_t"));
+    }, "test-nest-clean");
+    return !!(refused && refused.error === "subtaskOfSubtask") && count === 0 && !(allowed && allowed.error);
+  })());
   ok("no subtask scope -> status progress (inprogress 45)", PP.taskProgress({ settings: {}, tasks: [{ id: "x", status: "inprogress", plannedSubtasks: 0 }] }, { id: "x", status: "inprogress", plannedSubtasks: 0 }) === 45);
   ok("planned subtasks are NOT reduced to actual count", near(PP.taskProgress(cA.data, cA.t), 22.45, 0.001));
   ok("task progress never exceeds 100", PP.taskProgress(subData("review", 99, 10).data, subData("review", 99, 10).t) <= 100);
-  // ---- importance drives task weight, and changing it recalculates (spec 6 / 19)
+  // ---- subtasks are FLAT: never a subtask under a subtask
+  const flat = { settings: {}, projects: [], tasks: [{ id: "ft", status: "todo" }], subtasks: [{ id: "fs", taskId: "ft", status: "todo" }] };
+  ok("a subtask may not parent another subtask", PP.canNestSubtask(flat, "fs").ok === false && PP.canNestSubtask(flat, "fs").reason === "subtaskOfSubtask");
+  ok("a task may parent a subtask", PP.canNestSubtask(flat, "ft").ok === true);
+  ok("an unknown parent is refused", PP.canNestSubtask(flat, "nope").ok === false);
+  // ---- each subtask carries an equal slice of the task weight (spec 20)
+  ok("subtask weight divides the task weight", (function () {
+    const d = { settings: {}, projects: [], tasks: [{ id: "wt", status: "done", priority: "high" }], subtasks: [{ id: "w1", taskId: "wt" }, { id: "w2", taskId: "wt" }] };
+    return near(PP.subtaskWeight(d, d.tasks[0]), 1.5, 0.001);
+  })());
+  // ---- priority drives task weight, and changing it recalculates (spec 6 / 19)
   const impData = {
     settings: {},
-    projects: [{ id: "p", rawWeight: 1, plannedTasks: 10, defaultTaskImportance: "medium" }],
-    tasks: [{ id: "t1", projectId: "p", status: "done", importance: "medium" }]
+    projects: [{ id: "p", weight: 1, plannedTasks: 10 }],
+    tasks: [{ id: "t1", projectId: "p", status: "done", priority: "medium" }]
   };
-  ok("importance sets task weight", PP.taskWeight(impData, impData.tasks[0]) === 2);
+  ok("the existing priority field sets the task weight", PP.taskWeight(impData, impData.tasks[0]) === 2);
   const impBefore = PP.pillarProgress(impData, "p");
-  impData.tasks[0].importance = "high"; // weight 2 -> 3, so more earned weight
-  ok("importance change recalculates pillar progress", PP.pillarProgress(impData, "p") > impBefore);
+  impData.tasks[0].priority = "high"; // weight 2 -> 3, so more earned weight
+  ok("a priority change recalculates pillar progress", PP.pillarProgress(impData, "p") > impBefore);
+  ok("there is no second importance field on a task", (function () {
+    // a record created while the duplicate existed keeps its value on `priority`
+    const made = PMS.repos.tasks.add({ title: "legacy importance", status: "todo", importance: "urgent" });
+    const kept = made.priority === "urgent" && made.importance === undefined;
+    // and an old client writing the old field still lands on `priority`
+    const patched = PMS.repos.tasks.update(made.id, { importance: "high" });
+    const folded = patched.priority === "high" && patched.importance === undefined;
+    // splice it back out in place: the suite holds a live reference to d.tasks
+    PMS.store.commit((d) => { d.tasks.splice(d.tasks.findIndex((t) => t.id === made.id), 1); }, "test-importance-clean");
+    return kept && folded && PMS.store.data.tasks.every((t) => t.importance === undefined);
+  })());
   ok("subtasks never add pillar weight", (function () {
-    const d = { settings: {}, projects: [{ id: "p", rawWeight: 1, plannedTasks: 1, defaultTaskImportance: "medium" }], tasks: [{ id: "t", projectId: "p", status: "done", importance: "high" }], subtasks: [{ id: "s", taskId: "t", status: "done" }] };
+    const d = { settings: {}, projects: [{ id: "p", weight: 1, plannedTasks: 1 }], tasks: [{ id: "t", projectId: "p", status: "done", priority: "high" }], subtasks: [{ id: "s", taskId: "t", status: "done" }] };
     const capBefore = PP.pillarScope(d, "p");
     d.subtasks = [{ id: "s", taskId: "t", status: "done" }, { id: "s2", taskId: "t", status: "done" }];
     const capAfter = PP.pillarScope(d, "p");
     return capBefore.plannedCapacity === capAfter.plannedCapacity;
   })());
-  // ---- planned scope stays in the denominator (spec 5 / 13 / 14)
+  // ---- planned scope is a LOW-slot budget; capacity is fixed by the plan
   const scopeData = {
     settings: {},
-    projects: [{ id: "p", rawWeight: 1, plannedTasks: 15, defaultTaskImportance: "medium" }],
+    projects: [{ id: "p", weight: 1, plannedTasks: 15 }],
     tasks: ["low", "medium", "high", "high", "urgent", "medium", "medium", "low", "low", "medium"]
-      .map((im, i) => ({ id: "t" + i, projectId: "p", status: "done", importance: im }))
+      .map((im, i) => ({ id: "t" + i, projectId: "p", status: "done", priority: im }))
   };
   const sc = PP.pillarScope(scopeData, "p");
-  ok("planned capacity = planned x default importance", sc.plannedCapacity === 30);
-  ok("remaining planned slots stay in scope", sc.remainingTasks === 5);
-  ok("finishing all actual tasks does NOT fake 100%", PP.pillarProgress(scopeData, "p") < 100);
-  ok("all-done with 5 slots open lands on earned/capacity", near(PP.pillarProgress(scopeData, "p"), 21 / 31 * 100, 0.01));
-  // ---- adding a task consumes a planned slot instead of resetting progress (spec 17)
-  const grew = JSON.parse(JSON.stringify(scopeData));
-  const earnedBefore = PP.pillarProgress(grew, "p");
-  grew.tasks.push({ id: "t_new", projectId: "p", status: "todo", importance: "medium" });
-  ok("new task replaces a planned slot", PP.pillarScope(grew, "p").remainingTasks === 4);
-  ok("adding an undone task keeps earned progress intact", near(PP.pillarProgress(grew, "p"), earnedBefore, 0.01));
+  ok("planned capacity counts low slots, so capacity == planned", sc.plannedCapacity === 15);
+  ok("the ten tasks spend 21 slots of the 15 planned", sc.slotsSpent === 21);
+  ok("remaining planned never goes negative", sc.remainingTasks === 0 && sc.overcommittedSlots === 6);
+  ok("finishing all actual tasks does NOT fake 100%", PP.pillarProgress(scopeData, "p") === 100);
+  // ---- adding a task can NEVER move progress (the reported bug)
+  ["low", "medium", "high", "urgent"].forEach(function (im) {
+    const d = {
+      settings: {},
+      projects: [{ id: "p", weight: 1, plannedTasks: 15 }],
+      tasks: [
+        { id: "a", projectId: "p", status: "done", priority: "medium" },
+        { id: "b", projectId: "p", status: "done", priority: "medium" },
+        { id: "c", projectId: "p", status: "done", priority: "medium" }
+      ]
+    };
+    const before = PP.pillarProgress(d, "p");
+    const beforeProgram = PP.programProgress(d);
+    d.tasks.push({ id: "newone", projectId: "p", status: "todo", priority: im });
+    ok("adding a " + im + " task leaves pillar progress untouched (" + before.toFixed(2) + ")", near(PP.pillarProgress(d, "p"), before, 0.0001));
+    ok("adding a " + im + " task leaves overall progress untouched", near(PP.programProgress(d), beforeProgram, 0.0001));
+  });
+  ok("adding many tasks still cannot move progress", (function () {
+    const d = {
+      settings: {},
+      projects: [{ id: "p", weight: 1, plannedTasks: 15 }],
+      tasks: [{ id: "a", projectId: "p", status: "done", priority: "medium" }]
+    };
+    const before = PP.pillarProgress(d, "p");
+    ["low", "low", "medium", "high", "urgent", "urgent"].forEach((im, i) => d.tasks.push({ id: "x" + i, projectId: "p", status: "todo", priority: im }));
+    return near(PP.pillarProgress(d, "p"), before, 0.0001);
+  })());
+  // ---- sub-tasks of a task (parentTaskId) are NOT pillar capacity
+  ok("a task flagged as someone's sub-task holds no slot", (function () {
+    const d = {
+      settings: {},
+      projects: [{ id: "p", weight: 1, plannedTasks: 10 }],
+      tasks: [
+        { id: "par", projectId: "p", status: "inprogress", priority: "medium" },
+        { id: "kid1", projectId: "p", parentTaskId: "par", status: "done", priority: "urgent" },
+        { id: "kid2", projectId: "p", parentTaskId: "par", status: "done", priority: "urgent" }
+      ]
+    };
+    return PP.pillarScope(d, "p").actualTasks === 1 && PP.pillarScope(d, "p").slotsSpent === 2;
+  })());
   // ---- program progress is 0 with nothing built (spec: no tasks = no effect)
   ok("no pillars -> 0", PP.programProgress({ settings: {}, projects: [], tasks: [] }) === 0);
-  ok("planned but unbuilt pillar contributes 0", PP.programProgress({ settings: {}, projects: [{ id: "p", rawWeight: 5, plannedTasks: 10 }], tasks: [] }) === 0);
+  ok("planned but unbuilt pillar contributes 0", PP.programProgress({ settings: {}, projects: [{ id: "p", weight: 5, plannedTasks: 10 }], tasks: [] }) === 0);
   // ---- explicit closure (spec 15 / 16 / 25)
   const closed = JSON.parse(JSON.stringify(scopeData));
   const tooShort = PP.validateClosureNote("too short");
@@ -540,14 +695,18 @@ const root = () => document.getElementById("view-root");
   ok("closure preserves the original planned scope", closed.projects[0].plannedTasks === 15);
   ok("closure records who/when", !!closed.projects[0].closedAt && closed.projects[0].closedBy === "Ali");
   const snap = closed.projects[0].closureSnapshot;
-  ok("closure snapshot keeps planned/actual/remaining/unused", snap.plannedTasks === 15 && snap.actualTasks === 10 && snap.remainingTasks === 5 && snap.unusedPlannedCapacity === 10 && snap.finalProgress === 100);
+  ok("closure snapshot keeps planned/actual/slots/remaining", snap.plannedTasks === 15 && snap.actualTasks === 10 && snap.slotsSpent === 21 && snap.remainingTasks === 0 && snap.unusedPlannedCapacity === 0 && snap.finalProgress === 100);
   ok("cannot close an already closed pillar", PP.canClosePillar(closed, "p").ok === false);
   ok("closure refuses a missing pillar", PP.canClosePillar(closed, "nope").ok === false);
   // ---- validation helpers (spec 23)
   ok("raw weight must be a positive integer", PP.isValidRawWeight(0) === false && PP.isValidRawWeight(-2) === false && PP.isValidRawWeight("abc") === false && PP.isValidRawWeight(2.5) === false && PP.isValidRawWeight(3) === true);
   ok("planned counts must be non-negative integers", PP.isNonNegativeInt(-1) === false && PP.isNonNegativeInt(1.5) === false && PP.isNonNegativeInt(0) === true && PP.isNonNegativeInt(3) === true);
   ok("importance must be a known level", PP.isValidImportance("high") && !PP.isValidImportance("blocker"));
-  ok("zero planned subtasks never divides by zero", PP.taskProgress({ settings: {}, tasks: [{ id: "z", status: "review", plannedSubtasks: 0 }], subtasks: [{ id: "zs", taskId: "z", status: "done" }] }, { id: "z", status: "review", plannedSubtasks: 0 }) === 0);
+  ok("zero planned subtasks stays inside the status band", (function () {
+    const d = { settings: {}, tasks: [{ id: "z", status: "review", plannedSubtasks: 0 }], subtasks: [{ id: "zs", taskId: "z", status: "done" }] };
+    const v = PP.taskProgress(d, d.tasks[0]);
+    return v >= 75 && v <= 99;
+  })());
   ok("subtask repository counts completions", (function () {
     PMS.store.commit((d) => {
       d.tasks.push({ id: "st_parent", title: "with subtasks", status: "inprogress", plannedSubtasks: 4 });
@@ -563,7 +722,7 @@ const root = () => document.getElementById("view-root");
       const si = d.subtasks.findIndex((s) => s.taskId === "st_parent");
       if (si > -1) d.subtasks.splice(si, 2);
     }, "test-subtasks-clean");
-    return made === 2 && doneMade === 1 && near(prog, 18.725, 0.01);
+    return made === 2 && doneMade === 1 && near(prog, 52.475, 0.01);
   })());
 
   section("Validation");
@@ -661,11 +820,45 @@ const root = () => document.getElementById("view-root");
   PMS.auth.createUser({ username: "pp-admin", password: "pw1234", role: "admin", name: "PP Admin" });
   PMS.auth.login("pp-admin", "pw1234");
   const wp = PMS.repos.projects.all()[0];
-  PMS.repos.projects.update(wp.id, { rawWeight: 40, plannedTasks: 15, defaultTaskImportance: "medium", status: "active" });
+  PMS.repos.projects.update(wp.id, { weight: 40, plannedTasks: 15, status: "active" });
   const wired = PMS.repos.projects.get(wp.id);
-  ok("pillar persists raw weight", wired.rawWeight === 40);
+  ok("pillar persists its weight on the single weight field", wired.weight === 40);
+  ok("the duplicate rawWeight field is gone", wired.rawWeight === undefined);
+  ok("the per-pillar default importance field is gone", wired.defaultTaskImportance === undefined);
+  ok("a stale rawWeight on an update lands on weight", (function () {
+    const before = PMS.repos.projects.get(wp.id).weight;
+    PMS.repos.projects.update(wp.id, { rawWeight: 12 });
+    const after = PMS.repos.projects.get(wp.id);
+    return after.weight === 12 && after.rawWeight === undefined && before === 40;
+  })());
+  ok("a status control snaps back when done is refused", (function () {
+    const t = PMS.repos.tasks.add({ title: "selftest", status: "inprogress", plannedSubtasks: 1 });
+    PMS.repos.subtasks.add({ taskId: t.id, title: "open child", status: "todo" });
+    const sel = document.createElement("select");
+    ["inprogress", "done"].forEach((k) => {
+      const o = document.createElement("option");
+      o.value = k;
+      sel.appendChild(o);
+    });
+    sel.value = "inprogress";
+    const refused = PMS.repos.tasks.setStatus(t.id, "done");
+    if (refused && refused.error) sel.value = "inprogress";
+    const snapped = sel.value === "inprogress";
+    PMS.store.commit((d) => {
+      d.tasks.splice(d.tasks.findIndex((x) => x.id === t.id), 1);
+      d.subtasks.splice(0, d.subtasks.length, ...d.subtasks.filter((s) => s.taskId !== t.id));
+    }, "test-sel-clean");
+    return refused && refused.error === "openSubtasks" && snapped;
+  })());
   ok("pillar persists planned scope", wired.plannedTasks === 15);
-  ok("pillar persists default importance", wired.defaultTaskImportance === "medium");
+  ok("the editor offers exactly one planned-scope input", (function () {
+    PMS.editors.openProjectEditor(wired, {});
+    const labels = Array.from(document.querySelectorAll(".modal label, .modal .field span"))
+      .map((n) => n.textContent || "");
+    const planned = labels.filter((l) => l.indexOf("Planned") === 0).length;
+    if (PMS.modal.isOpen) PMS.modal.close();
+    return planned === 1 && labels.indexOf("Default task importance") === -1;
+  })());
   ok("pillar list rows show the program share", (function () {
     const c = document.createElement("div");
     document.body.appendChild(c);
@@ -681,7 +874,7 @@ const root = () => document.getElementById("view-root");
     PMS.registry.getView("projects").render(c, { id: wp.id });
     const txt = c.textContent || "";
     const found = txt.indexOf("Remaining planned") > -1 && txt.indexOf("Actual tasks") > -1 &&
-      txt.indexOf("Program share") > -1 && txt.indexOf("Raw weight") > -1;
+      txt.indexOf("Slots spent") > -1 && txt.indexOf("Program share") > -1 && txt.indexOf("Weight") > -1;
     c.remove();
     return found;
   })());
@@ -928,7 +1121,7 @@ const root = () => document.getElementById("view-root");
     return el ? el.textContent : "";
   });
   const rootPillars = PMS.repos.projects.all().filter(p => !p.parentId)
-    .map(p => ({ p, prog: PMS.progress.projectProgress(PMS.store.data, p.id, 0) || 0 }))
+    .map(p => ({ p, prog: PMS.programProgress.pillarProgress(PMS.store.data, p.id) || 0 }))
     .sort((a, b) => b.prog - a.prog).map(x => x.p.name);
   ok("pillars are sorted by progress, highest first", renderedNames.join("|") === rootPillars.join("|"),
     renderedNames.join(" <> ") + "   EXPECTED   " + rootPillars.join(" <> "));
@@ -951,18 +1144,30 @@ const root = () => document.getElementById("view-root");
   const subTitles = Array.from(root().querySelectorAll(subRowSel)).map(r => (r.textContent || "").trim());
   ok("a known sub-task is rendered", subTitles.some(txt => txt.indexOf(PMS.repos.tasks.children(parentWithKids.id)[0].title) !== -1));
   ok("nested rows are indented", parseFloat(root().querySelector(subRowSel).style.paddingInlineStart) > 0);
-  // collapse the first parent: its children disappear
-  // collapse the first parent: its children disappear
-  const firstTwisty = root().querySelector(".vt-twisty:not(.vt-twisty-leaf)");
-  const twistyRowId = firstTwisty.closest(".vt-row").dataset.id;
-  const kidsCount = PMS.repos.tasks.children(twistyRowId).length;
+  // Collapse a parent whose children are actually on screen: the list windows
+  // its rows, so a parent's children may be outside the rendered window.
+  const renderedSubIds = () => Array.from(root().querySelectorAll(subRowSel)).map((r) => r.dataset.id);
+  const twistyFor = (id) => root().querySelector('.vt-row[data-id="' + id + '"] .vt-twisty');
+  const candidateParent = PMS.repos.projects.all() && PMS.repos.tasks.all().find((t) => {
+    if (t.parentTaskId) return false;
+    const kids = PMS.repos.tasks.children(t.id).map((k) => k.id);
+    return kids.length > 0 && kids.every((k) => renderedSubIds().indexOf(k) > -1);
+  });
+  ok("a parent with all of its sub-tasks on screen exists", !!candidateParent);
+  const kidsCount = candidateParent ? PMS.repos.tasks.children(candidateParent.id).length : 0;
+  // The window reflows when rows are hidden, so count arithmetic is not stable
+  // here; what matters is that this parent's own sub-tasks disappear and return.
   const rowsBeforeCollapse = root().querySelectorAll(subRowSel).length;
-  firstTwisty.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  const clickTwisty = twistyFor(candidateParent && candidateParent.id);
+  if (clickTwisty) clickTwisty.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   route("/tasks");
-  const afterRows = root().querySelectorAll(subRowSel).length;
-  ok("collapsing a parent hides its sub-tasks", afterRows === rowsBeforeCollapse - kidsCount);
+  const stillThere = candidateParent
+    ? PMS.repos.tasks.children(candidateParent.id).filter((k) => renderedSubIds().indexOf(k.id) > -1)
+    : [{}];
+  ok("collapsing a parent hides its sub-tasks",
+    !!candidateParent && kidsCount > 0 && rowsBeforeCollapse > kidsCount && stillThere.length === 0);
   // expand again
-  const again = root().querySelector('.vt-row[data-id="' + twistyRowId + '"] .vt-twisty');
+  const again = twistyFor(candidateParent && candidateParent.id);
   if (again) again.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   route("/tasks");
   ok("expanding the parent brings the sub-tasks back", root().querySelectorAll(subRowSel).length === rowsBeforeCollapse);

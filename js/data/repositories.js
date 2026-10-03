@@ -267,9 +267,15 @@
         else obj.plannedTaskCount = Math.max(0, parseInt(obj.plannedTaskCount, 10) || 0);
         if (obj.plannedTasks === undefined || obj.plannedTasks === null) obj.plannedTasks = obj.plannedTaskCount;
         else obj.plannedTasks = Math.max(0, Math.floor(parseInt(obj.plannedTasks,10)||0));
-        if (!obj.defaultTaskImportance) obj.defaultTaskImportance = "medium";
-        if (typeof obj.rawWeight !== "number" || isNaN(obj.rawWeight) || obj.rawWeight <= 0) obj.rawWeight = 1;
-        obj.rawWeight = Number(obj.rawWeight);
+        if (typeof obj.weight !== "number" || isNaN(obj.weight) || obj.weight <= 0) {
+          // A record created while `rawWeight` still existed may only carry the
+          // old field; adopt it rather than silently resetting the pillar to 1.
+          var legacyRw = Number(obj.rawWeight);
+          obj.weight = isNaN(legacyRw) || legacyRw <= 0 ? 1 : legacyRw;
+        }
+        obj.weight = Number(obj.weight);
+        delete obj.rawWeight;
+        delete obj.defaultTaskImportance;
         return add("projects", obj);
       },
       update: function (id, patch) {
@@ -280,12 +286,18 @@
           patch.plannedTasks = Math.max(0, Math.floor(parseInt(patch.plannedTasks,10)||0));
           if (patch.plannedTaskCount === undefined) patch.plannedTaskCount = patch.plannedTasks;
         }
-        if (patch && patch.rawWeight !== undefined && patch.rawWeight !== null) {
-          var rw = Number(patch.rawWeight);
-          if (isNaN(rw) || rw <= 0) rw = 1;
-          patch.rawWeight = rw;
+        if (patch && patch.weight !== undefined && patch.weight !== null) {
+          var pw = Number(patch.weight);
+          if (isNaN(pw) || pw <= 0) pw = 1;
+          patch.weight = pw;
         }
-        if (patch && patch.defaultTaskImportance === undefined) {}
+        // Fold a stale rawWeight onto the single weight field, then drop it.
+        if (patch && patch.rawWeight !== undefined && patch.rawWeight !== null && patch.weight === undefined) {
+          var legacyRw = Number(patch.rawWeight);
+          patch.weight = isNaN(legacyRw) || legacyRw <= 0 ? 1 : legacyRw;
+        }
+        if (patch) delete patch.rawWeight;
+        if (patch) delete patch.defaultTaskImportance;
         return update("projects", id, patch);
       },
       // cascade delete: sub-projects and their tasks
@@ -319,8 +331,15 @@
         obj.parentTaskId = obj.parentTaskId || null;
         obj.meetingId = obj.meetingId || null;
         if (!Array.isArray(obj.linkedTaskIds)) obj.linkedTaskIds = [];
-        if (!obj.importance) obj.importance = "medium";
-        var iw = (obj.importanceWeights && obj.importanceWeights[obj.importance]) || (PMS.schema && PMS.schema.defaultData && PMS.schema.defaultData().settings.importanceWeights && PMS.schema.defaultData().settings.importanceWeights[obj.importance]);
+        // `priority` is the single importance field; a stale `importance` from
+        // before that cleanup is folded in, then dropped.
+        var levels = (PMS.programProgress && PMS.programProgress.IMPORTANCE_LEVELS) || ["low", "medium", "high", "urgent"];
+        if (levels.indexOf(obj.priority) === -1 && levels.indexOf(obj.importance) !== -1) {
+          obj.priority = obj.importance;
+        }
+        if (levels.indexOf(obj.priority) === -1) obj.priority = "medium";
+        delete obj.importance;
+        var iw = PMS.programProgress.importanceWeights(PMS.store.data)[obj.priority];
         if (typeof iw !== "number" || isNaN(iw)) iw = 2;
         obj.importanceWeight = iw;
         if (typeof obj.plannedSubtasks !== "number" || isNaN(obj.plannedSubtasks) || obj.plannedSubtasks < 0) obj.plannedSubtasks = (PMS.schema && PMS.schema.defaultData && PMS.schema.defaultData().settings.defaultPlannedSubtasks) || 10;
@@ -330,15 +349,55 @@
         return add("tasks", obj);
       },
       update: function (id, patch) {
-        if (patch && patch.importance) {
-          var s = PMS.schema && PMS.schema.defaultData();
-          var wmap = (s && s.settings && s.settings.importanceWeights) || { low:1, medium:2, high:3, urgent:4 };
-          patch.importanceWeight = wmap[patch.importance] || patch.importanceWeight || 2;
+        if (patch) {
+          // Same single-field rule as on create: `priority` wins, a stale
+          // `importance` is folded in, and the duplicate never gets written.
+          var lv = (PMS.programProgress && PMS.programProgress.IMPORTANCE_LEVELS) || ["low", "medium", "high", "urgent"];
+          if (patch.importance !== undefined && patch.importance !== null) {
+            if (patch.priority === undefined || lv.indexOf(patch.priority) === -1) {
+              if (lv.indexOf(patch.importance) !== -1) patch.priority = patch.importance;
+            }
+            delete patch.importance;
+          }
+          if (patch.priority !== undefined && patch.priority !== null) {
+            if (lv.indexOf(patch.priority) === -1) patch.priority = "medium";
+            patch.importanceWeight = PMS.programProgress.importanceWeights(PMS.store.data)[patch.priority];
+          }
         }
         if (patch && patch.plannedSubtasks !== undefined && patch.plannedSubtasks !== null) {
           patch.plannedSubtasks = Math.max(0, Math.floor(parseInt(patch.plannedSubtasks,10)||0));
         }
+        // A task may only be marked done once every subtask is done. Enforced
+        // here so the rule holds whichever screen (or import) asks for it; the
+        // UI checks first and shows the warning.
+        if (patch && patch.status === "done") {
+          var target = find("tasks", id);
+          if (target) {
+            var doneCheck = PMS.programProgress.canMarkTaskDone(PMS.store.data, target);
+            if (!doneCheck.ok) {
+              // Warn here too: a full task edit reaches this path, not setStatus.
+              if (PMS.toast) PMS.toast.show(PMS.i18n.t("projects.subtaskNotDone", { n: doneCheck.open }), "error");
+              return { error: doneCheck.reason, open: doneCheck.open, titles: doneCheck.titles };
+            }
+          }
+        }
         return update("tasks", id, patch);
+      },
+      // The one place a task status changes. Every screen funnels through here so the
+      // "done means every sub-task is done" rule is enforced in one place and
+      // the user gets told why it was refused.
+      setStatus: function (id, status) {
+        var rec = find("tasks", id);
+        if (!rec) return { error: "notFound" };
+        if (status === "done") {
+          var check = PMS.programProgress.canMarkTaskDone(PMS.store.data, rec);
+          if (!check.ok) {
+            if (PMS.toast) PMS.toast.show(PMS.i18n.t("projects.subtaskNotDone", { n: check.open }), "error");
+            // Same shape as a refused update(), so callers only test `.error`.
+            return { error: check.reason, open: check.open, titles: check.titles };
+          }
+        }
+        return update("tasks", id, { status: status });
       },
       // cascade delete: sub-tasks (dependency references removed too)
       remove: function (id) {
@@ -446,9 +505,21 @@
         obj.status = obj.status || "todo";
         if (typeof obj.progress !== "number" || isNaN(obj.progress)) obj.progress = obj.status === "done" ? 100 : 0;
         stampCreator(obj);
+        // Subtasks are the bottom of the tree, so refuse to hang one off
+        // another subtask rather than storing a level nothing can display.
+        var nest = PMS.programProgress.canNestSubtask(PMS.store.data, obj.taskId);
+        if (!nest.ok) return { error: nest.reason };
         return add("subtasks", obj);
       },
       update: function (id, patch) {
+        var rec = find("subtasks", id);
+        if (patch && rec) {
+          var nextTask = patch.taskId === undefined ? rec.taskId : patch.taskId;
+          if (nextTask !== rec.taskId) {
+            var nest = PMS.programProgress.canNestSubtask(PMS.store.data, nextTask);
+            if (!nest.ok) return { error: nest.reason };
+          }
+        }
         if (patch && patch.status === "done" && patch.progress === undefined) patch.progress = 100;
         return update("subtasks", id, patch);
       },

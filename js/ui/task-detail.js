@@ -224,6 +224,7 @@
           on: { change: function () { PMS.repos.subtasks.update(s.id, { status: done ? "todo" : "done", progress: done ? 0 : 100 }); } }
         }));
         row.appendChild(h("label", { text: s.title, style: { flex: 1 } }));
+        row.appendChild(PMS.vformat.statusBadge(s.status, "task"));
         if (canEdit) row.appendChild(h("span.btn-icon.chip-x", { text: "✕", on: { click: function () { PMS.repos.subtasks.remove(s.id); } } }));
         subWrap.appendChild(row);
       });
@@ -237,7 +238,12 @@
       addSub.appendChild(h("button.btn.btn-sm", { text: "+", on: { click: function () {
         var v = sTitle.value.trim();
         if (!v) return;
-        PMS.repos.subtasks.add({ taskId: task.id, title: v, status: "todo" });
+        // Subtasks are the bottom of the tree: tell the user rather than
+        // quietly dropping a level nothing can show.
+        var nest = PP.canNestSubtask(PMS.store.data, task.id);
+        if (!nest.ok) { PMS.toast.show(t("projects.subtaskNestingBlocked"), "error"); return; }
+        var added = PMS.repos.subtasks.add({ taskId: task.id, title: v, status: "todo" });
+        if (added && added.error) { PMS.toast.show(t("projects.subtaskNestingBlocked"), "error"); return; }
         sTitle.value = "";
       } } }));
       node.appendChild(addSub);

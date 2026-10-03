@@ -374,7 +374,9 @@
     sel.addEventListener("change", function () {
       if (sel.value === row.status) return;
       if (PMS.auth && !PMS.auth.canChangeStatus(row)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); sel.value = row.status; return; }
-      PMS.repos.tasks.update(row.id, { status: sel.value }); // repos.logUpdate records the change
+      // refuses "done" while sub-tasks are open, so snap the control back
+      var changed = PMS.repos.tasks.setStatus(row.id, sel.value);
+      if (changed && changed.error) sel.value = row.status;
     });
     return sel;
   }

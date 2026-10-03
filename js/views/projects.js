@@ -126,7 +126,9 @@
 
     // Pillars are always listed highest progress first, so the pillars that
     // need attention float to the top without the user re-sorting anything.
-    var progressMap = PMS.progress.allProjectProgress(data());
+    // Same engine as the detail header, so a pillar never shows two different
+    // percentages in the list and on its own page.
+    var progressMap = PMS.programProgress.allPillarProgress(data());
     var treed = PMS.treeService.Tree;
     var listEl = h("div.pillar-grid");
     var tree = new treed({
@@ -170,8 +172,7 @@
     }
 
     var allData = data();
-    var progress = PMS.progress.projectProgress(allData, id, 0);
-    var prog = progress;
+    var prog = PMS.programProgress.pillarProgress(allData, id);
     var children = PMS.repos.projects.children(id);
     var tasks = PMS.repos.tasks.forProject(id);
     var membersList = (proj.memberIds || []).map(function (mid) { return PMS.repos.people.get(mid); }).filter(Boolean);
@@ -229,11 +230,12 @@
     main.appendChild(h("div.card-body", [
       h("div.detail-list", [
         metaItem(t("projects.progress"), PMS.utils.pct(prog)),
-        metaItem(t("projects.rawWeight"), String(scope.plannedTasks >= 0 ? PP.pillarRawWeight(proj) : 1)),
+        metaItem(t("projects.weight"), String(PP.pillarRawWeight(proj))),
         metaItem(t("projects.programShare"), PMS.utils.pct(PP.normalizedWeight(allData, proj.id))),
-        metaItem(t("projects.plannedCount"), String(scope.plannedTasks)),
+        metaItem(t("projects.plannedScope"), String(scope.plannedTasks)),
         metaItem(t("projects.actualTasks"), String(scope.actualTasks)),
         metaItem(t("projects.completedTasks"), String(scope.completedTasks)),
+        metaItem(t("projects.slotsSpent"), String(scope.slotsSpent)),
         metaItem(t("projects.remainingTasks"), String(scope.remainingTasks)),
         metaItem(t("projects.startDate"), PMS.utils.formatDate(proj.startDate, PMS.i18n)),
         metaItem(t("projects.endDate"), PMS.utils.formatDate(proj.endDate, PMS.i18n)),
@@ -253,7 +255,8 @@
       container.appendChild(h("div.card", [h("div.card-body", [
         h("div.section-title", [labelSpan(t("projects.closureInfo"))]),
         h("div.detail-list", [
-          metaItem(t("projects.plannedCount"), String(proj.closureSnapshot.plannedTasks)),
+          metaItem(t("projects.plannedScope"), String(proj.closureSnapshot.plannedTasks)),
+          metaItem(t("projects.slotsSpent"), String(proj.closureSnapshot.slotsSpent)),
           metaItem(t("projects.actualTasks"), String(proj.closureSnapshot.actualTasks)),
           metaItem(t("projects.completedTasks"), String(proj.closureSnapshot.completedTasks)),
           metaItem(t("projects.remainingTasks"), String(proj.closureSnapshot.remainingTasks)),
@@ -269,6 +272,7 @@
           text: t("projects.scopeOpenHint", {
             actual: scope.actualTasks,
             planned: scope.plannedTasks,
+            spent: scope.slotsSpent,
             done: scope.completedTasks,
             remaining: scope.remainingTasks
           })
@@ -342,7 +346,7 @@
       row.appendChild(h("span", { text: "🗀" }));
       row.appendChild(h("span.u-grow.u-ellipsis.u-bold", { text: p.name }));
       row.appendChild(h("span.u-muted", {
-        text: t("projects.rawWeight") + " " + PMS.programProgress.pillarRawWeight(p) +
+        text: t("projects.weight") + " " + PMS.programProgress.pillarRawWeight(p) +
               " · " + t("projects.programShare") + " " + PMS.utils.pct(PMS.programProgress.normalizedWeight(PMS.store.data, p.id)),
         style: { fontSize: "0.75rem" }
       }));
@@ -435,7 +439,7 @@
         })
       }),
       h("div.detail-list", [
-        metaItem(t("projects.plannedCount"), String(scope.plannedTasks)),
+        metaItem(t("projects.plannedScope"), String(scope.plannedTasks)),
         metaItem(t("projects.actualTasks"), String(scope.actualTasks)),
         metaItem(t("projects.completedTasks"), String(scope.completedTasks)),
         metaItem(t("projects.remainingTasks"), String(scope.remainingTasks))

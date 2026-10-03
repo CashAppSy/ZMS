@@ -174,25 +174,39 @@
     (d.tasks || []).forEach(function (t) {
       if (!Array.isArray(t.linkedTaskIds)) t.linkedTaskIds = [];
       if (t.meetingId === undefined) t.meetingId = null;
-      // Planned-subtask scope + the importance weight it implies (spec 4/6/9).
+      // Planned-subtask scope + the priority weight it implies (spec 4/6/9).
       if (typeof t.plannedSubtasks !== "number" || isNaN(t.plannedSubtasks) || t.plannedSubtasks < 0) {
         t.plannedSubtasks = d.settings.defaultPlannedSubtasks;
       }
       t.plannedSubtasks = Math.floor(t.plannedSubtasks);
-      if (!t.importance) t.importance = "medium";
-      var impW = d.settings.importanceWeights[t.importance];
-      t.importanceWeight = typeof impW === "number" ? impW : 2;
+      // `importance` duplicated the existing `priority` field exactly, so a
+      // record saved with it keeps that value and the duplicate is dropped.
+      var LEVELS = PMS.programProgress.IMPORTANCE_LEVELS;
+      if (LEVELS.indexOf(t.priority) === -1 && LEVELS.indexOf(t.importance) !== -1) {
+        t.priority = t.importance;
+      }
+      if (LEVELS.indexOf(t.priority) === -1) t.priority = "medium";
+      delete t.importance;
+      // Same resolver the repositories use, so a custom weights map in settings
+      // is honoured here too instead of being hard-coded to a fallback.
+      t.importanceWeight = PMS.programProgress.importanceWeights(d)[t.priority];
     });
-    // pillars: raw weight + planned scope + default importance for the tasks
+    // pillars: relative weight + planned slot scope. There is no `rawWeight`
+    // beside `weight`: `weight` is the weight, and `plannedTasks` counts
+    // low-priority slots.
     (d.projects || []).forEach(function (p) {
-      var rw = Number(p.rawWeight);
-      p.rawWeight = isNaN(rw) || rw <= 0 ? 1 : rw;
+      // `rawWeight` shipped briefly beside `weight`. If a record only ever got
+      // the old field, adopt its value instead of throwing it away.
+      var pw = Number(p.weight);
+      if (isNaN(pw) || pw <= 0) pw = Number(p.rawWeight);
+      p.weight = isNaN(pw) || pw <= 0 ? 1 : pw;
       if (typeof p.plannedTasks !== "number" || isNaN(p.plannedTasks) || p.plannedTasks < 0) {
         p.plannedTasks = typeof p.plannedTaskCount === "number" ? p.plannedTaskCount : 0;
       }
       p.plannedTasks = Math.max(0, Math.floor(p.plannedTasks));
       p.plannedTaskCount = p.plannedTasks;
-      if (!p.defaultTaskImportance) p.defaultTaskImportance = "medium";
+      delete p.rawWeight;
+      delete p.defaultTaskImportance;
     });
     // subtasks: one owner task + one status, both required by the progress model
     (d.subtasks || []).forEach(function (s) {

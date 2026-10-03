@@ -95,8 +95,8 @@
 
     var web = makeProject("Website Redesign", null, { status: "active", priority: "high", budget: 120000, weight: 3, members: ["Omar Khalil", "Nour Salameh", "Rania Barakat"], tags: ["web", "2026"], cf: { client: "Acme Corp" } });
     var mobile = makeProject("Mobile App", null, { status: "active", priority: "high", budget: 250000, weight: 2, members: ["Omar Khalil", "Lina Haddadin", "Nour Salameh"], tags: ["mobile"], cf: { client: "Nova Bank" } });
-    makeProject("Mobile App / Backend", mobile, { status: "active", priority: "high", budget: 120000, members: ["Lina Haddadin", "Ali Yousef"], tags: ["backend"], cf: { client: "Nova Bank" } });
-    makeProject("Mobile App / Frontend", mobile, { status: "active", priority: "medium", budget: 90000, members: ["Omar Khalil", "Nour Salameh"], tags: ["frontend"], cf: { client: "Nova Bank" } });
+    var mobileBackend = makeProject("Mobile App / Backend", mobile, { status: "active", priority: "high", budget: 120000, members: ["Lina Haddadin", "Ali Yousef"], tags: ["backend"], cf: { client: "Nova Bank" } });
+    var mobileFrontend = makeProject("Mobile App / Frontend", mobile, { status: "active", priority: "medium", budget: 90000, members: ["Omar Khalil", "Nour Salameh"], tags: ["frontend"], cf: { client: "Nova Bank" } });
     var ops = makeProject("Operations Dashboard", null, { status: "active", priority: "urgent", budget: 60000, weight: 2.5, managerId: person("Ali Yousef").id, members: ["Ali Yousef", "Dana Haddad", "Rania Barakat"], tags: ["ops", "kpi"], cf: { client: "Internal" } });
 
     // ------- tasks -------
@@ -134,6 +134,16 @@
     addTask(mobile, "Auth flows", { parentTaskId: m1.id, status: "inprogress", priority: "urgent", assignees: ["Lina Haddadin"], est: 32, actual: 14, dueOffset: 5, tags: ["security"] });
     var m2 = addTask(mobile, "Push notifications", { status: "todo", priority: "medium", assignees: ["Lina Haddadin", "Ali Yousef"], est: 20, dueOffset: 20 });
     addTask(mobile, "Sprint planning", { status: "done", priority: "low", assignees: ["Sara Ahmed"], est: 4, actual: 4, dueOffset: -10 });
+
+    // Mobile App / Backend tasks (sub-pillar, so it reports its own progress)
+    var b1 = addTask(mobileBackend, "Schema migrations", { status: "done", priority: "high", assignees: ["Lina Haddadin"], est: 14, actual: 15, dueOffset: -4, tags: ["infra"], cf: { ticket: "BE-1" } });
+    addTask(mobileBackend, "Rate limiting", { parentTaskId: b1.id, status: "inprogress", priority: "medium", assignees: ["Ali Yousef"], est: 10, dueOffset: 7, tags: ["infra"] });
+    addTask(mobileBackend, "Nightly backups", { status: "todo", priority: "low", assignees: ["Ali Yousef"], est: 6, dueOffset: 15, tags: ["ops"] });
+
+    // Mobile App / Frontend tasks (sub-pillar)
+    var f1 = addTask(mobileFrontend, "Onboarding screens", { status: "inprogress", priority: "medium", assignees: ["Nour Salameh"], est: 18, actual: 9, dueOffset: 9, tags: ["ui"] });
+    addTask(mobileFrontend, "Offline cache", { parentTaskId: f1.id, status: "todo", priority: "high", assignees: ["Omar Khalil"], est: 12, dueOffset: 14, tags: ["ui"] });
+    addTask(mobileFrontend, "Accessibility pass", { status: "review", priority: "low", assignees: ["Nour Salameh"], est: 8, actual: 8, dueOffset: 3, tags: ["ui"] });
 
     // Operations Dashboard tasks (varied edge cases)
     addTask(ops, "Deploy metrics pipeline", { status: "done", priority: "high", assignees: ["Ali Yousef"], est: 30, actual: 26, dueOffset: -9, tags: ["ops"] });
@@ -184,6 +194,20 @@
     // ------- settings -------
     data.settings.lang = PMS.i18n.getLang() || "en";
     data.settings.theme = "light";
+
+    // ------- planned scope (low-priority slots) -------
+    // A pillar with no plan cannot report slot progress at all, so give every
+    // seeded pillar a budget: what its tasks already cost, plus a little
+    // headroom. Coherent demo data beats a column of zeroes.
+    var slotOf = { low: 1, medium: 2, high: 3, urgent: 4 };
+    data.projects.forEach(function (p) {
+      var spent = data.tasks.filter(function (t) {
+        return t.projectId === p.id && !t.parentTaskId;
+      }).reduce(function (sum, t) { return sum + (slotOf[t.priority] || 2); }, 0);
+      p.plannedTasks = Math.max(2, Math.ceil(spent * 1.25));
+      p.plannedTaskCount = p.plannedTasks;
+    });
+
     data.meta.updatedAt = now;
 
     return data;
