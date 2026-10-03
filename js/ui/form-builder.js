@@ -291,6 +291,83 @@
         };
         break;
 
+      case "dependencies":
+        // Typed predecessors: which task this one waits on, how it waits (FS/FF/
+        // SS/SF) and by how many days. A cycle is not judged here - the field
+        // returns the list and the repository refuses the save if the new
+        // edges would close a loop, which is the only place that can see the
+        // whole graph.
+        self.el = h("div.dep-input");
+        var depRows = h("div.dep-rows");
+        self.el.appendChild(depRows);
+        self.el.appendChild(h("div.u-flex", { style: { marginBlockStart: "6px" } }, [
+          h("button.btn.btn-sm", { text: "+ " + t("deps.add"), type: "button", on: { click: function () { addDepRow(); } } })
+        ]));
+
+        // Ranked once for the whole list: the row is rebuilt on every add and
+        // remove, and ranking the program per option would be slow on a big one.
+        var depNumbers = PMS.utils.taskNumbers(PMS.store.data);
+
+        function addDepRow(entry) {
+          entry = entry || { id: "", type: "FS", lag: 0 };
+          var row = h("div.dep-row");
+          var whoSel = h("select.select", { style: { minWidth: "0", flex: "1 1 180px" } });
+          whoSel.appendChild(h("option", { value: "", text: t("deps.pickTask") }));
+          var here = field.excludeId || null;
+          PMS.repos.tasks.all()
+            .filter(function (x) { return !here || x.id !== here; })
+            .sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); })
+            .forEach(function (x) {
+              var n = depNumbers[x.id];
+              whoSel.appendChild(h("option", {
+                value: x.id,
+                text: (n ? "#" + n + " " : "") + x.title
+              }));
+            });
+          // An edge to a task that was deleted still has to be shown, or the
+          // row would silently reset itself and the link would be dropped.
+          if (entry.id && !whoSel.querySelector('option[value="' + entry.id + '"]')) {
+            whoSel.appendChild(h("option", { value: entry.id, text: t("deps.missingTask") }));
+          }
+          whoSel.value = entry.id || "";
+
+          var typeSel = h("select.select", { style: { flex: "0 0 84px" }, attrs: { title: t("deps.typeLabel") } });
+          PMS.dependencies.TYPES.forEach(function (ty) {
+            typeSel.appendChild(h("option", { value: ty, text: PMS.dependencies.label(ty) }));
+          });
+          typeSel.value = PMS.dependencies.isType(entry.type) ? entry.type : "FS";
+
+          var lagIn = h("input.input", {
+            type: "number",
+            value: entry.lag ? String(entry.lag) : "0",
+            style: { flex: "0 0 76px" },
+            attrs: { title: t("deps.lag"), step: "1" }
+          });
+          var del = h("button.btn.btn-sm.btn-soft-danger", {
+            text: "✕", type: "button", attrs: { title: t("common.delete") },
+            on: { click: function () { row.remove(); } }
+          });
+          row.appendChild(whoSel);
+          row.appendChild(typeSel);
+          row.appendChild(lagIn);
+          row.appendChild(del);
+          depRows.appendChild(row);
+        }
+        // Normalised on the way in, so legacy ["id"] records open as one row
+        // per FS link instead of an empty editor.
+        (PMS.dependencies.normList(value)).forEach(addDepRow);
+        self.getValue = function () {
+          var out = [];
+          depRows.querySelectorAll(".dep-row").forEach(function (row) {
+            var id = row.querySelector("select").value;
+            var lag = parseInt(row.querySelector('input[type="number"]').value, 10);
+            if (!id) return;
+            out.push({ id: id, type: row.querySelectorAll("select")[1].value, lag: isNaN(lag) ? 0 : lag });
+          });
+          return out;
+        };
+        break;
+
       case "link":
         self.el = h("input.input", Object.assign({ type: "url" }, props));
         self.getValue = function () { return self.el.value.trim() || null; };

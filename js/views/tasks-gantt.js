@@ -102,9 +102,26 @@
     var SVG_NS = "http://www.w3.org/2000/svg";
     var linksSvg = h("svg.gantt-links", { attrs: { width: ((timeSpanDays) * zoom) + "px", height: (tasks.length * 40) + "px", style: "position:absolute;top:0;left:0;pointer-events:none;" } });
     try {
-      var defs = h("defs", {}, [h("marker", { attrs: { id: "arrowhead", markerWidth: 10, markerHeight: 7, refX: 9, refY: 3.5, orient: "auto" } }, [h("polygon", { attrs: { points: "0 0, 10 3.5, 0 7" } })])]);
-      linksSvg.appendChild(defs);
+      // One marker per link type, so the arrowhead carries the same colour as
+      // its line. A single marker would be filled one colour and every arrow
+      // would claim to be the same kind of link.
+      var MARKER_FILL = {
+        FS: "var(--primary)", SS: "var(--info)",
+        FF: "var(--warning)", SF: "var(--purple)",
+        broken: "var(--danger)"
+      };
+      var markers = Object.keys(MARKER_FILL).map(function (k) {
+        return h("marker", {
+          attrs: { id: "arrowhead-" + k, markerWidth: 10, markerHeight: 7, refX: 9, refY: 3.5, orient: "auto" }
+        }, [h("polygon", { attrs: { points: "0 0, 10 3.5, 0 7", fill: MARKER_FILL[k] } })]);
+      });
+      linksSvg.appendChild(h("defs", {}, markers));
     } catch (e) { console.error("[gantt] svg defs", e); }
+
+    // Once per render: the critical path and the blocking predecessors are
+    // whole-program questions, and asking per bar would analyse the network
+    // once for every row on the screen.
+    var netAnalysis = PMS.dependencies.analyzeCached(PMS.store.data);
 
     function buildRow(tsk, idx) {
       var isSub = !!tsk.parentTaskId;
@@ -114,6 +131,10 @@
       // Title and dates are stacked and each truncates on its own, so the cell
       // keeps one fixed width no matter how long the title is.
       labelCell.appendChild(h("span.gantt-label-title", { text: tsk.title, attrs: { title: tsk.title } }));
+      if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("is-critical");
+      PMS.vformat.depMarkers(PMS.store.data, tsk, netAnalysis).forEach(function (m) {
+        labelCell.appendChild(m);
+      });
       var startD = PMS.utils.parseDate(tsk.startDate);
       var endD = PMS.utils.parseDate(tsk.dueDate);
       var rangeText;
@@ -134,9 +155,14 @@
       var width = Math.max(18, Math.round((end - start) / DAY) * zoom + zoom);
 
       var color = statusColorOf(tsk.status);
-      var bar = h("div.gantt-bar" + (isSub ? ".gantt-bar-sub" : ""), {
+      // Critical and blocked are classes, not colours: the bar keeps its status
+      // colour so the band stays readable, and the marking is a ring or a mark
+      // laid over it.
+      var bar = h("div.gantt-bar" + (isSub ? ".gantt-bar-sub" : "")
+        + (PMS.dependencies.isCritical(netAnalysis, tsk.id) ? ".is-critical" : "")
+        + (PMS.dependencies.isBlocked(PMS.store.data, tsk) ? ".is-blocked" : ""), {
         dataset: { id: tsk.id },
-        attrs: { title: barTitle(tsk, t) },
+        attrs: { title: barTitle(tsk, t, netAnalysis) },
         style: { left: left + "px", width: width + "px", background: color },
         on: {
           click: function (e) { e.stopPropagation(); PMS.taskDetail.open(tsk.id); }
@@ -172,8 +198,25 @@
 
     container.appendChild(root);
 
+    // A legend, because four line styles and a red ring cannot be guessed at.
+    // It only appears when the chart actually draws links.
+    if (PMS.dependencies.edges(PMS.store.data).length) {
+      var legend = h("div.gantt-legend", { style: { padding: "8px 12px" } });
+      ["FS", "SS", "FF", "SF"].forEach(function (type) {
+        var key = h("span.u-flex", { style: { gap: "5px", alignItems: "center" } });
+        var swatch = h("span", { style: { width: "22px", height: "0", borderTopWidth: "2px", borderTopStyle: type === "FS" ? "solid" : "dashed" } });
+        swatch.classList.add("dep-" + type);
+        key.appendChild(swatch);
+        key.appendChild(h("span", { text: PMS.dependencies.label(type) }));
+        legend.appendChild(key);
+      });
+      legend.appendChild(h("span.dep-marker.dep-marker-critical", { text: "◆ " + t("deps.critical") }));
+      legend.appendChild(h("span.dep-marker.dep-marker-blocked", { text: "⛔ " + t("deps.blocked") }));
+      wrap.appendChild(legend);
+    }
+
     // after layout, draw dependency links (need pixel positions; compute manually again)
-    drawLinks(linksSvg, tasks, min, zoom);
+    drawLinks(linksSvg, tasks, min, zoom, netAnalysis);
 
     // insert linksSvg over body
     var bodyWrapper = h("div", { style: { position: "relative" } });
@@ -218,24 +261,74 @@
     });
   }
 
-  function drawLinks(linksSvg, tasks, min, zoom) {
-    tasks.forEach(function (tsk) {
-      var deps = Array.isArray(tsk.dependencies) ? tsk.dependencies : [];
-      deps.forEach(function (depId) {
-        var dep = PMS.repos.tasks.get(depId);
-        if (!dep) return;
-        var tStart = PMS.utils.parseDate(tsk.startDate) || PMS.utils.parseDate(tsk.dueDate);
-        var tEnd = PMS.utils.parseDate(tsk.dueDate) || tStart;
-        var dStart = PMS.utils.parseDate(dep.startDate) || PMS.utils.parseDate(dep.dueDate);
-        var dEnd = PMS.utils.parseDate(dep.dueDate) || dStart;
-        if (!tStart || !dEnd) return;
-        var x1 = Math.round((dEnd - min) / DAY) * zoom + zoom;
-        var x2 = Math.round((tStart - min) / DAY) * zoom;
-        var y1 = taskRowY(dep.id) + 20;
-        var y2 = taskRowY(tsk.id) + 20;
-        var path = h("path", { attrs: { d: "M " + x1 + " " + y1 + " H " + (x1 + 8) + " C " + (x1 + 18) + " " + y1 + ", " + (x2 - 18) + " " + y2 + ", " + (x2 - 8) + " " + y2 + " H " + x2, markerEnd: "url(#arrowhead)" } });
-        linksSvg.appendChild(path);
-      });
+  function drawLinks(linksSvg, tasks, min, zoom, netAnalysis) {
+    // Where an arrow leaves and lands depends on the type of link. Every type
+    // but FS hangs off the predecessor's START or the successor's END, so
+    // drawing them all from finish to start - which is what this used to do -
+    // drew an SS link that started at the wrong edge and said nothing true
+    // about the constraint.
+    //
+    //   FS  predecessor finish -> successor start
+    //   SS  predecessor start  -> successor start
+    //   FF  predecessor finish -> successor finish
+    //   SF  predecessor start  -> successor finish
+    function edgesOf(tsk) {
+      var s = PMS.utils.parseDate(tsk.startDate) || PMS.utils.parseDate(tsk.dueDate);
+      var e = PMS.utils.parseDate(tsk.dueDate) || s;
+      if (!s) return null;
+      return {
+        start: Math.round((s - min) / DAY) * zoom,
+        end: Math.round((e - min) / DAY) * zoom + zoom
+      };
+    }
+
+    PMS.dependencies.edges(PMS.store.data).forEach(function (edge) {
+      // A link to a task that is not on this chart has no row to point at. Row 0 is
+      // a real row, so membership is asked of the list, not of the y value.
+      var onChart = function (id) { return tasks.some(function (x) { return x.id === id; }); };
+      if (!onChart(edge.fromId) || !onChart(edge.toId)) return;
+      var from = edgesOf(edge.from), to = edgesOf(edge.to);
+      if (!from || !to) return;
+
+      var x1 = edge.type === "SS" || edge.type === "SF" ? from.start : from.end;
+      var x2 = edge.type === "FS" || edge.type === "SS" ? to.start : to.end;
+      var y1 = taskRowY(edge.fromId) + 20;
+      var y2 = taskRowY(edge.toId) + 20;
+      // A link whose dates already break it is drawn in the danger colour: the
+      // arrow is then saying something is wrong, not just that a link exists.
+      var broken = PMS.dependencies.isSatisfied(edge.dep, edge.from, edge.to) === false;
+      var critical = PMS.dependencies.isCritical(netAnalysis, edge.fromId) &&
+        PMS.dependencies.isCritical(netAnalysis, edge.toId);
+      var cls = "dep-" + edge.type + (broken ? " dep-broken" : "") + (critical ? " dep-critical" : "");
+      var title = edge.from.title + " → " + edge.to.title + " (" + PMS.dependencies.label(edge.type) +
+        (edge.dep.lag ? " " + (edge.dep.lag > 0 ? "+" : "") + edge.dep.lag + "d" : "") + ")" +
+        (broken ? " — " + t("deps.broken") : "");
+
+      // Route around the bars when the successor starts before the predecessor
+      // ends, the way every gantt tool does: a curve straight through the two
+      // bars would hide them.
+      var d;
+      if (x2 < x1 + 16) {
+        // The successor starts before the predecessor ends, so a straight run
+        // would go backwards through both bars. Route it out to the side, down
+        // and back in, and let the markerhead do the pointing.
+        var dip = 14;
+        d = "M " + x1 + " " + y1 + " h " + dip + " V " + y2 + " H " + (x2 - dip) +
+          " a " + dip + " " + (dip / 2) + " 0 0 1 " + dip + " " + (dip / 2) + " h -" + dip;
+      } else {
+        d = "M " + x1 + " " + y1 + " H " + (x1 + 8) + " C " + (x1 + 18) + " " + y1 + ", " + (x2 - 18) + " " + y2 + ", " + (x2 - 8) + " " + y2 + " H " + x2;
+      }
+      // Every arrow is given its own markerhead by attribute. The attribute is
+      // spelled "marker-end": written as markerEnd it is dropped as an unknown
+      // property, which is why the arrows used to arrive headless.
+      var path = h("path", {
+        attrs: {
+          d: d, fill: "none", "stroke-linecap": "round",
+          class: cls,
+          "marker-end": "url(#arrowhead-" + (broken ? "broken" : edge.type) + ")"
+        }
+      }, [h("title", { text: title })]);
+      linksSvg.appendChild(path);
     });
   }
 
@@ -254,7 +347,7 @@
     return starts;
   }
 
-  function barTitle(tsk, t) {
+  function barTitle(tsk, t, netAnalysis) {
     var st = PMS.utils.parseDate(tsk.startDate), ed = PMS.utils.parseDate(tsk.dueDate);
     var dates;
     if (!st && !ed) dates = t("gantt.noDate");
@@ -263,7 +356,19 @@
     else dates = PMS.utils.formatDate(tsk.startDate, PMS.i18n) + " \u2192 " + PMS.utils.formatDate(tsk.dueDate, PMS.i18n);
     var st2 = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === tsk.status; });
     var adv = PMS.programProgress.taskProgress(PMS.store.data, tsk);
-    return (tsk.title || "") + "\n" + dates + "\n" + (st2 ? st2.name.en : tsk.status || "") + " · " + PMS.utils.pctBand(adv);
+    // The network facts a bar has no room to show, on the hover: a task on the
+    // critical path or waiting on an unfinished predecessor is exactly the one
+    // to read before moving it.
+    var net = [];
+    if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) net.push(t("deps.critical"));
+    var blocked = PMS.dependencies.blocking(PMS.store.data, tsk);
+    if (blocked.length) {
+      net.push(t("deps.blockedBy") + ": " + blocked.map(function (b) { return b.task.title; }).join(", "));
+    }
+    var lines = [(tsk.title || ""), dates,
+      (st2 ? st2.name.en : tsk.status || "") + " · " + PMS.utils.pctBand(adv)];
+    if (net.length) lines.push(net.join(" — "));
+    return lines.join("\n");
   }
 
   function statusColorOf(key) {

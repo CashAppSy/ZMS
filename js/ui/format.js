@@ -7,6 +7,7 @@
   "use strict";
 
   var h = PMS.dom.h;
+  function t(key) { return PMS.i18n.t(key); }
 
   function statusBadge(statusKey, entity, opts) {
     var list = entity === "project" ? PMS.store.data.projectStatuses : PMS.store.data.taskStatuses;
@@ -108,6 +109,102 @@
     return el;
   }
 
+  // ---- the task network, shown the same way everywhere --------------------
+  //
+  // Four views and the detail screen all have to answer "what does this task
+  // wait on, is it held up, and is it on the critical path" and none of them
+  // should invent its own answer. These build the pieces; the engine behind
+  // them is PMS.dependencies.
+  //
+  // The type is spelled out rather than abbreviated to FS/FF/SS/SF on its own:
+  // those four letters mean nothing to somebody who has not memorised the
+  // vocabulary, and a chip is read faster than a sentence.
+
+  var TYPE_GLYPH = { FS: "→", FF: "⇥", SS: "↔", SF: "⇤" };
+
+  // One link as a chip: "waits for #4, finish to start, 2 days late".
+  function depChip(dep, number, opts) {
+    opts = opts || {};
+    var chip = h("span.dep-chip.dep-type-" + dep.type + (opts.broken ? ".dep-broken" : "") + (opts.done ? ".dep-done" : ""));
+    var glyph = h("span.dep-glyph", { text: TYPE_GLYPH[dep.type] || "→" });
+    chip.appendChild(glyph);
+    var num = (number === undefined || number === null) ? "" : "#" + number;
+    chip.appendChild(h("span.dep-type", { text: PMS.dependencies.label(dep.type) }));
+    if (num) chip.appendChild(h("span.u-muted", { text: num }));
+    if (dep.lag) {
+      chip.appendChild(h("span.dep-lag", {
+        text: (dep.lag > 0 ? "+" : "") + dep.lag + "d",
+        attrs: { title: t("deps.lagHint") }
+      }));
+    }
+    if (opts.title) chip.setAttribute("title", opts.title);
+    return chip;
+  }
+
+  // The small set of facts a row, card or pill can carry: blocked, on the
+  // critical path, slack. Empty when there is nothing to say, so a caller can
+  // append the result unconditionally.
+  function depMarkers(data, task, analysis) {
+    var out = [];
+    if (!task) return out;
+    var DD = PMS.dependencies;
+    var blocked = DD.blocking(data, task);
+    if (blocked.length) {
+      out.push(h("span.dep-marker.dep-marker-blocked", {
+        text: "⛔ " + t("deps.blocked"),
+        attrs: {
+          title: t("deps.blockedBy") + ": " + blocked.map(function (b) {
+            return (b.task.title || "") + " (" + DD.label(b.dep.type) + ")";
+          }).join(", ")
+        }
+      }));
+    }
+    if (DD.isCritical(analysis, task.id)) {
+      out.push(h("span.dep-marker.dep-marker-critical", {
+        text: "◆ " + t("deps.critical"),
+        attrs: { title: t("deps.criticalHint") }
+      }));
+    } else {
+      var slack = DD.slackOf(analysis, task.id);
+      if (slack !== null && slack > 0) {
+        out.push(h("span.dep-marker.dep-marker-slack", {
+          text: "+" + Math.round(slack) + "d",
+          attrs: { title: t("deps.slack") }
+        }));
+      }
+    }
+    return out;
+  }
+
+  // One line for a list of links: what this task waits on.
+  function depSummary(data, task, numbers) {
+    var DD = PMS.dependencies;
+    // predecessors() already drops links whose task is gone, so this only has
+    // to confirm the link really exists in the graph. The edge list is built
+    // once - this function is called once per row of a list.
+    var linked = {};
+    DD.edges(data).forEach(function (e) { if (e.toId === task.id) linked[e.fromId] = true; });
+    var preds = DD.predecessors(task).filter(function (d) { return linked[d.id]; });
+    var wrap = h("span.dep-summary");
+    preds.forEach(function (d) {
+      var p = (data.tasks || []).find(function (x) { return x && x.id === d.id; });
+      var ok = p ? DD.isSatisfied(d, p, task) : null;
+      wrap.appendChild(depChip(d, numbers && numbers[d.id], {
+        broken: ok === false,
+        done: p ? DD.isTaskDone(data, p) : false,
+        title: (p ? p.title : "") + " — " + DD.label(d.type)
+      }));
+    });
+    var succs = DD.successors(data, task.id);
+    if (succs.length) {
+      wrap.appendChild(h("span.u-muted", {
+        text: "→ " + succs.length + " " + t("deps.chain"),
+        attrs: { title: t("deps.succs") }
+      }));
+    }
+    return wrap;
+  }
+
   PMS.vformat = {
     statusBadge: statusBadge,
     priorityBadge: priorityBadge,
@@ -118,6 +215,9 @@
     progressChip: progressChip,
     hexToSoft: hexToSoft,
     creatorOf: creatorOf,
-    creatorChip: creatorChip
+    creatorChip: creatorChip,
+    depChip: depChip,
+    depMarkers: depMarkers,
+    depSummary: depSummary
   };
 })(window.PMS);

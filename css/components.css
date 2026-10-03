@@ -565,7 +565,10 @@ table.tbl {
   .gantt-day-label { position: absolute; font-size: 0.6rem; color: var(--text-faint); text-align: center; min-width: 24px; pointer-events: none; }
   .gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; }
 .gantt-links { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.gantt-links path { stroke: var(--text-faint); stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+/* No marker-end here: every dependency path now sets its own per-type arrow as
+   an attribute, and a CSS marker-end would override all of them with one
+   default arrowhead. */
+.gantt-links path { stroke: var(--text-faint); stroke-width: 1.5; fill: none; }
 
 /* ---------- Calendar ---------- */
 .calendar-toolbar { display: flex; gap: var(--space-2); align-items: center; margin-block-end: var(--space-3); }
@@ -861,4 +864,158 @@ table.tbl {
   background: var(--info-soft);
   color: var(--text-muted);
   font-size: .84rem;
+}
+
+/* ==========================================================================
+   The task network: typed links, waiting, and the critical path.
+
+   One set of marks, shared by the table, kanban, gantt and calendar, so a
+   task looks the same wherever it is read. Colour alone never carries the
+   meaning: every mark has a glyph and a word in it, because the critical path
+   has to survive a greyscale printout and a red-green colour blind reader.
+   ========================================================================== */
+
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  font-size: .7rem;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.dep-chip .dep-glyph { font-weight: 700; }
+.dep-chip .dep-type { color: var(--text-muted); }
+.dep-chip .dep-lag { font-variant-numeric: tabular-nums; color: var(--text-faint); }
+
+/* Each type gets its own hue so a row of links can be read at a glance, and its
+   own glyph so the hue is never the only clue. */
+.dep-type-FS { border-color: var(--primary); }
+.dep-type-FS .dep-glyph { color: var(--primary); }
+.dep-type-SS { border-color: var(--info); }
+.dep-type-SS .dep-glyph { color: var(--info); }
+.dep-type-FF { border-color: var(--warning); }
+.dep-type-FF .dep-glyph { color: var(--warning); }
+.dep-type-SF { border-color: var(--purple); }
+.dep-type-SF .dep-glyph { color: var(--purple); }
+
+/* a link whose predecessor is finished is settled; one whose dates break it is
+   not yet true */
+.dep-chip.dep-done { opacity: .62; }
+.dep-chip.dep-done .dep-glyph { text-decoration: line-through; }
+.dep-chip.dep-broken {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.dep-chip.dep-broken .dep-glyph { color: var(--danger); }
+
+.dep-summary { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+.dep-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: .68rem;
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.dep-marker-critical {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  font-weight: 600;
+}
+.dep-marker-blocked {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+.dep-marker-slack {
+  color: var(--text-faint);
+  border-color: var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The dependency picker in the task editor: one row per link, wrapping on its
+   own so a long list never grows a dialog past the screen. */
+.dep-rows { display: flex; flex-direction: column; gap: 6px; }
+.dep-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dep-row .select, .dep-row .input { min-width: 0; }
+
+/* Critical is marked twice on purpose: a tint to catch the eye while scanning
+   and a hard edge so the row still reads when the tint is lost in a print or a
+   screenshot. */
+.vt-row.is-critical {
+  background: var(--danger-soft);
+  /* The edge is marked with an inset shadow, which cannot be a logical
+     property, so the RTL side is corrected in rtl.css rather than being left
+     pointing the wrong way in Arabic. */
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.vt-row.is-critical .vt-td:first-child { font-weight: 600; }
+
+.kanban-card.is-critical {
+  border-color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.kanban-card.is-blocked { border-inline-start: 4px solid var(--warning); }
+
+/* A day cell has no room to print the network, so the marks sit in the corner
+   of the pill. The critical diamond is drawn, not coloured, because the pill's
+   own background is already the status colour. */
+.cal-task.is-critical {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+.cal-task-marks {
+  margin-inline-start: auto;
+  padding-inline-start: 4px;
+  font-size: .6rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+.cal-mark-critical { color: var(--danger); }
+.cal-mark-blocked { color: var(--warning); }
+
+/* Gantt: a critical bar keeps its own status colour - the band still has to be
+   readable - and is ringed instead. */
+.gantt-bar.is-critical {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+.gantt-bar.is-blocked::after {
+  content: "\1F512";
+  position: absolute;
+  inset-inline-end: -7px;
+  top: -6px;
+  font-size: .7rem;
+}
+.gantt-label-col.is-critical .gantt-label-title { color: var(--danger); font-weight: 600; }
+
+/* Link arrows, one weight per type so the gantt reads without its legend. */
+.gantt-links path.dep-FS { stroke: var(--primary); stroke-width: 2; }
+.gantt-links path.dep-SS { stroke: var(--info); stroke-width: 2; stroke-dasharray: 5 3; }
+.gantt-links path.dep-FF { stroke: var(--warning); stroke-width: 2; stroke-dasharray: 8 3; }
+.gantt-links path.dep-SF { stroke: var(--purple); stroke-width: 2; stroke-dasharray: 2 3; }
+.gantt-links path.dep-broken { stroke: var(--danger); }
+.gantt-links path.dep-critical { stroke-width: 3; }
+
+.gantt-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: .72rem;
+  color: var(--text-muted);
 }

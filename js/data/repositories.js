@@ -412,6 +412,22 @@
         if (patch && patch.plannedSubtasks !== undefined && patch.plannedSubtasks !== null) {
           patch.plannedSubtasks = Math.max(0, Math.floor(parseInt(patch.plannedSubtasks,10)||0));
         }
+        if (patch && patch.dependencies !== undefined) {
+          // A full edit writes the whole predecessor list, so it needs the same
+          // two guards `addDependency` applies one edge at a time: normalize the
+          // shape, and refuse the write if the finished graph would contain a
+          // loop. Self-links and links to deleted tasks are dropped rather than
+          // refused, because there is nothing the user could do about them.
+          var depRec = find("tasks", id);
+          var normDeps = PMS.dependencies.normList(patch.dependencies).filter(function (d) {
+            return d.id && d.id !== id && !!find("tasks", d.id);
+          });
+          if (depRec && PMS.dependencies.wouldCycleWith(PMS.store.data, id, normDeps)) {
+            if (PMS.toast) PMS.toast.show(PMS.i18n.t("deps.cycleRefused"), "error");
+            return { error: "cycle" };
+          }
+          patch.dependencies = normDeps;
+        }
         // A task may only be marked done once every subtask is done. Enforced
         // here so the rule holds whichever screen (or import) asks for it; the
         // UI checks first and shows the warning.

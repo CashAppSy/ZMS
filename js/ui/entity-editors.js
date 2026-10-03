@@ -186,6 +186,7 @@
       // planned subtask scope is extra.
       { key: "plannedSubtasks", label: t("projects.plannedSubtasks"), type: "number", hint: t("projects.plannedSubtasksHint") },
       { key: "linkedTaskIds", label: t("tasks.linkedTasks"), type: "linkedTask", excludeId: taskId || null, full: true, hint: t("tasks.linkedTasksHint") },
+      { key: "dependencies", label: t("deps.title"), type: "dependencies", excludeId: taskId || null, full: true, hint: t("deps.hint") },
       { key: "tags", label: t("common.tags"), type: "tags", full: true }
     ];
   }
@@ -544,6 +545,23 @@
                   : PMS.programProgress.defaultPlannedSubtasks(PMS.store.data),
                 tags: v.tags || [], customFields: cf, meetingId: meetingId
               };
+              // Typed predecessors. Deduped here because the picker is free to
+              // offer the same task twice and a duplicated row would show as one
+              // link twice in every view.
+              if (v.dependencies) {
+                var seen = {};
+                payload.dependencies = v.dependencies.filter(function (d) {
+                  if (!d || !d.id || d.id === (task && task.id) || seen[d.id]) return false;
+                  seen[d.id] = true;
+                  return true;
+                }).map(function (d) {
+                  return {
+                    id: d.id,
+                    type: PMS.dependencies.isType(d.type) ? d.type : "FS",
+                    lag: isFinite(d.lag) ? Math.trunc(d.lag) : 0
+                  };
+                });
+              }
             }
             if (isEdit) {
               if (restricted) {

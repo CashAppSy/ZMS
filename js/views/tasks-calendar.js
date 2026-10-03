@@ -14,6 +14,9 @@
 
   var DAY = 24 * 60 * 60 * 1000;
 
+  // Whole-program facts, resolved once per render and read by every pill.
+  var netAnalysis = null;
+
   function firstOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 
   function startOfWeek(d) {
@@ -24,6 +27,7 @@
 
   function render(container) {
     container.innerHTML = "";
+    netAnalysis = PMS.dependencies.analyzeCached(PMS.store.data);
     var header = h("div.page-header");
     header.appendChild(h("h1", { text: t("tasks.viewCalendar") }));
     var actions = h("div.actions");
@@ -86,11 +90,25 @@
       var dayTasks = taskForDay(tasks, iso).slice(0, 3);
       dayTasks.forEach(function (tsk) {
         var c = statusColorOf(tsk.status);
-        var chip = h("span.cal-task", {
-          text: tsk.title,
+        // A day cell has room for a title and little else, so the network is
+        // reduced to two glyphs in the corner: the critical diamond and the
+        // blocked padlock. Clicking still opens the detail, which spells both
+        // out. Marked on the pill rather than the cell so it is obvious which
+        // task in a busy day carries the risk.
+        var chip = h("span.cal-task" + (PMS.dependencies.isCritical(netAnalysis, tsk.id) ? ".is-critical" : ""), {
           style: { background: c },
+          attrs: { title: calTitle(tsk) },
           on: { click: function () { PMS.taskDetail.open(tsk.id); } }
         });
+        chip.appendChild(h("span", { text: tsk.title }));
+        var marks = h("span.cal-task-marks");
+        if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) {
+          marks.appendChild(h("span.cal-mark-critical", { text: "◆", attrs: { title: t("deps.critical") } }));
+        }
+        if (PMS.dependencies.isBlocked(PMS.store.data, tsk)) {
+          marks.appendChild(h("span.cal-mark-blocked", { text: "⛔", attrs: { title: t("deps.blocked") } }));
+        }
+        if (marks.childNodes.length) chip.appendChild(marks);
         dayEl.appendChild(chip);
       });
       if (taskForDay(tasks, iso).length > 3) dayEl.appendChild(h("div.u-muted", { text: "+" + (taskForDay(tasks, iso).length - 3), style: { fontSize: "0.7rem" } }));
@@ -115,11 +133,19 @@
       var dayEl = h("div.cal-day" + (iso === PMS.utils.todayISO() ? ".today" : ""));
       dayEl.appendChild(h("div.cal-day-num", { text: day.getDate() + " · " + labels[i] }));
       taskForDay(tasks, iso).forEach(function (tsk) {
-        dayEl.appendChild(h("span.cal-task", {
-          text: tsk.title,
+        var chip = h("span.cal-task" + (PMS.dependencies.isCritical(netAnalysis, tsk.id) ? ".is-critical" : ""), {
           style: { background: statusColorOf(tsk.status) },
+          attrs: { title: calTitle(tsk) },
           on: { click: function () { PMS.taskDetail.open(tsk.id); } }
-        }));
+        });
+        chip.appendChild(h("span", { text: tsk.title }));
+        if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) {
+          chip.appendChild(h("span.cal-mark-critical", { text: "◆", attrs: { title: t("deps.critical") } }));
+        }
+        if (PMS.dependencies.isBlocked(PMS.store.data, tsk)) {
+          chip.appendChild(h("span.cal-mark-blocked", { text: "⛔", attrs: { title: t("deps.blocked") } }));
+        }
+        dayEl.appendChild(chip);
       });
       grid.appendChild(dayEl);
     }
@@ -129,6 +155,24 @@
   function statusColorOf(key) {
     var s = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === key; });
     return s ? s.color : "#3b82f6";
+  }
+
+  // Tooltip for a pill: the network facts a day cell has no room to print.
+  function calTitle(tsk) {
+    var parts = [tsk.title];
+    var preds = PMS.dependencies.predecessors(tsk);
+    if (preds.length) {
+      parts.push(preds.map(function (d) {
+        var p = PMS.repos.tasks.get(d.id);
+        return (p ? p.title : "?") + " (" + PMS.dependencies.label(d.type) + ")";
+      }).join(", "));
+    }
+    if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) parts.push(t("deps.critical"));
+    var blocked = PMS.dependencies.blocking(PMS.store.data, tsk);
+    if (blocked.length) {
+      parts.push(t("deps.blockedBy") + ": " + blocked.map(function (b) { return b.task.title; }).join(", "));
+    }
+    return parts.join(" — ");
   }
 
   var view = {

@@ -81,6 +81,10 @@
   --danger-soft: rgba(214, 61, 61, 0.12);
   --info: #0891b2;
   --info-soft: rgba(8, 145, 178, 0.12);
+  /* the fourth link type (start-to-finish) needs a hue of its own; it is the
+     only mark in the app that is not a status colour */
+  --purple: #6d4bc4;
+  --purple-soft: rgba(109, 75, 196, 0.12);
 
   --shadow-sm: 0 1px 3px rgba(11, 40, 46, 0.08);
   --shadow-md: 0 6px 18px rgba(11, 40, 46, 0.1);
@@ -116,6 +120,8 @@
   --danger-soft: rgba(240, 85, 85, 0.16);
   --info: #2dd4ee;
   --info-soft: rgba(45, 212, 238, 0.16);
+  --purple: #a78bfa;
+  --purple-soft: rgba(167, 139, 250, 0.16);
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.5);

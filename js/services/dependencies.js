@@ -132,6 +132,23 @@
     return found;
   }
 
+  // Would replacing one task's whole predecessor list with `deps` close a loop?
+  //
+  // Checking the pairs one by one is not enough: a batch can be acyclic on its
+  // own and cyclic once the task's OLD edges are still in place, or the other
+  // way round. So the question is asked of the finished graph - the candidate
+  // data with the new list already swapped in - which is the only thing the
+  // user will actually end up with.
+  function wouldCycleWith(data, taskId, deps) {
+    var tasks = data.tasks || [];
+    var candidate = {
+      tasks: tasks.map(function (x) {
+        return x.id === taskId ? Object.assign({}, x, { dependencies: deps }) : x;
+      })
+    };
+    return analyze(candidate).cyclic === true;
+  }
+
   // Length of a task in whole days. Both ends count, the way the gantt draws a
   // bar, so a one-day task measures 1 rather than 0. A task with no dates still
   // occupies a slot, or every link through it would look free.
@@ -359,6 +376,7 @@
     successors: successors,
     edges: edges,
     reaches: reaches,
+    wouldCycleWith: wouldCycleWith,
     durationDays: durationDays,
     analyze: analyze,
     analyzeCached: analyzeCached,

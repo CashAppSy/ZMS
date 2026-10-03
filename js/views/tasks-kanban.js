@@ -10,6 +10,10 @@
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
   var projectFilter = null;
+  // Whole-program facts, resolved once per render and read by every card:
+  // ranking each card's tasks here would re-sort the program per card.
+  var netAnalysis = null;
+  var netNumbers = {};
 
   function statuses() { return PMS.store.data.taskStatuses || []; }
 
@@ -21,6 +25,8 @@
 
   function render(container) {
     container.innerHTML = "";
+    netAnalysis = PMS.dependencies.analyzeCached(PMS.store.data);
+    netNumbers = PMS.utils.taskNumbers(PMS.store.data);
     var header = h("div.page-header");
     header.appendChild(h("h1", { text: t("tasks.viewKanban") }));
     var actions = h("div.actions");
@@ -70,7 +76,12 @@
 
   function card(tsk, st) {
     var canMove = PMS.auth ? PMS.auth.canChangeStatus(tsk) : true;
-    var c = h("div.kanban-card", {
+    // A blocked task cannot honestly be dragged into done, and a critical one
+    // is the one the program hinges on. Both are marked on the card itself so a
+    // board read at a glance shows where the risk is.
+    var critical = PMS.dependencies.isCritical(netAnalysis, tsk.id);
+    var blocked = PMS.dependencies.isBlocked(PMS.store.data, tsk);
+    var c = h("div.kanban-card" + (critical ? ".is-critical" : "") + (blocked ? ".is-blocked" : ""), {
       attrs: { "data-id": tsk.id },
       on: {
         dragstart: function (e) {
@@ -101,6 +112,16 @@
     meta.appendChild(avatars);
     c.appendChild(meta);
     if (tsk.tags && tsk.tags.length) c.appendChild(h("div.kc-meta", PMS.vformat.tagsChips(tsk.tags)));
+    // The network: a link line and the critical/blocked marks, on their own row
+    // so they read as a separate fact and not as another tag.
+    var preds = PMS.dependencies.predecessors(tsk);
+    var succs = PMS.dependencies.successors(PMS.store.data, tsk.id);
+    if (preds.length || succs.length || critical) {
+      var net = h("div.kc-meta", { style: { gap: "4px", flexWrap: "wrap" } });
+      net.appendChild(PMS.vformat.depSummary(PMS.store.data, tsk, netNumbers));
+      PMS.vformat.depMarkers(PMS.store.data, tsk, netAnalysis).forEach(function (m) { net.appendChild(m); });
+      c.appendChild(net);
+    }
     // status-derived progress bar (reacts to the column/status the card sits in)
     var pv = PMS.programProgress.taskProgress(PMS.store.data, tsk);
     var bar = h("div.progress-track", { style: { height: "6px", marginBlockStart: "8px" } }, [h("div.progress-fill", { style: { width: Math.floor(pv) + "%" } })]);

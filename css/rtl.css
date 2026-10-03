@@ -16,6 +16,12 @@ html[dir="rtl"] .kpi-card {
   text-align: start;
 }
 
+/* The critical-path edge on a task row is an inset box-shadow, which is a
+   physical offset, so it lands on the wrong side of an Arabic row. */
+html[dir="rtl"] .vt-row.is-critical {
+  box-shadow: inset -3px 0 0 var(--danger);
+}
+
 /* Arabic font override */
 html[lang="ar"] .btn,
 html[lang="ar"] input,

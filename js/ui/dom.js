@@ -7,13 +7,23 @@
 
   var NS = "http://www.w3.org/2000/svg";
 
+  // Every tag h() has to create in the SVG namespace. An element built as HTML
+  // and then placed inside an <svg> is not rendered and quietly takes its
+  // attributes with it, so a tag missing from this list fails as "nothing
+  // appears" rather than as an error - which is how the gantt's arrowheads
+  // went missing while the arrows still drew.
+  var SVG_TAGS = {
+    svg: 1, path: 1, circle: 1, rect: 1, g: 1, line: 1, text: 1, polyline: 1,
+    polygon: 1, defs: 1, marker: 1, title: 1, ellipse: 1, use: 1, tspan: 1
+  };
+
   // h('div.class#id', {attr: val, on: {click: fn}, style: {...}}, children...)
   function h(tag, props, children) {
     // tolerate h('div', [child, child]) → array passed as 2nd arg
     if (Array.isArray(props) && children === undefined) { children = props; props = null; }
     var parts = String(tag).split(".");
     var el;
-    if (parts[0] === "svg" || parts[0] === "path" || parts[0] === "circle" || parts[0] === "rect" || parts[0] === "g" || parts[0] === "line" || parts[0] === "text" || parts[0] === "polyline") {
+    if (SVG_TAGS[parts[0]]) {
       el = document.createElementNS(NS, parts[0]);
     } else {
       el = document.createElement(parts[0]);

@@ -362,6 +362,165 @@ const root = () => document.getElementById("view-root");
   ok("no task is called critical while the network loops", Object.keys(looped.critical).length === 0 && !DD.isCritical(looped, "A"));
   ok("float is withheld while the network loops", DD.slackOf(looped, "A") === null);
 
+  // ---- the network in the four task views ---------------------------------
+  // Seeded fresh so the assertions are about the marks, not about whatever the
+  // seed happens to link.
+  PMS.store.setData(PMS.seed.build());
+  const vGate = PMS.repos.tasks.add({ title: "gate work", status: "todo", startDate: D1, dueDate: D2 });
+  const vSide = PMS.repos.tasks.add({ title: "side work", status: "todo", startDate: D1, dueDate: D2 });
+  const vMain = PMS.repos.tasks.add({ title: "main work", status: "todo", startDate: D3, dueDate: D4 });
+  PMS.repos.tasks.addDependency(vMain.id, vGate.id, "FS", 0);
+  // analyze() reports the graph, not the edge list, so the arrows are counted
+  // against the service that hands them out.
+  const vEdges = PMS.dependencies.edges(PMS.store.data);
+
+  errors.length = 0; route("/tasks");
+  const vtDepCell = root().querySelector('.vt-row[data-id="' + vMain.id + '"] .dep-summary');
+  // The chip prints the type and the predecessor's number, and carries the
+  // title as a tooltip - so the title is read off the attribute, not the text.
+  ok("the table shows what a task waits on", !!vtDepCell &&
+    vtDepCell.querySelector(".dep-chip") && (vtDepCell.querySelector(".dep-chip").getAttribute("title") || "")
+      .indexOf("gate work") !== -1);
+  ok("the table's dependencies column is labelled",
+    Array.from(root().querySelectorAll(".vt-th")).some(th => th.textContent.trim() === PMS.i18n.t("deps.title")));
+  ok("a blocked task is marked in the table", !!root().querySelector('.dep-marker-blocked'));
+  ok("the critical task is marked on its row", !!root().querySelector('.vt-row.is-critical'));
+  ok("the tasks table renders clean with the network on it", errors.length === 0);
+
+  errors.length = 0; route("/tasks/kanban");
+  ok("the kanban card of a linked task carries the link summary",
+    !!root().querySelector('.kanban-card[data-id="' + vMain.id + '"] .dep-summary'));
+  ok("kanban marks a blocked card", !!root().querySelector('.kanban-card.is-blocked'));
+  ok("the kanban board renders clean with the network on it", errors.length === 0);
+
+  errors.length = 0; route("/tasks/gantt");
+  // The seed carries links of its own, so the arrows are counted rather than
+  // assumed: one per link in the whole network, none invented, none missing.
+  const depPaths = Array.from(root().querySelectorAll(".gantt-links path"));
+  ok("the gantt draws one arrow per link",
+    depPaths.length === vEdges.length, depPaths.length + " arrows vs " + vEdges.length + " links");
+  // A satisfied FS arrow points with the FS head; an unsatisfied one swaps to the
+  // broken head, so the two cases are looked up separately.
+  const fsArrow = depPaths.find(p => (p.getAttribute("class") || "").indexOf("dep-broken") === -1 &&
+    (p.getAttribute("class") || "").indexOf("dep-FS") !== -1);
+  ok("a kept arrow carries its own type's markerhead",
+    !!fsArrow && fsArrow.getAttribute("marker-end") === "url(#arrowhead-FS)",
+    fsArrow ? fsArrow.getAttribute("marker-end") : "no kept FS arrow");
+  const brokenArrow = depPaths.find(p => (p.getAttribute("class") || "").indexOf("dep-broken") !== -1);
+  ok("a broken arrow points with the broken markerhead",
+    !!brokenArrow && brokenArrow.getAttribute("marker-end") === "url(#arrowhead-broken)",
+    brokenArrow ? brokenArrow.getAttribute("marker-end") : "no broken arrow");
+  ok("every type the chart draws has a markerhead to point with",
+    ["FS", "FF", "SS", "SF", "broken"].every(ty => !!root().querySelector("#arrowhead-" + ty)));
+  // The cause of headless arrows, pinned: an SVG tag built as HTML renders
+  // nothing, so h() has to know every tag the app places inside an <svg>.
+  ok("h() builds SVG container tags in the SVG namespace",
+    ["svg", "defs", "marker", "polygon", "title", "path"].every(tag =>
+      PMS.dom.h(tag).namespaceURI === "http://www.w3.org/2000/svg"), "defs/marker/polygon/title were HTML");
+  ok("the arrowheads are real marker elements with a point to them",
+    Array.from(root().querySelectorAll(".gantt-links marker")).every(mk =>
+      mk.namespaceURI === "http://www.w3.org/2000/svg" && !!mk.querySelector("polygon")));
+  // jsdom will not lay the table out, so the Arabic side of the critical-path
+  // edge is checked on the stylesheet: the edge is a physical inset shadow and
+  // has to be mirrored in rtl.css or it points the wrong way in Arabic.
+  ok("the critical row edge is mirrored for Arabic",
+    /html\[dir="rtl"\][^{]*\.vt-row\.is-critical[^{]*\{[^}]*inset\s+-3px/.test(cssOf("css/rtl.css")));
+  ok("no arrow is left without a markerhead",
+    depPaths.every(p => /^url\(#arrowhead-/.test(p.getAttribute("marker-end") || "")));
+  ok("every arrow names the pair it joins",
+    depPaths.every(p => !!(p.querySelector("title") || {}).textContent));
+  ok("an unsatisfied link is drawn as broken", !!root().querySelector(".gantt-links path.dep-broken"));
+  ok("the gantt legend explains the types",
+    !!root().querySelector(".gantt-legend") && root().querySelectorAll(".gantt-legend .dep-FS").length >= 1);
+  ok("the gantt marks the critical bar", !!root().querySelector(".gantt-bar.is-critical"));
+  ok("the gantt shows a mark on a blocked bar", !!root().querySelector(".gantt-bar.is-blocked"));
+  ok("the gantt renders clean with the network on it", errors.length === 0);
+
+  errors.length = 0; route("/tasks/calendar");
+  ok("the calendar marks the critical task's pill", !!root().querySelector(".cal-task.is-critical"));
+  ok("the calendar shows a blocked mark", !!root().querySelector(".cal-mark-blocked"));
+  ok("the calendar renders clean with the network on it", errors.length === 0);
+
+  // ---- the dependency picker in the task editor --------------------------
+  const depCtl = PMS.forms.buildControl({ key: "dependencies", type: "dependencies", excludeId: vMain.id },
+    [{ id: vGate.id, type: "SS", lag: 2 }]);
+  const depVal = depCtl.getValue();
+  ok("the dependency control reads back type and lag",
+    depVal.length === 1 && depVal[0].id === vGate.id && depVal[0].type === "SS" && depVal[0].lag === 2);
+  ok("the dependency control opens one row per link", depCtl.el.querySelectorAll(".dep-row").length === 1);
+  ok("the dependency control offers all four types",
+    depCtl.el.querySelectorAll(".dep-row select")[1].querySelectorAll("option").length === 4);
+  ok("the dependency control will not offer the task itself",
+    !Array.from(depCtl.el.querySelectorAll(".dep-row select")[0].options).some(o => o.value === vMain.id));
+  ok("a legacy id list opens as one FS row",
+    PMS.forms.buildControl({ key: "dependencies", type: "dependencies" }, [vGate.id]).getValue()[0].type === "FS");
+  // taskNumber() takes the task, not its id, so a caller that passes an id gets
+  // "" back and every number in the picker silently disappears.
+  ok("the dependency picker numbers the tasks it offers",
+    Array.from(depCtl.el.querySelectorAll(".dep-row select")[0].options)
+      .filter(o => o.value === vGate.id).some(o => /^#\d+ /.test(o.textContent)),
+    "option text was " + (depCtl.el.querySelector(".dep-row option[value='" + vGate.id + "']") || {}).textContent);
+  ok("the task detail's network section numbers the tasks it names",
+    (function () {
+      PMS.taskDetail.open(vMain.id);
+      const sec = PMS.modal.body.querySelector(".dep-chip");
+      const hasNum = !!sec && Array.from(sec.querySelectorAll("span")).some(s => /^#\d+$/.test(s.textContent));
+      PMS.modal.close();
+      return hasNum;
+    })());
+
+  // The editor is behind a permission check, so the section signs in as an
+  // admin first - and puts the previous session back afterwards rather than
+  // leaving the rest of the run signed in by accident.
+  const depPrevUser = PMS.auth.currentUser();
+  PMS.auth.createUser({ username: "dep-admin", password: "pw1234", role: "admin", name: "Dep Admin" });
+  PMS.auth.login("dep-admin", "pw1234");
+  PMS.editors.openTaskEditor(PMS.repos.tasks.get(vMain.id), {});
+  const dform = PMS.modal.body.querySelector("form");
+  const dfield = dform && dform.querySelector('.field[data-key="dependencies"]');
+  ok("the task editor exposes the dependencies field", !!dfield);
+  ok("the editor prefills the existing links", dfield && dfield.querySelectorAll(".dep-row").length === 1);
+  dfield.querySelector(".dep-row button").click();
+  ok("a link row can be removed", dfield.querySelectorAll(".dep-row").length === 0);
+  dfield.querySelector(".dep-input button").click();
+  const newRow = dfield.querySelector(".dep-row");
+  ok("a link row can be added", !!newRow);
+  const sels = newRow.querySelectorAll("select");
+  sels[0].value = vSide.id;
+  sels[1].value = "FF";
+  newRow.querySelector('input[type="number"]').value = "1";
+  const depBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  depBtns[depBtns.length - 1].click();
+  ok("the editor saved the typed link",
+    PMS.repos.tasks.dependenciesOf(vMain.id).length === 1 &&
+    PMS.repos.tasks.dependenciesOf(vMain.id)[0].id === vSide.id &&
+    PMS.repos.tasks.dependenciesOf(vMain.id)[0].type === "FF" &&
+    PMS.repos.tasks.dependenciesOf(vMain.id)[0].lag === 1);
+
+  // A loop typed into the editor is refused and the modal stays open. The loop
+  // has to be real: vMain waits on vSide, and vSide is made to wait on vGate,
+  // so vMain already waits on vGate by the time vGate is told to wait back.
+  PMS.repos.tasks.addDependency(vSide.id, vGate.id, "FS", 0);
+  // Asked the way the save path asks, rather than by walking the graph here:
+  // "would vGate waiting on vMain loop?" is exactly the question under test.
+  ok("the seeded-up link really is a loop",
+    PMS.dependencies.wouldCycleWith(PMS.store.data, vGate.id, [{ id: vMain.id, type: "FS", lag: 0 }]) === true);
+  PMS.editors.openTaskEditor(PMS.repos.tasks.get(vGate.id), {});
+  const loopForm = PMS.modal.body.querySelector("form");
+  const loopField = loopForm && loopForm.querySelector('.field[data-key="dependencies"]');
+  loopField.querySelector(".dep-input button").click();
+  const loopRow = loopField.querySelector(".dep-row");
+  loopRow.querySelectorAll("select")[0].value = vMain.id;
+  loopRow.querySelectorAll("select")[1].value = "FS";
+  const loopBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+  loopBtns[loopBtns.length - 1].click();
+  ok("the editor refuses a link that loops back", PMS.modal.isOpen === true &&
+    PMS.repos.tasks.dependenciesOf(vGate.id).length === 0);
+  PMS.modal.close();
+  // Signed back out again, so the sections below start from no session exactly
+  // as they did before this one created one.
+  if (PMS.auth.logout) PMS.auth.logout();
+
   // ---- writing links ------------------------------------------------------
   PMS.store.setData(PMS.seed.build());
   const netA = PMS.repos.tasks.add({ title: "dep A", status: "todo", startDate: D1, dueDate: D3 });
@@ -382,6 +541,34 @@ const root = () => document.getElementById("view-root");
   ok("the loop check is available before writing", PMS.repos.tasks.wouldCycle(netA.id, netB.id) === true);
   ok("removing a link takes it out", PMS.repos.tasks.removeDependency(netB.id, netA.id) === true && PMS.repos.tasks.dependenciesOf(netB.id).length === 0);
   ok("removing a link that is not there reports so", PMS.repos.tasks.removeDependency(netB.id, netA.id) === false);
+
+  // A whole-list write (what the task editor does) has to answer the same
+  // questions a one-edge write does, or editing a task is a way round the guard.
+  PMS.store.setData(PMS.seed.build());
+  const listA = PMS.repos.tasks.add({ title: "list A", status: "todo" });
+  const listB = PMS.repos.tasks.add({ title: "list B", status: "todo" });
+  const listC = PMS.repos.tasks.add({ title: "list C", status: "todo" });
+  PMS.repos.tasks.addDependency(listB.id, listA.id, "FS", 0);
+  ok("a whole-list write stores typed links",
+    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: listA.id, type: "FF", lag: 3 }] }).error === undefined &&
+    PMS.repos.tasks.dependenciesOf(listC.id)[0].type === "FF" &&
+    PMS.repos.tasks.dependenciesOf(listC.id)[0].lag === 3);
+  ok("a whole-list write normalizes a bare id list",
+    PMS.repos.tasks.update(listC.id, { dependencies: [listA.id] }) &&
+    PMS.repos.tasks.dependenciesOf(listC.id)[0].type === "FS");
+  ok("a whole-list write refuses a loop and writes nothing",
+    PMS.repos.tasks.update(listA.id, { dependencies: [{ id: listC.id, type: "FS", lag: 0 }] }).error === "cycle" &&
+    PMS.repos.tasks.dependenciesOf(listA.id).length === 0);
+  ok("a whole-list write drops a self-link instead of refusing it",
+    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: listC.id, type: "FS", lag: 0 }] }) &&
+    PMS.repos.tasks.dependenciesOf(listC.id).length === 0);
+  ok("a whole-list write drops links to tasks that are gone",
+    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: "no-such-task", type: "FS", lag: 0 }] }) &&
+    PMS.repos.tasks.dependenciesOf(listC.id).length === 0);
+  PMS.repos.tasks.addDependency(listC.id, listA.id, "FS", 0);
+  ok("the loop question for a whole list agrees with the analysis",
+    PMS.dependencies.wouldCycleWith(PMS.store.data, listA.id, [{ id: listC.id, type: "FS", lag: 0 }]) === true &&
+    PMS.dependencies.wouldCycleWith(PMS.store.data, listA.id, []) === false);
 
   // deleting a predecessor takes the links pointing at it with it
   PMS.repos.tasks.addDependency(netB.id, netA.id, "FS", 0);

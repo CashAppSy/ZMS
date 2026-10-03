@@ -288,13 +288,67 @@
       node.appendChild(addCheck);
     }
 
-    // dependencies
-    var deps = (task.dependencies || []).map(function (did) { return PMS.repos.tasks.get(did); }).filter(Boolean);
-    if (deps.length) {
-      node.appendChild(h("div.section-title", [txt(t("tasks.dependencies"))]));
-      var depWrap = h("div.stack");
-      deps.forEach(function (d) { depWrap.appendChild(h("div.u-flex", [h("span", { text: "⛓" }), h("span", { text: d.title })])); });
-      node.appendChild(depWrap);
+    // The network: what this task waits on, what waits on it, and where it sits
+    // on the critical path. Reads PMS.dependencies, so a link with a type and a
+    // lag shows as one, and a bare id from an older file still shows as FS.
+    var DD = PMS.dependencies;
+    var analysis = DD.analyzeCached(PMS.store.data);
+    // Ranked once: taskNumber() re-sorts the whole program on every call, and
+    // this section calls it once per link.
+    var depNumbers = PMS.utils.taskNumbers(PMS.store.data);
+    var preds = DD.predecessors(task).map(function (dep) {
+      return { dep: dep, task: PMS.repos.tasks.get(dep.id) };
+    }).filter(function (x) { return !!x.task; });
+    var succs = DD.successors(PMS.store.data, task.id).filter(function (x) { return !!PMS.repos.tasks.get(x.task.id); });
+
+    if (preds.length || succs.length || DD.isCritical(analysis, task.id)) {
+      node.appendChild(h("div.section-title", [txt(t("deps.title"))]));
+
+      // Critical and blocked first: they change what the reader should do, and
+      // burying them under a list of links would hide the point of the section.
+      var markers = PMS.vformat.depMarkers(PMS.store.data, task, analysis);
+      if (markers.length) {
+        var markWrap = h("div.u-flex", { style: { gap: "6px", marginBlockEnd: "8px", flexWrap: "wrap" } });
+        markers.forEach(function (m) { markWrap.appendChild(m); });
+        node.appendChild(markWrap);
+      }
+
+      if (preds.length) {
+        node.appendChild(h("div.u-muted", { text: t("deps.predecessor"), style: { fontSize: ".78rem" } }));
+        var depWrap = h("div.stack", { style: { marginBlockEnd: "8px" } });
+        preds.forEach(function (x) {
+          var ok = DD.isSatisfied(x.dep, x.task, task);
+          var row = h("div.u-flex", { style: { gap: "6px", alignItems: "center" } });
+          row.appendChild(PMS.vformat.depChip(x.dep, depNumbers[x.task.id], {
+            broken: ok === false,
+            done: DD.isTaskDone(PMS.store.data, x.task)
+          }));
+          var name = h("span.u-grow.u-ellipsis", { text: x.task.title, style: { cursor: "pointer" } });
+          name.addEventListener("click", function () { PMS.modal.close(); open(x.task.id); });
+          row.appendChild(name);
+          row.appendChild(PMS.vformat.statusBadge(x.task.status, "task"));
+          if (ok === false) {
+            row.appendChild(h("span.u-muted", { text: t("deps.broken"), style: { fontSize: ".72rem" } }));
+          }
+          depWrap.appendChild(row);
+        });
+        node.appendChild(depWrap);
+      }
+
+      if (succs.length) {
+        node.appendChild(h("div.u-muted", { text: t("deps.successor"), style: { fontSize: ".78rem" } }));
+        var succWrap = h("div.stack");
+        succs.forEach(function (x) {
+          var row = h("div.u-flex", { style: { gap: "6px", alignItems: "center" } });
+          row.appendChild(h("span.u-muted", { text: "←" }));
+          row.appendChild(PMS.vformat.depChip(x.dep, depNumbers[x.task.id], {}));
+          var name = h("span.u-grow.u-ellipsis", { text: x.task.title, style: { cursor: "pointer" } });
+          name.addEventListener("click", function () { PMS.modal.close(); open(x.task.id); });
+          row.appendChild(name);
+          succWrap.appendChild(row);
+        });
+        node.appendChild(succWrap);
+      }
     }
 
     // activity log

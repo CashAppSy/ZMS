@@ -11,6 +11,9 @@
 
   // id -> task number, refreshed on every table paint and read by cellNumber.
   var numberMap = {};
+  // Whole-program facts (the critical path, blocking predecessors) resolved once
+  // per render rather than once per row or cell.
+  var netAnalysis = null;
 
   // The task's stable number, so a row can be pointed at out loud ("task 12").
   // The full id sits in the tooltip for anyone who needs to copy it.
@@ -56,6 +59,9 @@
       { key: "priority", label: t("common.priority"), render: cellPriority, visible: true, sortable: true },
       { key: "assignees", label: t("tasks.assignees"), render: cellAssignees, visible: true },
       { key: "createdBy", label: t("tasks.createdBy"), render: cellCreator, visible: true, sortable: true },
+      // After the two "who" columns on purpose: assignee and creator belong
+      // together, and the network is a different kind of fact again.
+      { key: "dependencies", label: t("deps.title"), width: "210px", render: cellDependencies, visible: true },
       { key: "dueDate", label: t("tasks.dueDate"), render: cellDue, visible: true, sortable: true },
       { key: "estimatedHours", label: t("tasks.estimated"), render: cellEst, visible: true, sortable: true },
       { key: "actualHours", label: t("tasks.actual"), render: cellActual, visible: false, sortable: true },
@@ -166,6 +172,10 @@
     // Ranked once per paint, not once per cell: the list is virtualized and
     // recomputes on every scroll tick.
     numberMap = PMS.utils.taskNumbers(PMS.store.data);
+    // Same reasoning for the network: one analysis for the whole render. It is
+    // cached on the data version inside the service too, so this is just
+    // handing the same answer to the row builders.
+    netAnalysis = PMS.dependencies.analyzeCached(PMS.store.data);
 
     // Header (grid, sticky)
     var head = h("div.vt-head", { style: { gridTemplateColumns: template } });
@@ -294,7 +304,10 @@
 
   function renderRow(row, visible, item) {
     var depth = item ? item.depth : 0;
-    var rowEl = h("div.vt-row" + (depth ? ".vt-row-sub" : "") + (item && item.isCollapsed ? ".vt-row-collapsed" : ""), {
+    // The critical path is marked on the row as well as in its own cell: the
+    // cell says which task it is, the row says how far down the list to look.
+    var rowEl = h("div.vt-row" + (depth ? ".vt-row-sub" : "") + (item && item.isCollapsed ? ".vt-row-collapsed" : "")
+      + (PMS.dependencies.isCritical(netAnalysis, row.id) ? ".is-critical" : ""), {
       dataset: { id: row.id, depth: depth },
       attrs: { title: t("tasks.doubleClickForDetails") }
     });
@@ -440,6 +453,24 @@
     var chip = PMS.vformat.creatorChip(row);
     if (chip) return chip;
     return h("span.u-muted", { text: "-" });
+  }
+
+  // What this task waits on, what waits on it, and whether it is on the
+  // critical path or held up. The analysis is worked out once for the whole
+  // render, not per row: it is a whole-program question and re-running it for
+  // every row would be a full network pass per line of the table.
+  function cellDependencies(row) {
+    var wrap = h("span.u-flex", { style: { gap: "4px", flexWrap: "wrap", alignItems: "center" } });
+    var preds = PMS.dependencies.predecessors(row);
+    var succs = PMS.dependencies.successors(PMS.store.data, row.id);
+    if (!preds.length && !succs.length && !PMS.dependencies.isCritical(netAnalysis, row.id)) {
+      return h("span.u-muted", { text: "-" });
+    }
+    wrap.appendChild(PMS.vformat.depSummary(PMS.store.data, row, numberMap));
+    PMS.vformat.depMarkers(PMS.store.data, row, netAnalysis).forEach(function (m) {
+      wrap.appendChild(m);
+    });
+    return wrap;
   }
 
   function cellDue(row) {
