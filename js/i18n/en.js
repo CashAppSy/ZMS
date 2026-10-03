@@ -131,6 +131,8 @@
     tasks: {
       title: "Tasks", newTask: "New task", editTask: "Edit task",
       title: "Title", project: "Pillar", subTasks: "Sub-tasks",
+      childTasks: "Breakdown tasks",
+      childTasksHint: "Full tasks that make up this one. Finishing them moves this task's progress, but they hold no planned scope of their own.",
       subtasks: "Sub-tasks",
       collapseSubtasks: "Collapse sub-tasks", expandSubtasks: "Expand sub-tasks",
       collapseAllSubtasks: "Collapse sub-tasks", expandAllSubtasks: "Expand sub-tasks",

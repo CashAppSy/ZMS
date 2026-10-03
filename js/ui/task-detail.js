@@ -75,10 +75,13 @@
         var canEdit = PMS.auth ? PMS.auth.canChangeStatus(task) : true;
         if (canEdit) node.appendChild(h("button.btn.btn-sm", { text: "+ " + t("common.edit"), on: { click: function () { markClosed(); PMS.modal.close(); PMS.editors.openTaskEditor(task, { onSaved: function () {} }); } } }));
 
-        // sub tasks
+        // Child TASKS (parentTaskId). These and the `subtasks` collection are two
+        // different lists that both used to be labelled "Sub-tasks", so nobody
+        // could tell which one moves the progress. They now have their own name.
         var subs = PMS.repos.tasks.children(task.id);
         if (subs.length) {
-          node.appendChild(h("div.section-title", [txt(t("tasks.subTasks"))]));
+          node.appendChild(h("div.section-title", [txt(t("tasks.childTasks"))]));
+          node.appendChild(h("div.hint", { text: t("tasks.childTasksHint") }));
           var subList = h("div.stack");
           subs.forEach(function (s) { subList.appendChild(subRow(s)); });
           node.appendChild(subList);

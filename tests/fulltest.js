@@ -725,6 +725,64 @@ const root = () => document.getElementById("view-root");
     const v = PP.taskProgress(d, d.tasks[0]);
     return v >= 75 && v <= 99.9;
   })());
+  // A planned count of 0 used to divide by nothing, so a task could sit at 0
+  // forever while its sub-tasks sat at done. With no plan to measure against,
+  // the work that actually exists is the measure.
+  ok("zero planned subtasks still rises with finished subtasks", (function () {
+    const d = {
+      settings: {}, tasks: [{ id: "zp", status: "todo", plannedSubtasks: 0 }],
+      subtasks: [{ id: "a", taskId: "zp", status: "done" }, { id: "b", taskId: "zp", status: "done" }]
+    };
+    return near(PP.taskProgress(d, d.tasks[0]), 44.9, 0.001);
+  })());
+  ok("a subtask plan still governs when one is set", (function () {
+    const d = {
+      settings: {}, tasks: [{ id: "zp2", status: "todo", plannedSubtasks: 10 }],
+      subtasks: [{ id: "a", taskId: "zp2", status: "done" }, { id: "b", taskId: "zp2", status: "done" }]
+    };
+    // 2 of a planned 10 earns a fifth of the way through the todo band.
+    return near(PP.taskProgress(d, d.tasks[0]), 8.98, 0.001);
+  })());
+  // The task detail screen offers child tasks and subtasks under separate
+  // headings now, but both are work under the parent, so ticking either one has
+  // to move the parent's progress.
+  ok("done child tasks move the parent task's progress", (function () {
+    const d = {
+      settings: {},
+      tasks: [
+        { id: "p", status: "todo", plannedSubtasks: 3 },
+        { id: "c1", parentTaskId: "p", status: "done" },
+        { id: "c2", parentTaskId: "p", status: "done" },
+        { id: "c3", parentTaskId: "p", status: "done" }
+      ],
+      subtasks: []
+    };
+    return near(PP.taskProgress(d, d.tasks[0]), 44.9, 0.001);
+  })());
+  ok("an open child task holds the parent short of its band", (function () {
+    const d = {
+      settings: {},
+      tasks: [
+        { id: "p", status: "todo", plannedSubtasks: 3 },
+        { id: "c1", parentTaskId: "p", status: "done" },
+        { id: "c2", parentTaskId: "p", status: "inprogress" },
+        { id: "c3", parentTaskId: "p", status: "done" }
+      ],
+      subtasks: []
+    };
+    const v = PP.taskProgress(d, d.tasks[0]);
+    return v > 0 && v < 44.9;
+  })());
+  ok("child tasks and subtasks are counted together", (function () {
+    const d = {
+      settings: {},
+      tasks: [{ id: "p", status: "todo", plannedSubtasks: 4 }, { id: "c1", parentTaskId: "p", status: "done" }],
+      subtasks: [{ id: "s1", taskId: "p", status: "done" }, { id: "s2", taskId: "p", status: "todo" },
+      { id: "s3", taskId: "p", status: "todo" }, { id: "s4", taskId: "p", status: "todo" }]
+    };
+    // 2 of 4 units finished.
+    return near(PP.taskProgress(d, d.tasks[0]), 22.45, 0.001);
+  })());
   ok("subtask repository counts completions", (function () {
     PMS.store.commit((d) => {
       d.tasks.push({ id: "st_parent", title: "with subtasks", status: "inprogress", plannedSubtasks: 4 });

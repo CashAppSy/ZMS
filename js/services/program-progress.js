@@ -119,6 +119,14 @@ Key rules implemented (per spec):
     return (data.subtasks || []).filter(function (s) { return s && s.taskId === taskId; });
   }
 
+  // Child TASKS (a task flagged with parentTaskId) are the other way work gets
+  // broken down under a task, and the task detail screen offers both lists under
+  // the same "sub-tasks" wording. Whichever one the user ticks has to move the
+  // parent's progress, so both are counted as units of work under the task.
+  function childTasksOf(data, taskId) {
+    return (data.tasks || []).filter(function (t) { return t && t.parentTaskId && t.parentTaskId === taskId; });
+  }
+
   function isSubtaskDone(sub) {
     if (!sub) return false;
     if (sub.status === "done") return true;
@@ -182,15 +190,28 @@ Key rules implemented (per spec):
 
     var planned = plannedSubtasksOf(data, task);
     var subs = subtasksOf(data, task.id);
-    // A task with no subtasks carries no subtask scope, so its own status is the
-    // whole story (spec 8). `plannedSubtasks` only becomes the denominator once
-    // there is real subtask work to divide the task's weight across.
-    if (!subs.length) {
+    var kids = childTasksOf(data, task.id);
+    var units = subs.length + kids.length;
+    // A task with no sub-task scope carries none, so its own status is the whole
+    // story (spec 8). `plannedSubtasks` only becomes the denominator once there is
+    // real sub-task work to divide the task's weight across.
+    if (!units) {
       return clamp(DIRECT_STATUS_PCT[status] !== undefined ? DIRECT_STATUS_PCT[status] : 0);
     }
 
-    var completed = subs.filter(isSubtaskDone).length;
-    var ratio = planned > 0 ? completed / planned : 0;
+    // A child task counts as finished on the same terms as a subtask: it has to
+    // be `done` with its own subtasks closed, so no work is counted twice.
+    var completed = subs.filter(isSubtaskDone).length + kids.filter(function (k) {
+      return k.status === "done" && canMarkTaskDone(data, k).ok;
+    }).length;
+
+    // With no planned figure to measure against, fall back to the work that
+    // actually exists - otherwise a plannedSubtasks of 0 would pin the task at
+    // zero forever no matter how much of it is finished. A plan that IS set stays
+    // the measure even if more sub-tasks get created than were planned, so the
+    // denominator never drifts with the rows.
+    var denominator = planned > 0 ? planned : units;
+    var ratio = completed / denominator;
     if (ratio > 1) ratio = 1;
 
     // Scale the earned ratio into the band this status promises, so "all
@@ -437,6 +458,7 @@ Key rules implemented (per spec):
     taskWeight: taskWeight,
     taskProgress: taskProgress,
     subtasksOf: subtasksOf,
+    childTasksOf: childTasksOf,
     openSubtasksOf: openSubtasksOf,
     subtaskWeight: subtaskWeight,
     canMarkTaskDone: canMarkTaskDone,

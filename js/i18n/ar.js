@@ -130,6 +130,8 @@
     tasks: {
       title: "المهام", newTask: "مهمة جديدة", editTask: "تعديل مهمة",
       title: "العنوان", project: "الركيزة", subTasks: "مهام فرعية",
+      childTasks: "مهام التفصيل",
+      childTasksHint: "مهام كاملة تُكوِّن هذه المهمة. إنهاؤها يرفع تقدم المهمة الأم، لكنها لا تملك نطاقاً مخططاً خاصاً بها.",
       subtasks: "مهام فرعية",
       collapseSubtasks: "طي المهام الفرعية", expandSubtasks: "توسيع المهام الفرعية",
       collapseAllSubtasks: "طي المهام الفرعية", expandAllSubtasks: "توسيع المهام الفرعية",
