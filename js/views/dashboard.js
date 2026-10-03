@@ -24,25 +24,25 @@
     var dueThisWeek = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate >= today && tsk.dueDate <= weekEnd; });
     var activeProjects = projects.filter(function (p) { return p.status === "active"; });
 
-    // avg progress of leaf tasks (derived from status)
+    // avg progress of top-level tasks (derived from status + sub-tasks)
     var progSum = 0, progN = 0;
-    var weightByTime = data.settings.weightByTime;
     var progressMap = {};
     tasks.forEach(function (tsk) {
-      var p = PMS.progress.taskProgress(data, tsk.id, weightByTime);
-      if (!PMS.progress.taskChildren(data, tsk.id).length) {
-        progSum += p; progN++;
-      }
+      var p = PMS.programProgress.taskProgress(data, tsk);
+      // A task flagged as somebody's breakdown is represented by its parent, so
+      // counting both would count the same work twice in this average.
+      if (!tsk.parentTaskId) { progSum += p; progN++; }
       progressMap[tsk.id] = p;
     });
     var avg = progN ? progSum / progN : 0;
 
-    // overall progress: weighted mean over ALL pillars at every level — each
-    // pillar's weight decides its share of the total (heaviest pillar -> biggest).
-    var overall = PMS.progress.overallProgress(data);
+    // overall progress: weighted mean over ALL pillars — each pillar's weight
+    // decides its share of the total. Same engine as the pillar pages, so the
+    // dashboard ring can never disagree with a pillar's own number.
+    var overall = PMS.programProgress.programProgress(data);
     // how many pillars actually participate in that mean (have direct work + weight)
     var weightedPillars = projects.filter(function (p) {
-      return PMS.progress.pillarWeight(data, p) > 0 && tasks.some(function (t) { return t.projectId === p.id && !t.parentTaskId; });
+      return PMS.programProgress.pillarRawWeight(p) > 0 && tasks.some(function (t) { return t.projectId === p.id && !t.parentTaskId; });
     }).length;
 
     // by status/priority
@@ -189,9 +189,13 @@
 
   function topProjects(projects) {
     var roots = projects.filter(function (p) { return !p.parentId; }).slice(0, 8);
+    // The planned-slot engine: a new task adds spent slots but never changes the
+    // denominator, so this list cannot drop when someone adds a task.
+    var PP = PMS.programProgress;
+    var all = PP.allPillarProgress(PMS.store.data);
     return roots.map(function (p) {
-      var prog = PMS.progress.projectProgress(PMS.store.data, p.id, 0);
-      var w = PMS.progress.pillarWeight(PMS.store.data, p);
+      var prog = all[p.id];
+      var w = PP.pillarRawWeight(p);
       var row = h("div.project-progress-row");
       row.appendChild(h("span.pp-name.u-ellipsis", { text: p.name }));
       row.appendChild(h("span.badge", { text: t("projects.weight") + " " + w, style: { background: "var(--bg-subtle)", color: "var(--text-faint)" } }));

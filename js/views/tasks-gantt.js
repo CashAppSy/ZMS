@@ -258,8 +258,8 @@
     else if (!ed) dates = t("gantt.from") + " " + PMS.utils.formatDate(tsk.startDate, PMS.i18n);
     else dates = PMS.utils.formatDate(tsk.startDate, PMS.i18n) + " \u2192 " + PMS.utils.formatDate(tsk.dueDate, PMS.i18n);
     var st2 = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === tsk.status; });
-    var adv = PMS.progress.taskProgress(PMS.store.data, tsk.id, PMS.store.data.settings.weightByTime);
-    return (tsk.title || "") + "\n" + dates + "\n" + (st2 ? st2.name.en : tsk.status || "") + " · " + Math.round(adv) + "%";
+    var adv = PMS.programProgress.taskProgress(PMS.store.data, tsk);
+    return (tsk.title || "") + "\n" + dates + "\n" + (st2 ? st2.name.en : tsk.status || "") + " · " + PMS.utils.pctBand(adv);
   }
 
   function statusColorOf(key) {

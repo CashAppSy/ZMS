@@ -102,8 +102,9 @@
     actual: function (a, b) { return (a.actualHours || 0) - (b.actualHours || 0); },
     progress: function (a, b, data) {
       var d = data || PMS.store.data;
-      var wb = d.settings && d.settings.weightByTime;
-      var pa = PMS.progress.taskProgress(d, a.id, wb), pb = PMS.progress.taskProgress(d, b.id, wb);
+      // Same engine every other screen sorts and displays with, so sorting by
+      // progress orders the numbers the user actually sees.
+      var pa = PMS.programProgress.taskProgress(d, a), pb = PMS.programProgress.taskProgress(d, b);
       return pa - pb;
     },
     created: function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); },

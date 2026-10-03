@@ -102,8 +102,8 @@
     c.appendChild(meta);
     if (tsk.tags && tsk.tags.length) c.appendChild(h("div.kc-meta", PMS.vformat.tagsChips(tsk.tags)));
     // status-derived progress bar (reacts to the column/status the card sits in)
-    var pv = PMS.progress.taskProgress(PMS.store.data, tsk.id, PMS.store.data.settings.weightByTime);
-    var bar = h("div.progress-track", { style: { height: "6px", marginBlockStart: "8px" } }, [h("div.progress-fill", { style: { width: Math.round(pv) + "%" } })]);
+    var pv = PMS.programProgress.taskProgress(PMS.store.data, tsk);
+    var bar = h("div.progress-track", { style: { height: "6px", marginBlockStart: "8px" } }, [h("div.progress-fill", { style: { width: Math.floor(pv) + "%" } })]);
     c.appendChild(bar);
     return c;
   }

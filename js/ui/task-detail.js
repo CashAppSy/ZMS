@@ -52,12 +52,14 @@
         meta.appendChild(metaItem(t("tasks.createdBy"), PMS.vformat.creatorOf(task) || "—"));
         node.appendChild(meta);
 
-        // progress (derived from status — no manual value)
+        // progress (derived from status + sub-tasks — no manual value). Same engine
+        // as the table, kanban and the pillar pages, so a task never shows two
+        // different percentages. `in progress` can never read below 45%.
         var canFull = !PMS.auth || PMS.auth.can("tasks.write");
-        var derived = PMS.progress.taskProgress(PMS.store.data, task.id, PMS.store.data.settings.weightByTime);
+        var derived = PMS.programProgress.taskProgress(PMS.store.data, task);
         var progressRow = h("div.field");
-        progressRow.appendChild(h("label", { text: t("tasks.progress") + " (" + PMS.utils.pct(derived) + ")" }));
-        progressRow.appendChild(PMS.vformat.progressChip(derived));
+        progressRow.appendChild(h("label", { text: t("tasks.progress") + " (" + PMS.utils.pctBand(derived) + ")" }));
+        progressRow.appendChild(PMS.vformat.progressChip(derived, true));
         if (!canFull) progressRow.appendChild(h("div.hint", { text: t("tasks.progressFromStatus") }));
         node.appendChild(progressRow);
 
@@ -206,7 +208,7 @@
       metaItem(t("projects.subtasks"), String(subs.length)),
       metaItem(t("projects.completedSubtasks"), String(doneSubs.length)),
       metaItem(t("projects.taskWeight"), String(PP.taskWeight(PMS.store.data, task))),
-      metaItem(t("common.progress"), PMS.utils.pct(PP.taskProgress(PMS.store.data, task)))
+      metaItem(t("common.progress"), PMS.utils.pctBand(PP.taskProgress(PMS.store.data, task)))
     ]));
     node.appendChild(h("p.u-muted", { text: t("projects.subtasksHint") }));
     var subWrap = h("div.stack");

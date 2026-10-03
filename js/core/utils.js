@@ -147,6 +147,18 @@
     return Math.round(n) + "%";
   }
 
+  // Progress inside a status band has to be shown at a precision that cannot
+  // round past the band's own limit: a task at the top of `in progress` is
+  // 74.9, and printing it as "75%" would claim the floor of the NEXT band. So a
+  // fractional value keeps one decimal, always rounded DOWN so the number never
+  // reads higher than the progress actually earned.
+  function pctBand(n) {
+    if (n === null || n === undefined || isNaN(n)) return "0%";
+    var v = Number(n);
+    if (Math.floor(v) === v) return v + "%";
+    return (Math.floor(v * 10) / 10) + "%";
+  }
+
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
   function debouncedById(fn, wait) {
@@ -184,7 +196,7 @@
     toISODate: toISODate, parseDate: parseDate, todayISO: todayISO,
     formatDate: formatDate, diffDays: diffDays, hashCode: hashCode,
     colorForSeed: colorForSeed, avatarFor: avatarFor,
-    money: money, hours: hours, pct: pct, clamp: clamp,
+    money: money, hours: hours, pct: pct, pctBand: pctBand, clamp: clamp,
     debouncedById: debouncedById, trigger: trigger, download: download
   };
 })(window.PMS);

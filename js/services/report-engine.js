@@ -31,7 +31,7 @@
     id: "projectStatus",
     titleKey: "reports.report_projectStatus",
     generate: function (data) {
-      var prog = PMS.progress.allProjectProgress(data);
+      var prog = PMS.programProgress.allPillarProgress(data);
       var rows = (data.projects || []).filter(function (p) { return !p.parentId; }).map(function (p) {
         return row(p.name, {
           status: p.status, priority: p.priority,

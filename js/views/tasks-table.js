@@ -419,14 +419,14 @@
 
   function cellProgress(row) {
     var d = PMS.store.data;
-    var p = PMS.progress.taskProgress(d, row.id, d.settings.weightByTime);
+    var p = PMS.programProgress.taskProgress(d, row);
     var st = (d.taskStatuses || []).find(function (s) { return s.key === row.status; });
     var color = st && st.color ? st.color : "var(--primary)";
     var wrap = h("span.u-flex", { style: { gap: "6px" } });
     var track = h("div.progress-track", { style: { width: "64px", height: "6px" } });
-    track.appendChild(h("div.progress-fill", { style: { width: Math.round(p) + "%", background: color } }));
+    track.appendChild(h("div.progress-fill", { style: { width: Math.floor(p) + "%", background: color } }));
     wrap.appendChild(track);
-    wrap.appendChild(h("span.progress-label", { text: PMS.utils.pct(p) }));
+    wrap.appendChild(h("span.progress-label", { text: PMS.utils.pctBand(p) }));
     return wrap;
   }
 
@@ -484,13 +484,12 @@
   function exportCsv() {
     var rows = filteredRows();
     var cols = ["title", "status", "priority", "dueDate", "estimatedHours", "actualHours", "progress"];
-    var w = PMS.store.data.settings.weightByTime;
     var data = rows.map(function (r) {
       var p = PMS.repos.projects.get(r.projectId);
       return {
         title: r.title, project: p ? p.name : "", status: r.status, priority: r.priority,
         dueDate: r.dueDate, estimatedHours: r.estimatedHours, actualHours: r.actualHours,
-        progress: PMS.progress.taskProgress(PMS.store.data, r.id, w)
+        progress: PMS.programProgress.taskProgress(PMS.store.data, r)
       };
     });
     PMS.exportService.downloadCSV("tasks.csv", data, ["title", "project", "status", "priority", "dueDate", "estimatedHours", "actualHours", "progress"]);

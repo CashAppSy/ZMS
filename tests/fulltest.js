@@ -851,6 +851,91 @@ const root = () => document.getElementById("view-root");
     return refused && refused.error === "openSubtasks" && snapped;
   })());
   ok("pillar persists planned scope", wired.plannedTasks === 15);
+
+  // ---- The reported bug: adding a task must never lower a pillar, on ANY screen.
+  // The dashboard used to run the old engine, which had no planned-slot
+  // denominator, so its number fell every time a task was created.
+  ok("no screen still reads the legacy progress engine", (function () {
+    const offenders = [];
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((e) => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(p); return; }
+      if (!e.name.endsWith(".js")) return;
+      // The legacy module itself and the suites that unit-test it are exempt.
+      if (p.endsWith(path.join("services", "progress.js"))) return;
+      if (e.name === "fulltest.js" || e.name === "live-e2e.js") return;
+      if (/PMS\.progress\./.test(fs.readFileSync(p, "utf8"))) offenders.push(p);
+    });
+    walk(path.join(APP, "js"));
+    return offenders.length === 0 ? true : "still uses PMS.progress: " + offenders.join(", ");
+  })());
+  ok("adding tasks never lowers the pillar on the dashboard OR the pillar page", (function () {
+    // Works on the LIVE store on purpose. The auth session lives inside the store
+    // data, so replacing it with setData() logs the test out and every later
+    // permission-dependent test breaks.
+    const p = PMS.repos.projects.add({ name: "Regression Pillar", weight: 4, plannedTasks: 20, status: "active" });
+    // Reproduce a record that only ever carried the new field.
+    PMS.store.commit((dd) => { const r = dd.projects.find((x) => x.id === p.id); delete r.plannedTaskCount; }, "regression-shape");
+    try {
+      [
+        ["a", "done", "high"], ["b", "inprogress", "medium"], ["c", "review", "low"]
+      ].forEach(([n, st, pr]) => PMS.repos.tasks.add({ title: "rb-" + n, projectId: p.id, status: st, priority: pr, plannedSubtasks: st === "done" ? 2 : 0 }));
+      PMS.repos.subtasks.add({ taskId: PMS.repos.tasks.forProject(p.id)[0].id, title: "rb-s1", status: "done", progress: 100 });
+
+      const readDash = () => {
+        route("/");
+        const row = Array.from(document.querySelectorAll(".project-progress-row"))
+          .find((r) => (r.querySelector(".pp-name") || {}).textContent === "Regression Pillar");
+        const chip = row && row.querySelector(".progress-label");
+        return chip ? parseFloat(chip.textContent) : null;
+      };
+      const readPage = () => {
+        route("/projects/" + p.id);
+        const hit = Array.from(document.querySelectorAll(".detail-list > *"))
+          .find((el) => /progress/i.test(el.textContent || ""));
+        return hit ? parseFloat((hit.textContent.match(/([\d.]+)/) || [])[1]) : null;
+      };
+
+      const first = [readDash(), readPage()];
+      [1, 2].forEach((i) => PMS.repos.tasks.add({
+        title: "rb-low" + i, projectId: p.id, priority: "low", status: "todo", plannedSubtasks: 0
+      }));
+      const afterLow = [readDash(), readPage()];
+      PMS.repos.tasks.add({ title: "rb-high", projectId: p.id, priority: "high", status: "todo", plannedSubtasks: 0 });
+      const afterHigh = [readDash(), readPage()];
+
+      const noDrop = afterLow[0] >= first[0] - 0.05 && afterLow[1] >= first[1] - 0.05 &&
+        afterHigh[0] >= afterLow[0] - 0.05 && afterHigh[1] >= afterLow[1] - 0.05;
+      const allRead = [first, afterLow, afterHigh].every((s) => s[0] !== null && s[1] !== null);
+      return noDrop && allRead;
+    } finally {
+      PMS.repos.projects.remove(p.id);   // cascades its tasks away
+      route("/");
+    }
+  })());
+  ok("a band edge is never rounded up past its limit in the UI", (function () {
+    // 74.9 printed as "75%" would read as the floor of `review`.
+    const edge = [[74.9, "74.9%"], [44.9, "44.9%"], [99, "99%"], [45, "45%"], [75, "75%"], [0, "0%"], [87.5, "87.5%"]];
+    if (!edge.every((e) => PMS.utils.pctBand(e[0]) === e[1])) {
+      return "pctBand: " + edge.map((e) => e[0] + "->" + PMS.utils.pctBand(e[0])).join(", ");
+    }
+    const proj = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.add({
+      title: "band edge", projectId: proj.id, status: "inprogress", priority: "medium", plannedSubtasks: 4
+    });
+    try {
+      [0, 1, 2, 3].forEach((i) => PMS.repos.subtasks.add({ taskId: t.id, title: "be-s" + i, status: "done" }));
+      PMS.taskDetail.open(t.id);
+      const label = Array.from(document.querySelectorAll("#modal-root label, #modal-root .field label"))
+        .find((l) => /^progress/i.test(l.textContent || ""));
+      const shownText = label ? label.textContent : "";
+      if (PMS.modal.isOpen) PMS.modal.close();
+      return shownText.indexOf("74.9%") !== -1 ? true : "task detail showed: " + shownText;
+    } finally {
+      PMS.repos.tasks.remove(t.id);
+      if (PMS.modal.isOpen) PMS.modal.close();
+    }
+  })());
   ok("the editor offers exactly one planned-scope input", (function () {
     PMS.editors.openProjectEditor(wired, {});
     const labels = Array.from(document.querySelectorAll(".modal label, .modal .field span"))

@@ -339,7 +339,9 @@
 
   function childRows(children) {
     return children.map(function (p) {
-      var prog = PMS.progress.projectProgress(data(), p.id, 0);
+      // Same engine as the pillar rows above and the detail page, so a sub-pillar
+      // never shows one percentage here and a different one on its own page.
+      var prog = PMS.programProgress.pillarProgress(data(), p.id);
       var row = h("div.project-tree-row");
       row.style.cursor = "pointer";
       row.addEventListener("click", function () { PMS.router.navigate("/projects/" + p.id); });
