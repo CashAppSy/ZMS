@@ -23,7 +23,7 @@ Key rules implemented (per spec):
        ratio (completed / planned) is scaled into the band:
          todo        0 .. 44.9
          inprogress  45 .. 74.9   (all subtasks done lands on 74.9)
-         review      75 .. 99
+         review      75 .. 99.9
          done        100, and only when EVERY subtask is done.
        A task with no subtasks reports its plain status progress (0/45/75/100).
      - Subtasks are FLAT: a subtask can never own a subtask of its own.
@@ -38,7 +38,7 @@ Key rules implemented (per spec):
 
   var DEFAULT_IMPORTANCE_WEIGHTS = { low: 1, medium: 2, high: 3, urgent: 4 };
 
-  var DEFAULT_STATUS_CEILINGS = { todo: 44.9, inprogress: 74.9, review: 99, done: 100 };
+  var DEFAULT_STATUS_CEILINGS = { todo: 44.9, inprogress: 74.9, review: 99.9, done: 100 };
 
   // Each task status owns a progress BAND. Subtask completion earns part of the
   // way through its own band, so the reported progress can never read lower or
@@ -46,7 +46,7 @@ Key rules implemented (per spec):
   var STATUS_BANDS = {
     todo: { min: 0, max: 44.9 },
     inprogress: { min: 45, max: 74.9 },
-    review: { min: 75, max: 99 },
+    review: { min: 75, max: 99.9 },
     done: { min: 100, max: 100 }
   };
 
@@ -174,8 +174,11 @@ Key rules implemented (per spec):
     var status = task.status || "todo";
 
     // `done` is a claim about the whole task, so it is only honoured when the
-    // subtasks agree. Otherwise the task is held at the top of `review`.
-    if (status === "done") return canMarkTaskDone(data, task).ok ? 100 : 99;
+    // subtasks agree. Otherwise the task is held at the very top of `review`,
+    // which is the most progress it can honestly claim while one is still open.
+    if (status === "done") {
+      return canMarkTaskDone(data, task).ok ? 100 : statusBand(data, "review").max;
+    }
 
     var planned = plannedSubtasksOf(data, task);
     var subs = subtasksOf(data, task.id);

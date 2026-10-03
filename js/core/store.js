@@ -164,6 +164,9 @@
       // planned-subtask baseline. Older saves predate them, so backfill.
       d.settings.importanceWeights = Object.assign({}, defaults.settings.importanceWeights, d.settings.importanceWeights || {});
       d.settings.statusCeilings = Object.assign({}, defaults.settings.statusCeilings, d.settings.statusCeilings || {});
+      // The `review` ceiling used to ship as 99. 99.9 is the documented limit, and
+      // that 99 was never a choice anybody made, so carry it forward.
+      if (Number(d.settings.statusCeilings.review) === 99) d.settings.statusCeilings.review = 99.9;
       if (typeof d.settings.defaultPlannedSubtasks !== "number") {
         d.settings.defaultPlannedSubtasks = defaults.settings.defaultPlannedSubtasks;
       }

@@ -489,13 +489,31 @@ const root = () => document.getElementById("view-root");
   const cB = subData("inprogress", 5, 10);
   ok("inprogress halfway lands mid-band (59.95)", near(PP.taskProgress(cB.data, cB.t), 59.95, 0.001));
   const cC = subData("review", 8, 10);
-  ok("review 8/10 lands mid-band (94.2)", near(PP.taskProgress(cC.data, cC.t), 94.2, 0.001));
+  ok("review 8/10 lands mid-band (94.92)", near(PP.taskProgress(cC.data, cC.t), 94.92, 0.001));
   // all subtasks done -> exactly the TOP of each band
   ok("todo with all subtasks done stops at 44.9", PP.taskProgress(subData("todo", 10, 10).data, subData("todo", 10, 10).t) === 44.9);
   ok("inprogress with all subtasks done stops at 74.9 (>=45)", PP.taskProgress(subData("inprogress", 10, 10).data, subData("inprogress", 10, 10).t) === 74.9);
-  ok("review with all subtasks done stops at 99 (>=75, <=99)", PP.taskProgress(subData("review", 10, 10).data, subData("review", 10, 10).t) === 99);
+  ok("review with all subtasks done stops at 99.9 (>=75, <=99.9)", PP.taskProgress(subData("review", 10, 10).data, subData("review", 10, 10).t) === 99.9);
+  // The band limits themselves, read back from the engine.
+  ok("the four bands are exactly the documented limits", (function () {
+    const b = ["todo", "inprogress", "review", "done"].map((k) => PP.STATUS_BANDS[k]);
+    return b[0].max === 44.9 && b[1].min === 45 && b[1].max === 74.9 &&
+      b[2].min === 75 && b[2].max === 99.9 && b[3].min === 100 && b[3].max === 100;
+  })());
+  ok("a save still holding the old 99 review ceiling is migrated to 99.9", (function () {
+    // ensureShape() in place: replacing the whole store would log the session out
+    // (it lives inside the store data) and break every later permission test.
+    const live = PMS.store.data;
+    const backup = live.settings.statusCeilings.review;
+    live.settings.statusCeilings.review = 99;
+    PMS.store.ensureShape(live);
+    const v = live.settings.statusCeilings.review;
+    live.settings.statusCeilings.review = backup;
+    PMS.store.ensureShape(live);
+    return v === 99.9;
+  })());
   // more subtasks done than planned must never exceed the band top
-  ok("over-completed subtasks never exceed the band", PP.taskProgress(subData("review", 99, 10).data, subData("review", 99, 10).t) <= 99);
+  ok("over-completed subtasks never exceed the band", PP.taskProgress(subData("review", 99, 10).data, subData("review", 99, 10).t) <= 99.9);
   // done is a claim about the whole task: it needs every subtask done
   const dOpen = (function () {
     const t = { id: "t", status: "done", plannedSubtasks: 10 };
@@ -504,7 +522,7 @@ const root = () => document.getElementById("view-root");
     subs.push({ id: "s_open", taskId: "t", status: "todo" });
     return { t, data: { settings: {}, projects: [], tasks: [t], subtasks: subs } };
   })();
-  ok("done with an open subtask is held at 99", PP.taskProgress(dOpen.data, dOpen.t) === 99);
+  ok("done with an open subtask is held at 99.9 (top of review, never 100)", PP.taskProgress(dOpen.data, dOpen.t) === 99.9);
   ok("canMarkTaskDone refuses while a subtask is open", PP.canMarkTaskDone(dOpen.data, dOpen.t).ok === false && PP.canMarkTaskDone(dOpen.data, dOpen.t).open === 1);
   const dShut = subData("done", 10, 10);
   ok("done with every subtask done is 100", PP.taskProgress(dShut.data, dShut.t) === 100);
@@ -705,7 +723,7 @@ const root = () => document.getElementById("view-root");
   ok("zero planned subtasks stays inside the status band", (function () {
     const d = { settings: {}, tasks: [{ id: "z", status: "review", plannedSubtasks: 0 }], subtasks: [{ id: "zs", taskId: "z", status: "done" }] };
     const v = PP.taskProgress(d, d.tasks[0]);
-    return v >= 75 && v <= 99;
+    return v >= 75 && v <= 99.9;
   })());
   ok("subtask repository counts completions", (function () {
     PMS.store.commit((d) => {
