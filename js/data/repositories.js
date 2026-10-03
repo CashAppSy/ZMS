@@ -265,12 +265,27 @@
         // plannedTaskCount is the target number of tasks for this pillar.
         if (obj.plannedTaskCount === undefined || obj.plannedTaskCount === null) obj.plannedTaskCount = 0;
         else obj.plannedTaskCount = Math.max(0, parseInt(obj.plannedTaskCount, 10) || 0);
+        if (obj.plannedTasks === undefined || obj.plannedTasks === null) obj.plannedTasks = obj.plannedTaskCount;
+        else obj.plannedTasks = Math.max(0, Math.floor(parseInt(obj.plannedTasks,10)||0));
+        if (!obj.defaultTaskImportance) obj.defaultTaskImportance = "medium";
+        if (typeof obj.rawWeight !== "number" || isNaN(obj.rawWeight) || obj.rawWeight <= 0) obj.rawWeight = 1;
+        obj.rawWeight = Number(obj.rawWeight);
         return add("projects", obj);
       },
       update: function (id, patch) {
         if (patch && patch.plannedTaskCount !== undefined && patch.plannedTaskCount !== null) {
           patch.plannedTaskCount = Math.max(0, parseInt(patch.plannedTaskCount, 10) || 0);
         }
+        if (patch && patch.plannedTasks !== undefined && patch.plannedTasks !== null) {
+          patch.plannedTasks = Math.max(0, Math.floor(parseInt(patch.plannedTasks,10)||0));
+          if (patch.plannedTaskCount === undefined) patch.plannedTaskCount = patch.plannedTasks;
+        }
+        if (patch && patch.rawWeight !== undefined && patch.rawWeight !== null) {
+          var rw = Number(patch.rawWeight);
+          if (isNaN(rw) || rw <= 0) rw = 1;
+          patch.rawWeight = rw;
+        }
+        if (patch && patch.defaultTaskImportance === undefined) {}
         return update("projects", id, patch);
       },
       // cascade delete: sub-projects and their tasks
@@ -304,10 +319,27 @@
         obj.parentTaskId = obj.parentTaskId || null;
         obj.meetingId = obj.meetingId || null;
         if (!Array.isArray(obj.linkedTaskIds)) obj.linkedTaskIds = [];
+        if (!obj.importance) obj.importance = "medium";
+        var iw = (obj.importanceWeights && obj.importanceWeights[obj.importance]) || (PMS.schema && PMS.schema.defaultData && PMS.schema.defaultData().settings.importanceWeights && PMS.schema.defaultData().settings.importanceWeights[obj.importance]);
+        if (typeof iw !== "number" || isNaN(iw)) iw = 2;
+        obj.importanceWeight = iw;
+        if (typeof obj.plannedSubtasks !== "number" || isNaN(obj.plannedSubtasks) || obj.plannedSubtasks < 0) obj.plannedSubtasks = (PMS.schema && PMS.schema.defaultData && PMS.schema.defaultData().settings.defaultPlannedSubtasks) || 10;
+        obj.plannedSubtasks = Math.max(0, Math.floor(obj.plannedSubtasks));
+        if (obj.calculatedProgress === undefined || obj.calculatedProgress === null || isNaN(obj.calculatedProgress)) obj.calculatedProgress = 0;
         stampCreator(obj);
         return add("tasks", obj);
       },
-      update: function (id, patch) { return update("tasks", id, patch); },
+      update: function (id, patch) {
+        if (patch && patch.importance) {
+          var s = PMS.schema && PMS.schema.defaultData();
+          var wmap = (s && s.settings && s.settings.importanceWeights) || { low:1, medium:2, high:3, urgent:4 };
+          patch.importanceWeight = wmap[patch.importance] || patch.importanceWeight || 2;
+        }
+        if (patch && patch.plannedSubtasks !== undefined && patch.plannedSubtasks !== null) {
+          patch.plannedSubtasks = Math.max(0, Math.floor(parseInt(patch.plannedSubtasks,10)||0));
+        }
+        return update("tasks", id, patch);
+      },
       // cascade delete: sub-tasks (dependency references removed too)
       remove: function (id) {
         var toDelete = [];
@@ -333,6 +365,10 @@
         PMS.store.commit(function (d) {
           var root = d.tasks.find(function (t) { return t.id === id; });
           d.tasks = d.tasks.filter(function (t) { return toDelete.indexOf(t.id) === -1; });
+          // a task's subtasks are part of that task's scope: they go with it
+          if (Array.isArray(d.subtasks)) {
+            d.subtasks = d.subtasks.filter(function (s) { return toDelete.indexOf(s.taskId) === -1; });
+          }
           d.tasks.forEach(function (t) {
             t.dependencies = (t.dependencies || []).filter(function (dep) {
               return toDelete.indexOf(dep) === -1;
@@ -387,6 +423,41 @@
         if (o && (o.linkedTaskIds || []).indexOf(taskId) !== -1) {
           update("tasks", otherId, { linkedTaskIds: o.linkedTaskIds.filter(function (id) { return id !== taskId; }) });
         }
+        return true;
+      }
+    },
+
+    // Sub-tasks only MEASURE a task: they distribute the task weight across the
+    // planned subtask slots and never add weight of their own (spec 20).
+    subtasks: {
+      all: function () { return list("subtasks"); },
+      get: function (id) { return find("subtasks", id); },
+      forTask: function (taskId) {
+        return list("subtasks").filter(function (s) { return s.taskId === taskId; });
+      },
+      completedForTask: function (taskId) {
+        return this.forTask(taskId).filter(function (s) {
+          return s.status === "done" || Number(s.progress) >= 100;
+        });
+      },
+      add: function (obj) {
+        obj.taskId = obj.taskId || null;
+        obj.title = obj.title || "";
+        obj.status = obj.status || "todo";
+        if (typeof obj.progress !== "number" || isNaN(obj.progress)) obj.progress = obj.status === "done" ? 100 : 0;
+        stampCreator(obj);
+        return add("subtasks", obj);
+      },
+      update: function (id, patch) {
+        if (patch && patch.status === "done" && patch.progress === undefined) patch.progress = 100;
+        return update("subtasks", id, patch);
+      },
+      remove: function (id) {
+        PMS.store.commit(function (d) {
+          var rec = d.subtasks.find(function (x) { return x.id === id; });
+          d.subtasks = d.subtasks.filter(function (x) { return x.id !== id; });
+          if (rec) pushLog(d, makeEntry("subtasks", rec, "deleted"));
+        }, "remove-subtask");
         return true;
       }
     },

@@ -193,6 +193,56 @@
 
   function appendingSections(node, task) {
     var canEdit = PMS.auth ? PMS.auth.can("tasks.write") : true;
+
+    // Sub-tasks: the fourth level of the model. They sit under their task as a
+    // nested list and only MEASURE the task's own weight (never add any).
+    var PP = PMS.programProgress;
+    var plannedSubs = PP.plannedSubtasksOf(PMS.store.data, task);
+    var subs = PP.subtasksOf(PMS.store.data, task.id);
+    var doneSubs = subs.filter(function (s) { return s.status === "done" || Number(s.progress) >= 100; });
+    node.appendChild(h("div.section-title", [txt(t("projects.subtasks"))]));
+    node.appendChild(h("div.detail-list", [
+      metaItem(t("projects.plannedSubtasks"), String(plannedSubs)),
+      metaItem(t("projects.subtasks"), String(subs.length)),
+      metaItem(t("projects.completedSubtasks"), String(doneSubs.length)),
+      metaItem(t("projects.taskWeight"), String(PP.taskWeight(PMS.store.data, task))),
+      metaItem(t("common.progress"), PMS.utils.pct(PP.taskProgress(PMS.store.data, task)))
+    ]));
+    node.appendChild(h("p.u-muted", { text: t("projects.subtasksHint") }));
+    var subWrap = h("div.stack");
+    function drawSubs() {
+      PMS.dom.clear(subWrap);
+      if (!PMS.repos.subtasks.forTask(task.id).length) {
+        subWrap.appendChild(h("div.u-muted", { text: t("projects.noSubtasks") }));
+        return;
+      }
+      PMS.repos.subtasks.forTask(task.id).forEach(function (s) {
+        var done = s.status === "done" || Number(s.progress) >= 100;
+        var row = h("div.checklist-item" + (done ? ".done" : ""));
+        row.appendChild(h("input", {
+          type: "checkbox", checked: done, disabled: !canEdit,
+          on: { change: function () { PMS.repos.subtasks.update(s.id, { status: done ? "todo" : "done", progress: done ? 0 : 100 }); } }
+        }));
+        row.appendChild(h("label", { text: s.title, style: { flex: 1 } }));
+        if (canEdit) row.appendChild(h("span.btn-icon.chip-x", { text: "✕", on: { click: function () { PMS.repos.subtasks.remove(s.id); } } }));
+        subWrap.appendChild(row);
+      });
+    }
+    drawSubs();
+    node.appendChild(subWrap);
+    if (canEdit) {
+      var addSub = h("div.u-flex");
+      var sTitle = h("input.input", { placeholder: t("projects.addSubtask"), style: { flex: 1 } });
+      addSub.appendChild(sTitle);
+      addSub.appendChild(h("button.btn.btn-sm", { text: "+", on: { click: function () {
+        var v = sTitle.value.trim();
+        if (!v) return;
+        PMS.repos.subtasks.add({ taskId: task.id, title: v, status: "todo" });
+        sTitle.value = "";
+      } } }));
+      node.appendChild(addSub);
+    }
+
     // checklist (admin only — members may only change status)
     var items = task.checklist || [];
     node.appendChild(h("div.section-title", [txt(t("tasks.checklist"))]));

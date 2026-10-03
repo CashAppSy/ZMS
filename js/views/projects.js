@@ -113,6 +113,17 @@
     header.appendChild(actions);
     container.appendChild(header);
 
+    // Program level: the tool itself is the program, so its progress is the
+    // weight-normalized roll-up of every pillar (spec 2).
+    var PP0 = PMS.programProgress;
+    container.appendChild(h("div.card", { style: { marginBlockEnd: "14px" } }, [h("div.card-body", [
+      h("div.detail-list", [
+        metaItem(t("common.progress"), PMS.utils.pct(PP0.programProgress(data()))),
+        metaItem(t("projects.totalRawWeight"), String(Math.round(PP0.totalRawWeight(data())))),
+        metaItem(t("projects.pillarCount"), String((data().projects || []).length))
+      ])
+    ])]));
+
     // Pillars are always listed highest progress first, so the pillars that
     // need attention float to the top without the user re-sorting anything.
     var progressMap = PMS.progress.allProjectProgress(data());
@@ -201,42 +212,29 @@
     if (canEdit) {
       actions.appendChild(h("button.btn", { text: t("projects.addSubProject"), on: { click: function () { PMS.editors.openProjectEditor(null, { defaults: { parentId: proj.id }, onSaved: function () {} }); } } }));
     }
-    // Mark as completed
-    var canMarkCompleted = canEdit || (PMS.auth && PMS.auth.isAdmin && PMS.auth.isAdmin());
+    // Pillar closure is a scope decision, so it is narrower than edit access:
+    // an admin, or the manager who owns this pillar, and nobody else (spec 22).
+    var canMarkCompleted = ownsPillar(proj);
     if (canMarkCompleted && proj.status !== "completed") {
       actions.appendChild(h("button.btn", { text: t("projects.markAsCompleted"), on: { click: function () { markCompleted(proj, allData); } } }));
     }
     header.appendChild(actions);
     container.appendChild(header);
 
-    // hero: progress + meta
+// hero: progress + meta
     var hero = h("div.project-hero");
     var main = h("div.ph-main.card");
+    var PP = PMS.programProgress;
+    var scope = PP.pillarScope(allData, proj.id);
     main.appendChild(h("div.card-body", [
       h("div.detail-list", [
-        metaItem(t("projects.progress"), PMS.utils.pct(prog) + (function(){
-          var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
-          if (!planned) return "";
-          var done = (function(){
-            var pct = PMS.progress.statusPct;
-            return (allData.tasks||[]).filter(function(t){
-              var inTree=false; if(t.projectId===proj.id) inTree=true;
-              else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
-              return inTree && pct(allData,t.status)>=99.5;
-            }).length;
-          })();
-          var totalInTree = (function(){
-            return (allData.tasks||[]).filter(function(t){
-              var inTree=false; if(t.projectId===proj.id) inTree=true;
-              else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
-              return inTree;
-            }).length;
-          })();
-          var beyond = Math.max(0, totalInTree - planned);
-          if (beyond > 0) return " (" + done + "/" + planned + " " + t("projects.planned") + "; " + t("projects.scopeBeyondPlan",{n:beyond,count:planned}) + ")";
-          return " (" + done + "/" + planned + " " + t("projects.planned") + ")";
-        })()),
-        metaItem(t("projects.plannedCount"), String(proj.plannedTaskCount || 0)),
+        metaItem(t("projects.progress"), PMS.utils.pct(prog)),
+        metaItem(t("projects.rawWeight"), String(scope.plannedTasks >= 0 ? PP.pillarRawWeight(proj) : 1)),
+        metaItem(t("projects.programShare"), PMS.utils.pct(PP.normalizedWeight(allData, proj.id))),
+        metaItem(t("projects.plannedCount"), String(scope.plannedTasks)),
+        metaItem(t("projects.actualTasks"), String(scope.actualTasks)),
+        metaItem(t("projects.completedTasks"), String(scope.completedTasks)),
+        metaItem(t("projects.remainingTasks"), String(scope.remainingTasks)),
         metaItem(t("projects.startDate"), PMS.utils.formatDate(proj.startDate, PMS.i18n)),
         metaItem(t("projects.endDate"), PMS.utils.formatDate(proj.endDate, PMS.i18n)),
         metaItem(t("projects.budget"), PMS.utils.money(proj.budget, (data().settings && data().settings.currency), PMS.i18n)),
@@ -248,6 +246,35 @@
     ]));
     hero.appendChild(main);
     container.appendChild(hero);
+
+    // Scope closure: never hidden. While planned scope is still open the user
+    // sees exactly what closing would write off (spec 24 / 25).
+    if (proj.status === "completed" && proj.closureSnapshot) {
+      container.appendChild(h("div.card", [h("div.card-body", [
+        h("div.section-title", [labelSpan(t("projects.closureInfo"))]),
+        h("div.detail-list", [
+          metaItem(t("projects.plannedCount"), String(proj.closureSnapshot.plannedTasks)),
+          metaItem(t("projects.actualTasks"), String(proj.closureSnapshot.actualTasks)),
+          metaItem(t("projects.completedTasks"), String(proj.closureSnapshot.completedTasks)),
+          metaItem(t("projects.remainingTasks"), String(proj.closureSnapshot.remainingTasks)),
+          metaItem(t("projects.unusedScope"), String(proj.closureSnapshot.unusedPlannedCapacity)),
+          metaItem(t("projects.closedAt"), PMS.utils.formatDate(proj.closedAt, PMS.i18n)),
+          metaItem(t("projects.closedBy"), proj.closedBy || "—")
+        ]),
+        proj.closureNote ? h("p.u-muted", { text: proj.closureNote }) : null
+      ])]));
+    } else if (scope.remainingTasks > 0) {
+      container.appendChild(h("div.card", [h("div.card-body", [
+        h("p.u-muted", {
+          text: t("projects.scopeOpenHint", {
+            actual: scope.actualTasks,
+            planned: scope.plannedTasks,
+            done: scope.completedTasks,
+            remaining: scope.remainingTasks
+          })
+        })
+      ])]));
+    }
 
     if (proj.description) container.appendChild(h("div.card", [h("div.card-body", [h("p", { text: proj.description })])]));
 
@@ -314,6 +341,11 @@
       row.addEventListener("click", function () { PMS.router.navigate("/projects/" + p.id); });
       row.appendChild(h("span", { text: "🗀" }));
       row.appendChild(h("span.u-grow.u-ellipsis.u-bold", { text: p.name }));
+      row.appendChild(h("span.u-muted", {
+        text: t("projects.rawWeight") + " " + PMS.programProgress.pillarRawWeight(p) +
+              " · " + t("projects.programShare") + " " + PMS.utils.pct(PMS.programProgress.normalizedWeight(PMS.store.data, p.id)),
+        style: { fontSize: "0.75rem" }
+      }));
       row.appendChild(PMS.vformat.statusBadge(p.status, "project"));
       var track = h("div.progress-track", { style: { width: "90px", height: "6px" } },
         [h("div.progress-fill", { style: { width: Math.round(prog) + "%" } })]);
@@ -323,45 +355,120 @@
     });
   }
 
+  // Program > Pillar > Task > Sub-task: clicking a pillar lists its tasks with
+  // their sub-tasks nested underneath, each carrying its weight and progress.
   function taskRows(tasks) {
-    return tasks.filter(function (tsk) { return !tsk.parentTaskId; }).map(function (tsk) {
+    var PP = PMS.programProgress;
+    var data = PMS.store.data;
+    var out = [];
+    tasks.filter(function (tsk) { return !tsk.parentTaskId; }).forEach(function (tsk) {
       var row = h("div.project-tree-row");
       row.style.cursor = "pointer";
       row.addEventListener("click", function () { PMS.router.navigate("/tasks?highlight=" + tsk.id); });
       row.appendChild(h("span", { text: "☑" }));
       row.appendChild(h("span.u-grow.u-ellipsis", { text: tsk.title }));
+      row.appendChild(h("span.u-muted", {
+        text: t("projects.taskWeight") + " " + PP.taskWeight(data, tsk),
+        style: { fontSize: "0.75rem" }
+      }));
       row.appendChild(PMS.vformat.statusBadge(tsk.status, "task"));
+      row.appendChild(h("span.progress-label", { text: PMS.utils.pct(PP.taskProgress(data, tsk)) }));
       row.appendChild(PMS.vformat.priorityBadge(tsk.priority));
-      return row;
+      out.push(row);
+
+      PP.subtasksOf(data, tsk.id).forEach(function (sub) {
+        var done = sub.status === "done" || Number(sub.progress) >= 100;
+        var subRow = h("div.project-tree-row", { style: { paddingLeft: "28px" } });
+        subRow.appendChild(h("span", { text: done ? "☑" : "☐" }));
+        subRow.appendChild(h("span.u-grow.u-ellipsis.u-muted", { text: sub.title }));
+        subRow.appendChild(PMS.vformat.statusBadge(sub.status, "task"));
+        out.push(subRow);
+      });
     });
+    return out;
+  }
+
+  // Pillar closure is a scope decision, not a status flip: it asks WHY the
+  // unused planned scope is being written off, and keeps that reason (spec 15/16).
+  // Authorization is re-checked here so the action cannot be reached by
+  // calling the handler directly.
+  function ownsPillar(proj) {
+    if (!PMS.auth) return true;
+    if (PMS.auth.isAdmin && PMS.auth.isAdmin()) return true;
+    var u = PMS.auth.currentUser ? PMS.auth.currentUser() : null;
+    if (!u) return false;
+    return !!(proj.managerId && (proj.managerId === u.personId || proj.managerId === u.id));
   }
 
   function markCompleted(proj, allData) {
-    var planned = proj && typeof proj.plannedTaskCount === "number" ? proj.plannedTaskCount : 0;
-    var pct = PMS.progress.statusPct;
-    var done = (allData.tasks||[]).filter(function(t){
-      var inTree=false; if(t.projectId===proj.id) inTree=true;
-      else{ var p=PMS.repos.projects.get(t.projectId); while(p&&p.parentId){ if(p.parentId===proj.id){inTree=true;break;} p=PMS.repos.projects.get(p.parentId);} }
-      return inTree && pct(allData,t.status)>=99.5;
-    }).length;
-    var plannedLeft = Math.max(0, planned - done);
-    function doIt() {
-      PMS.repos.projects.update(proj.id, { status: "completed", progress: 100 });
-      PMS.toast.show(t("projects.markAsCompleted"), "success");
-    }
-    if (planned > 0 && plannedLeft > 0) {
-      var tasksWord = plannedLeft===1 ? t("projects.tasksSingular") : t("projects.tasksPlural");
-      PMS.modal.open({
-        title: t("projects.markCompletedTitle"),
-        content: h("p", { text: t("projects.markCompletedConfirm", { n: plannedLeft, tasks: tasksWord }) }),
-        footer: [
-          { label: t("common.cancel"), onClick: function(){ PMS.modal.close(); } },
-          { label: t("common.confirm"), class: "btn-primary", onClick: function(){ PMS.modal.close(); doIt(); } }
-        ]
-      });
+    if (!ownsPillar(proj)) {
+      PMS.toast.show(t("projects.closureNotAllowed"), "error");
       return;
     }
-    doIt();
+    var PP = PMS.programProgress;
+    var scope = PP.pillarScope(allData, proj.id);
+    var remaining = scope.remainingTasks;
+
+    function doIt(note) {
+      var res = PP.closePillar(allData, proj.id, note, PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null);
+      if (!res.ok) return;
+      PMS.repos.projects.update(proj.id, {
+        status: "completed",
+        progress: 100,
+        closedAt: res.pillar.closedAt,
+        closedBy: res.pillar.closedBy,
+        closureNote: res.pillar.closureNote,
+        closureSnapshot: res.pillar.closureSnapshot
+      });
+      PMS.modal.close();
+      PMS.toast.show(t("projects.closedScopeClosed", { n: remaining, tasks: remaining === 1 ? t("projects.tasksSingular") : t("projects.tasksPlural") }), "success");
+    }
+
+    var noteInput = null;
+    var errLine = h("p.form-error", { text: "", style: { display: "none" } });
+    var body = h("div", [
+      h("p", {
+        text: t("projects.markCompletedConfirm", {
+          n: remaining,
+          planned: scope.plannedTasks,
+          tasks: remaining === 1 ? t("projects.tasksSingular") : t("projects.tasksPlural")
+        })
+      }),
+      h("div.detail-list", [
+        metaItem(t("projects.plannedCount"), String(scope.plannedTasks)),
+        metaItem(t("projects.actualTasks"), String(scope.actualTasks)),
+        metaItem(t("projects.completedTasks"), String(scope.completedTasks)),
+        metaItem(t("projects.remainingTasks"), String(scope.remainingTasks))
+      ]),
+      h("label.field", [
+        h("span", { text: t("projects.closureNote") }),
+        noteInput = h("textarea", { rows: "3", placeholder: t("projects.closureNoteHint") })
+      ]),
+      errLine
+    ]);
+
+    PMS.modal.open({
+      title: t("projects.markCompletedTitle"),
+      content: body,
+      footer: [
+        { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
+        {
+          label: t("common.confirm"),
+          class: "btn-primary",
+          onClick: function () {
+            var check = PP.validateClosureNote(noteInput.value);
+            if (!check.ok) {
+              errLine.textContent = check.reason === "required"
+                ? t("projects.closureNoteRequired")
+                : t("projects.closureNoteTooShort", { min: check.min });
+              errLine.style.display = "";
+              return;
+            }
+            doIt(check.note);
+          }
+        }
+      ]
+    });
   }
 
   function deleteProject(proj) {

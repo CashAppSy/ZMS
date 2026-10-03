@@ -24,6 +24,7 @@
       people: [],
       projects: [],
       tasks: [],
+      subtasks: [],
       meetings: [],
       users: [],
       customFieldDefs: [],
@@ -55,7 +56,10 @@
         autoBackupEnabled: true,
         autoBackupEveryMin: 30,
         maxBackups: 5,
-        autoSync: true
+        autoSync: true,
+        importanceWeights: { low: 1, medium: 2, high: 3, urgent: 4 },
+        statusCeilings: { todo: 44.9, inprogress: 74.9, review: 99.9, done: 100 },
+        defaultPlannedSubtasks: 10
       },
       savedFilters: [],
       meta: { updatedAt: null }

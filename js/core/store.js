@@ -136,7 +136,7 @@
   }
 
   function ensureShape(d) {
-    var keys = ["departments", "people", "projects", "tasks", "meetings", "users", "customFieldDefs",
+    var keys = ["departments", "people", "projects", "tasks", "subtasks", "meetings", "users", "customFieldDefs",
       "taskStatuses", "projectStatuses", "priorities", "savedFilters", "activities"];
     keys.forEach(function (k) {
       if (!Array.isArray(d[k])) d[k] = [];
@@ -160,6 +160,13 @@
       d.settings.lang = d.settings.lang || "en";
       d.settings.theme = d.settings.theme || "light";
       d.settings.autoSync = d.settings.autoSync !== false;
+      // Program progress config: importance weights, status ceilings and the
+      // planned-subtask baseline. Older saves predate them, so backfill.
+      d.settings.importanceWeights = Object.assign({}, defaults.settings.importanceWeights, d.settings.importanceWeights || {});
+      d.settings.statusCeilings = Object.assign({}, defaults.settings.statusCeilings, d.settings.statusCeilings || {});
+      if (typeof d.settings.defaultPlannedSubtasks !== "number") {
+        d.settings.defaultPlannedSubtasks = defaults.settings.defaultPlannedSubtasks;
+      }
     }
     if (!d.schemaVersion) d.schemaVersion = PMS.schema.VERSION;
     if (!d.meta) d.meta = { updatedAt: null };
@@ -167,6 +174,32 @@
     (d.tasks || []).forEach(function (t) {
       if (!Array.isArray(t.linkedTaskIds)) t.linkedTaskIds = [];
       if (t.meetingId === undefined) t.meetingId = null;
+      // Planned-subtask scope + the importance weight it implies (spec 4/6/9).
+      if (typeof t.plannedSubtasks !== "number" || isNaN(t.plannedSubtasks) || t.plannedSubtasks < 0) {
+        t.plannedSubtasks = d.settings.defaultPlannedSubtasks;
+      }
+      t.plannedSubtasks = Math.floor(t.plannedSubtasks);
+      if (!t.importance) t.importance = "medium";
+      var impW = d.settings.importanceWeights[t.importance];
+      t.importanceWeight = typeof impW === "number" ? impW : 2;
+    });
+    // pillars: raw weight + planned scope + default importance for the tasks
+    (d.projects || []).forEach(function (p) {
+      var rw = Number(p.rawWeight);
+      p.rawWeight = isNaN(rw) || rw <= 0 ? 1 : rw;
+      if (typeof p.plannedTasks !== "number" || isNaN(p.plannedTasks) || p.plannedTasks < 0) {
+        p.plannedTasks = typeof p.plannedTaskCount === "number" ? p.plannedTaskCount : 0;
+      }
+      p.plannedTasks = Math.max(0, Math.floor(p.plannedTasks));
+      p.plannedTaskCount = p.plannedTasks;
+      if (!p.defaultTaskImportance) p.defaultTaskImportance = "medium";
+    });
+    // subtasks: one owner task + one status, both required by the progress model
+    (d.subtasks || []).forEach(function (s) {
+      if (!s.taskId) s.taskId = null;
+      if (!s.title) s.title = "";
+      if (!s.status) s.status = "todo";
+      if (typeof s.progress !== "number" || isNaN(s.progress)) s.progress = 0;
     });
   }
 

@@ -144,6 +144,18 @@
       { key: "budget", label: t("projects.budget"), type: "number" },
       { key: "weight", label: t("projects.weight"), type: "number", hint: t("projects.weightHint") },
       { key: "plannedTaskCount", label: t("projects.plannedCount"), type: "number" },
+      // Program progress model: the pillar's raw (relative) weight, the planned
+      // scope it is measured against, and the importance its un-created planned
+      // task slots carry.
+      { key: "rawWeight", label: t("projects.rawWeight"), type: "number", hint: t("projects.rawWeightHint") },
+      { key: "plannedTasks", label: t("projects.plannedScope"), type: "number", hint: t("projects.plannedScopeHint") },
+      {
+        key: "defaultTaskImportance", label: t("projects.defaultImportance"), type: "select",
+        options: PMS.programProgress.IMPORTANCE_LEVELS.map(function (k) {
+          return { label: PMS.programProgress.importanceWeights(PMS.store.data)[k], value: k };
+        }),
+        hint: t("projects.defaultImportanceHint")
+      },
       { key: "tags", label: t("common.tags"), type: "tags", full: true },
       { key: "links", label: t("projects.links"), type: "text", hint: t("common.typeHere") },
       { key: "notes", label: t("common.notes"), type: "textarea", full: true }
@@ -175,6 +187,16 @@
       { key: "dueDate", label: t("tasks.dueDate"), type: "date" },
       { key: "estimatedHours", label: t("tasks.estimated"), type: "number" },
       { key: "actualHours", label: t("tasks.actual"), type: "number" },
+      // Program progress model: the task's importance fixes its weight, and the
+      // planned subtask scope is what the sub-tasks are measured against.
+      {
+        key: "importance", label: t("projects.defaultImportance"), type: "select",
+        options: PMS.programProgress.IMPORTANCE_LEVELS.map(function (k) {
+          return { label: k + " (" + PMS.programProgress.importanceWeights(PMS.store.data)[k] + ")", value: k };
+        }),
+        hint: t("projects.defaultImportanceHint")
+      },
+      { key: "plannedSubtasks", label: t("projects.plannedSubtasks"), type: "number", hint: t("projects.plannedSubtasksHint") },
       { key: "linkedTaskIds", label: t("tasks.linkedTasks"), type: "linkedTask", excludeId: taskId || null, full: true, hint: t("tasks.linkedTasksHint") },
       { key: "tags", label: t("common.tags"), type: "tags", full: true }
     ];
@@ -440,6 +462,9 @@
               startDate: v.startDate, endDate: v.endDate, budget: v.budget,
               weight: v.weight === "" || v.weight === undefined || v.weight === null ? 1 : Number(v.weight),
               plannedTaskCount: (v.plannedTaskCount === "" || v.plannedTaskCount === undefined || v.plannedTaskCount === null) ? 0 : Number(v.plannedTaskCount),
+              rawWeight: PMS.programProgress.isValidRawWeight(v.rawWeight) ? Number(v.rawWeight) : 1,
+              plannedTasks: PMS.programProgress.isNonNegativeInt(v.plannedTasks) ? Number(v.plannedTasks) : Number(v.plannedTaskCount) || 0,
+              defaultTaskImportance: PMS.programProgress.isValidImportance(v.defaultTaskImportance) ? v.defaultTaskImportance : "medium",
               tags: v.tags || [], links: parseLinks(v.links), notes: v.notes, customFields: cf
             };
             var check = PMS.validation.check("project", payload);
@@ -527,6 +552,10 @@
                 priority: v.priority || "medium", assignees: v.assignees || [],
                 startDate: v.startDate, dueDate: v.dueDate,
                 estimatedHours: v.estimatedHours || 0, actualHours: v.actualHours || 0,
+                importance: PMS.programProgress.isValidImportance(v.importance) ? v.importance : "medium",
+                plannedSubtasks: PMS.programProgress.isNonNegativeInt(v.plannedSubtasks)
+                  ? Number(v.plannedSubtasks)
+                  : PMS.programProgress.defaultPlannedSubtasks(PMS.store.data),
                 tags: v.tags || [], customFields: cf, meetingId: meetingId
               };
             }

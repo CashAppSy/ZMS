@@ -439,6 +439,133 @@ const root = () => document.getElementById("view-root");
   ]);
   ok("folder pillar contributes no separate weight (no dilution)", Math.round(PMS.progress.overallProgress(wFolder)) === Math.round((donePct + todoPct) / 2));
 
+  section("Program progress model");
+  const PP = PMS.programProgress;
+  const near = (a, b, eps) => Math.abs(a - b) < (eps || 0.01);
+  // ---- pillar raw weight is RELATIVE and normalized to the program (spec 1)
+  const normData = {
+    settings: {},
+    projects: [{ id: "A", rawWeight: 40 }, { id: "B", rawWeight: 70 }, { id: "C", rawWeight: 20 }],
+    tasks: []
+  };
+  ok("normalized weight = raw / total", near(PP.normalizedWeight(normData, "A"), 30.7692, 0.001));
+  ok("normalized weight B", near(PP.normalizedWeight(normData, "B"), 53.8462, 0.001));
+  ok("normalized weight C", near(PP.normalizedWeight(normData, "C"), 15.3846, 0.001));
+  const normSum = ["A", "B", "C"].reduce((s, id) => s + PP.normalizedWeight(normData, id), 0);
+  ok("normalized weights sum to 100", near(normSum, 100, 0.001));
+  ok("pillar weights need not total 100", near(PP.totalRawWeight(normData), 130));
+  // ---- program progress = SUM(normalized x pillar progress) (spec 2 / 21)
+  const progData = {
+    settings: {},
+    projects: [
+      { id: "A", rawWeight: 40, progress: 60 },
+      { id: "B", rawWeight: 70, progress: 50 },
+      { id: "C", rawWeight: 20, progress: 100 }
+    ],
+    tasks: []
+  };
+  ok("program progress = weighted sum (60.7692)", near(PP.programProgress(progData, { A: 60, B: 50, C: 100 }), 60.7692, 0.001));
+  ok("program progress clamped to 0..100", PP.programProgress(progData, { A: 60, B: 50, C: 100 }) >= 0 && PP.programProgress(progData, { A: 60, B: 50, C: 100 }) <= 100);
+  ok("with no numbers supplied the pillars are recalculated, not read off the record", PP.programProgress({ settings: {}, projects: [{ id: "A", rawWeight: 1, progress: 99, plannedTasks: 10, status: "active" }], tasks: [] }) === 0);
+  // a weight change re-normalizes every share (spec 18)
+  const reweighed = JSON.parse(JSON.stringify(progData));
+  reweighed.projects[1].rawWeight = 100; // total becomes 160
+  ok("weight change re-normalizes shares", near(PP.normalizedWeight(reweighed, "A"), 25, 0.001) && near(PP.normalizedWeight(reweighed, "B"), 62.5, 0.001));
+  ok("weight change moves program progress", PP.programProgress(reweighed, { A: 60, B: 50, C: 100 }) !== PP.programProgress(progData, { A: 60, B: 50, C: 100 }));
+  // ---- status is a CEILING, subtasks earn part of it (spec 7 / 11)
+  const subData = (status, doneCount, planned) => {
+    const t = { id: "t", status, plannedSubtasks: planned };
+    const subs = [];
+    for (let i = 0; i < doneCount; i++) subs.push({ id: "s" + i, taskId: "t", status: "done" });
+    return { t, data: { settings: {}, projects: [], tasks: [t], subtasks: subs } };
+  };
+  const cA = subData("todo", 5, 10);
+  ok("todo 5/10 subtasks = 22.45", near(PP.taskProgress(cA.data, cA.t), 22.45, 0.001));
+  const cB = subData("inprogress", 5, 10);
+  ok("inprogress 5/10 subtasks = 37.45", near(PP.taskProgress(cB.data, cB.t), 37.45, 0.001));
+  const cC = subData("review", 8, 10);
+  ok("review 8/10 subtasks = 79.92", near(PP.taskProgress(cC.data, cC.t), 79.92, 0.001));
+  const cD = subData("done", 0, 10);
+  ok("done is always 100", PP.taskProgress(cD.data, cD.t) === 100);
+  ok("no subtask scope -> status progress (inprogress 45)", PP.taskProgress({ settings: {}, tasks: [{ id: "x", status: "inprogress", plannedSubtasks: 0 }] }, { id: "x", status: "inprogress", plannedSubtasks: 0 }) === 45);
+  ok("planned subtasks are NOT reduced to actual count", near(PP.taskProgress(cA.data, cA.t), 22.45, 0.001));
+  ok("task progress never exceeds 100", PP.taskProgress(subData("review", 99, 10).data, subData("review", 99, 10).t) <= 100);
+  // ---- importance drives task weight, and changing it recalculates (spec 6 / 19)
+  const impData = {
+    settings: {},
+    projects: [{ id: "p", rawWeight: 1, plannedTasks: 10, defaultTaskImportance: "medium" }],
+    tasks: [{ id: "t1", projectId: "p", status: "done", importance: "medium" }]
+  };
+  ok("importance sets task weight", PP.taskWeight(impData, impData.tasks[0]) === 2);
+  const impBefore = PP.pillarProgress(impData, "p");
+  impData.tasks[0].importance = "high"; // weight 2 -> 3, so more earned weight
+  ok("importance change recalculates pillar progress", PP.pillarProgress(impData, "p") > impBefore);
+  ok("subtasks never add pillar weight", (function () {
+    const d = { settings: {}, projects: [{ id: "p", rawWeight: 1, plannedTasks: 1, defaultTaskImportance: "medium" }], tasks: [{ id: "t", projectId: "p", status: "done", importance: "high" }], subtasks: [{ id: "s", taskId: "t", status: "done" }] };
+    const capBefore = PP.pillarScope(d, "p");
+    d.subtasks = [{ id: "s", taskId: "t", status: "done" }, { id: "s2", taskId: "t", status: "done" }];
+    const capAfter = PP.pillarScope(d, "p");
+    return capBefore.plannedCapacity === capAfter.plannedCapacity;
+  })());
+  // ---- planned scope stays in the denominator (spec 5 / 13 / 14)
+  const scopeData = {
+    settings: {},
+    projects: [{ id: "p", rawWeight: 1, plannedTasks: 15, defaultTaskImportance: "medium" }],
+    tasks: ["low", "medium", "high", "high", "urgent", "medium", "medium", "low", "low", "medium"]
+      .map((im, i) => ({ id: "t" + i, projectId: "p", status: "done", importance: im }))
+  };
+  const sc = PP.pillarScope(scopeData, "p");
+  ok("planned capacity = planned x default importance", sc.plannedCapacity === 30);
+  ok("remaining planned slots stay in scope", sc.remainingTasks === 5);
+  ok("finishing all actual tasks does NOT fake 100%", PP.pillarProgress(scopeData, "p") < 100);
+  ok("all-done with 5 slots open lands on earned/capacity", near(PP.pillarProgress(scopeData, "p"), 21 / 31 * 100, 0.01));
+  // ---- adding a task consumes a planned slot instead of resetting progress (spec 17)
+  const grew = JSON.parse(JSON.stringify(scopeData));
+  const earnedBefore = PP.pillarProgress(grew, "p");
+  grew.tasks.push({ id: "t_new", projectId: "p", status: "todo", importance: "medium" });
+  ok("new task replaces a planned slot", PP.pillarScope(grew, "p").remainingTasks === 4);
+  ok("adding an undone task keeps earned progress intact", near(PP.pillarProgress(grew, "p"), earnedBefore, 0.01));
+  // ---- program progress is 0 with nothing built (spec: no tasks = no effect)
+  ok("no pillars -> 0", PP.programProgress({ settings: {}, projects: [], tasks: [] }) === 0);
+  ok("planned but unbuilt pillar contributes 0", PP.programProgress({ settings: {}, projects: [{ id: "p", rawWeight: 5, plannedTasks: 10 }], tasks: [] }) === 0);
+  // ---- explicit closure (spec 15 / 16 / 25)
+  const closed = JSON.parse(JSON.stringify(scopeData));
+  const tooShort = PP.validateClosureNote("too short");
+  ok("closure note must be at least 50 chars", !tooShort.ok && tooShort.reason === "tooShort");
+  ok("closure note accepts 50+ chars", PP.validateClosureNote("x".repeat(50)).ok);
+  const closeRes = PP.closePillar(closed, "p", "Scope deliberately reduced after the merger folded these tasks into the platform pillar.", { name: "Ali" });
+  ok("closing a pillar returns ok", closeRes.ok === true);
+  ok("closure forces 100%", PP.pillarProgress(closed, "p") === 100);
+  ok("closure sets status completed", closed.projects[0].status === "completed");
+  ok("closure preserves the original planned scope", closed.projects[0].plannedTasks === 15);
+  ok("closure records who/when", !!closed.projects[0].closedAt && closed.projects[0].closedBy === "Ali");
+  const snap = closed.projects[0].closureSnapshot;
+  ok("closure snapshot keeps planned/actual/remaining/unused", snap.plannedTasks === 15 && snap.actualTasks === 10 && snap.remainingTasks === 5 && snap.unusedPlannedCapacity === 10 && snap.finalProgress === 100);
+  ok("cannot close an already closed pillar", PP.canClosePillar(closed, "p").ok === false);
+  ok("closure refuses a missing pillar", PP.canClosePillar(closed, "nope").ok === false);
+  // ---- validation helpers (spec 23)
+  ok("raw weight must be a positive integer", PP.isValidRawWeight(0) === false && PP.isValidRawWeight(-2) === false && PP.isValidRawWeight("abc") === false && PP.isValidRawWeight(2.5) === false && PP.isValidRawWeight(3) === true);
+  ok("planned counts must be non-negative integers", PP.isNonNegativeInt(-1) === false && PP.isNonNegativeInt(1.5) === false && PP.isNonNegativeInt(0) === true && PP.isNonNegativeInt(3) === true);
+  ok("importance must be a known level", PP.isValidImportance("high") && !PP.isValidImportance("blocker"));
+  ok("zero planned subtasks never divides by zero", PP.taskProgress({ settings: {}, tasks: [{ id: "z", status: "review", plannedSubtasks: 0 }], subtasks: [{ id: "zs", taskId: "z", status: "done" }] }, { id: "z", status: "review", plannedSubtasks: 0 }) === 0);
+  ok("subtask repository counts completions", (function () {
+    PMS.store.commit((d) => {
+      d.tasks.push({ id: "st_parent", title: "with subtasks", status: "inprogress", plannedSubtasks: 4 });
+      d.subtasks.push({ id: "sb1", taskId: "st_parent", title: "a", status: "done" });
+      d.subtasks.push({ id: "sb2", taskId: "st_parent", title: "b", status: "todo" });
+    }, "test-subtasks");
+    const made = PMS.repos.subtasks.forTask("st_parent").length;
+    const doneMade = PMS.repos.subtasks.completedForTask("st_parent").length;
+    const prog = PP.taskProgress(PMS.store.data, PMS.store.data.tasks.find((t) => t.id === "st_parent"));
+    PMS.store.commit((d) => {
+      const ti = d.tasks.findIndex((t) => t.id === "st_parent");
+      if (ti > -1) d.tasks.splice(ti, 1);
+      const si = d.subtasks.findIndex((s) => s.taskId === "st_parent");
+      if (si > -1) d.subtasks.splice(si, 2);
+    }, "test-subtasks-clean");
+    return made === 2 && doneMade === 1 && near(prog, 18.725, 0.01);
+  })());
+
   section("Validation");
   ok("task valid", PMS.validation.check("task", { title: "OK" }).valid);
   ok("task missing title invalid", !PMS.validation.check("task", {}).valid);
@@ -526,6 +653,79 @@ const root = () => document.getElementById("view-root");
     if (PMS.modal.isOpen) PMS.modal.close();
     ok("department editor opens [" + (dd.name && (dd.name.en || dd.name)) + "]", !threw);
   }
+
+  section("Program progress wiring");
+  PMS.store.setData(PMS.seed.build());
+  // The store reset above clears accounts and the session, and only an admin or
+  // the pillar owner may close a pillar, so make a throwaway admin for this block.
+  PMS.auth.createUser({ username: "pp-admin", password: "pw1234", role: "admin", name: "PP Admin" });
+  PMS.auth.login("pp-admin", "pw1234");
+  const wp = PMS.repos.projects.all()[0];
+  PMS.repos.projects.update(wp.id, { rawWeight: 40, plannedTasks: 15, defaultTaskImportance: "medium", status: "active" });
+  const wired = PMS.repos.projects.get(wp.id);
+  ok("pillar persists raw weight", wired.rawWeight === 40);
+  ok("pillar persists planned scope", wired.plannedTasks === 15);
+  ok("pillar persists default importance", wired.defaultTaskImportance === "medium");
+  ok("pillar list rows show the program share", (function () {
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, {});
+    const txt = c.textContent || "";
+    const found = txt.indexOf("Total pillar weight") > -1 && txt.indexOf("Pillars") > -1;
+    c.remove();
+    return found;
+  })());
+  ok("pillar detail renders planned vs actual", (function () {
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: wp.id });
+    const txt = c.textContent || "";
+    const found = txt.indexOf("Remaining planned") > -1 && txt.indexOf("Actual tasks") > -1 &&
+      txt.indexOf("Program share") > -1 && txt.indexOf("Raw weight") > -1;
+    c.remove();
+    return found;
+  })());
+  ok("closure dialog demands a note of at least 50 chars", (function () {
+    PMS.i18n.setLang("en");
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: wp.id });
+    const btn = Array.from(c.querySelectorAll("button")).find((b) => (b.textContent || "").indexOf("Complete pillar") > -1);
+    if (!btn) { console.error("  no Complete pillar button"); c.remove(); return false; }
+    btn.click();
+    const ta = document.querySelector(".modal textarea");
+    const confirmBtn = Array.from(document.querySelectorAll(".modal button")).find((b) => (b.textContent || "") === "Confirm");
+    if (!ta || !confirmBtn) { console.error("  dialog missing", !!ta, !!confirmBtn); c.remove(); return false; }
+    confirmBtn.click();
+    const modalEl = document.querySelector(".modal");
+    const stillOpen = !!document.querySelector(".modal textarea");
+    // the shared error line is reused for both failure reasons, so any inline
+    // error means the empty note was rejected instead of silently closing.
+    const errShown = modalEl ? (modalEl.textContent || "").indexOf("closure note") > -1 : false;
+    if (!stillOpen || !errShown) { console.error("  closure check", stillOpen, errShown); c.remove(); return false; }
+    ta.value = "x".repeat(60);
+    confirmBtn.click();
+    const closedPillar = PMS.repos.projects.get(wp.id);
+    c.remove();
+    return stillOpen && errShown && closedPillar.status === "completed" && !!closedPillar.closureNote;
+  })());
+  ok("a closed pillar keeps its original plan for audit", (function () {
+    const p = PMS.repos.projects.get(wp.id);
+    return p.plannedTasks === 15 && !!p.closureSnapshot && p.closureSnapshot.finalProgress === 100;
+  })());
+  ok("subtasks render under their task in the pillar view", (function () {
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.forProject(p2.id)[0];
+    PMS.repos.subtasks.add({ taskId: t.id, title: "design the schema", status: "done" });
+    PMS.repos.subtasks.add({ taskId: t.id, title: "write the migration", status: "todo" });
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    const txt = c.textContent || "";
+    c.remove();
+    return txt.indexOf("design the schema") > -1 && txt.indexOf("write the migration") > -1;
+  })());
 
   PMS.taskDetail.open(PMS.repos.tasks.all()[0].id);
   ok("task detail opens modal", PMS.modal.isOpen);
