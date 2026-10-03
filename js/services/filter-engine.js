@@ -108,6 +108,14 @@
       return pa - pb;
     },
     created: function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); },
+    number: function (a, b) {
+      // A task's number IS its rank by creation order, so sorting on that same
+      // key sorts by the number the user sees - with no id->number map rebuilt
+      // on every comparison, which would make a sort quadratic.
+      var ca = String(a.createdAt || ""), cb = String(b.createdAt || "");
+      if (ca !== cb) return ca < cb ? -1 : 1;
+      return String(a.id || "") < String(b.id || "") ? -1 : 1;
+    },
     createdBy: function (a, b) {
       return PMS.vformat.creatorOf(a).localeCompare(PMS.vformat.creatorOf(b));
     }

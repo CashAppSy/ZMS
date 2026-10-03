@@ -138,6 +138,8 @@
       subtasks: "Sub-tasks",
       collapseSubtasks: "Collapse sub-tasks", expandSubtasks: "Expand sub-tasks",
       collapseAllSubtasks: "Collapse sub-tasks", expandAllSubtasks: "Expand sub-tasks",
+      number: "#",
+      doubleClickForDetails: "Double click the row to see this task and its sub-tasks",
       assignees: "Assign to", estimated: "Estimated hours", actual: "Actual hours",
     createdBy: "Created by",
       progress: "Progress", checklist: "Checklist", comments: "Comments",

@@ -13,6 +13,23 @@ const { JSDOM } = require("jsdom");
 // the site lives at the repo root (index.html + js + css)
 const APP = path.resolve(__dirname, "..");
 
+// Reads a stylesheet off disk so a layout rule can be asserted directly. The
+// gantt's alignment depends on CSS the DOM assertions cannot see, and a rule that
+// silently reverts is exactly the kind of thing that ships unnoticed.
+function cssOf(file) {
+  try { return fs.readFileSync(path.join(APP, file), "utf8"); }
+  catch (e) { return ""; }
+}
+function cssRule(selector, file) {
+  const css = cssOf(file || "css/components.css");
+  const i = css.indexOf(selector + " {");
+  if (i === -1) return "";
+  return css.slice(i, css.indexOf("}", i) + 1);
+}
+function ganttLabelRule() {
+  return cssRule(".gantt-label-col");
+}
+
 // ---------------- environment ----------------
 const dom = new JSDOM(`<!DOCTYPE html><html><body>
   <div id="auth-root"></div>
@@ -327,6 +344,23 @@ const root = () => document.getElementById("view-root");
   ok("gantt month labels", root().querySelectorAll(".gantt-month-label").length >= 1);
   ok("gantt day labels", root().querySelectorAll(".gantt-day-label").length >= 1);
   ok("gantt bars carry date tooltips", Array.from(root().querySelectorAll(".gantt-bar")).every(b => (b.getAttribute("title") || "").length > 3));
+  // The label cell has to stay one fixed width whatever the title says. It used
+  // to be a ROW flex holding the title and the dates side by side, and a nowrap
+  // flex item cannot shrink below its own text, so a long title spilled past the
+  // divider into the timeline and the column read as ragged.
+  ok("every gantt row has a label cell", root().querySelectorAll(".gantt-row .gantt-label-col").length === root().querySelectorAll(".gantt-row").length);
+  ok("the gantt title and dates are stacked in separate elements",
+    Array.from(root().querySelectorAll(".gantt-row")).every(r =>
+      !!r.querySelector(".gantt-label-col > .gantt-label-title") &&
+      !!r.querySelector(".gantt-label-col > .gantt-label-dates")));
+  ok("the gantt label width comes from one shared token",
+    /\.gantt-label-col\s*\{[^}]*flex:\s*0\s+0\s+var\(--gantt-label-w/.test(ganttLabelRule()));
+  ok("the gantt label cell stacks its content and clips it",
+    /flex-direction:\s*column/.test(ganttLabelRule()) && /overflow:\s*hidden/.test(ganttLabelRule()));
+  ok("gantt label children can shrink so the ellipsis engages",
+    /min-width:\s*0/.test(cssRule(".gantt-label-col > *")));
+  ok("bar titles are wrapped so they can be truncated", Array.from(root().querySelectorAll(".gantt-bar")).every(b => !!b.querySelector("span")));
+  ok("gantt rows carry the full title for hover", Array.from(root().querySelectorAll(".gantt-label-title")).every(n => (n.getAttribute("title") || "").length > 0));
 
   // calendar
   errors.length = 0; route("/tasks/calendar");
@@ -1147,7 +1181,7 @@ const root = () => document.getElementById("view-root");
     const p = PMS.repos.projects.get(wp.id);
     return p.plannedTasks === 15 && !!p.closureSnapshot && p.closureSnapshot.finalProgress === 100;
   })());
-  ok("subtasks render under their task in the pillar view", (function () {
+  ok("a pillar lists its tasks with their work folded away", (function () {
     PMS.store.setData(PMS.seed.build());
     const p2 = PMS.repos.projects.all()[0];
     const t = PMS.repos.tasks.forProject(p2.id)[0];
@@ -1156,9 +1190,51 @@ const root = () => document.getElementById("view-root");
     const c = document.createElement("div");
     document.body.appendChild(c);
     PMS.registry.getView("projects").render(c, { id: p2.id });
-    const txt = c.textContent || "";
+    let txt = c.textContent || "";
+    const folded = txt.indexOf(t.title) > -1
+      && txt.indexOf("design the schema") === -1
+      && txt.indexOf("write the migration") === -1;
+    // the task that owns work gets a disclosure arrow
+    const hasArrow = !!Array.from(c.querySelectorAll(".project-tree-row"))
+      .find(r => (r.dataset.id === t.id) && r.querySelector(".pt-twisty:not(.pt-twisty-leaf)"));
+    // opening it reveals both sub-tasks
+    const arrow = c.querySelector('.project-tree-row[data-id="' + t.id + '"] .pt-twisty');
+    if (arrow) arrow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    txt = c.textContent || "";
+    const opened = txt.indexOf("design the schema") > -1 && txt.indexOf("write the migration") > -1;
     c.remove();
-    return txt.indexOf("design the schema") > -1 && txt.indexOf("write the migration") > -1;
+    return folded && hasArrow && opened;
+  })());
+  ok("a pillar lists every one of its own tasks, children included", (function () {
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const all = PMS.repos.tasks.forProject(p2.id);
+    // open everything so nested rows are in the DOM to be counted
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    Array.from(c.querySelectorAll(".pt-twisty:not(.pt-twisty-leaf)")).forEach((a) =>
+      a.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    const listed = new Set(Array.from(c.querySelectorAll(".project-tree-row"))
+      .map(r => r.dataset.id).filter(Boolean));
+    c.remove();
+    // every task in the pillar is reachable: either as a top-level row or under one
+    return all.every(t => listed.has(t.id));
+  })());
+  ok("double clicking a pillar task opens its details, not the editor", (function () {
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.forProject(p2.id)[0];
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    const row = c.querySelector('.project-tree-row[data-id="' + t.id + '"]');
+    if (row) row.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    const opened = PMS.modal.isOpen && !!PMS.modal.body.querySelector(".task-detail-body");
+    const isEditor = !!PMS.modal.body.querySelector('.field[data-key="title"]');
+    PMS.modal.close();
+    c.remove();
+    return opened && !isEditor;
   })());
 
   PMS.taskDetail.open(PMS.repos.tasks.all()[0].id);
@@ -1340,13 +1416,14 @@ const root = () => document.getElementById("view-root");
   const selCtl = PMS.forms.buildControl({ key: "managerId", type: "select", options: [{ label: "Omar Khalil", value: "p-omar" }], allowCreatePerson: true }, "p-omar");
   ok("owner select keeps its current value", selCtl.getValue() === "p-omar");
 
-  // the tasks table: double click opens the FULL editor, assignees stay read-only
+  // the tasks table: double click opens the DETAIL, assignees stay read-only
   errors.length = 0;
   route("/tasks");
   const vtRow = root().querySelector(".vt-row");
   const dbl = new window.MouseEvent("dblclick", { bubbles: true });
   vtRow.dispatchEvent(dbl);
-  ok("double click on a task row opens the task editor", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="title"]'));
+  ok("double click on a task row opens the task details", PMS.modal.isOpen && !!PMS.modal.body.querySelector(".task-detail-body"));
+  ok("double click on a task row does not open the editor", !PMS.modal.body.querySelector('.field[data-key="title"]'));
   PMS.modal.close();
   ok("assignee cell renders no editable control", !root().querySelector(".vt-assignees input, .vt-assignees select, .vt-assignees button"));
   ok("row hint tells the user to double click", (vtRow.getAttribute("title") || "").length > 3);
@@ -1372,52 +1449,130 @@ const root = () => document.getElementById("view-root");
   ok("the sort hint is shown", (root().textContent || "").indexOf(PMS.i18n.t("projects.sortedByProgress")) !== -1);
   ok("collapse/expand all still available", root().querySelectorAll(".page-header .actions .btn").length >= 3);
 
-  // ---- tasks: sub-tasks nested under their parent, collapsible ----------
+  // ---- task numbers --------------------------------------------------------
+  ok("a task's number is its stable rank, not a render-time counter", (function () {
+    const d = {
+      tasks: [
+        { id: "c", createdAt: "2026-01-03T00:00:00.000Z" },
+        { id: "a", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "b", createdAt: "2026-01-02T00:00:00.000Z" }
+      ]
+    };
+    const map = PMS.utils.taskNumbers(d);
+    // ranked by creation order, so it reads 1,2,3 in the order things were added
+    const okOrder = map.a === 1 && map.b === 2 && map.c === 3;
+    // asking again returns the same numbers - a counter minted per render would
+    // renumber the whole list on every sort
+    const again = PMS.utils.taskNumbers(d);
+    const stable = again.a === 1 && again.b === 2 && again.c === 3;
+    // the single-task accessor agrees with the map
+    const bTask = d.tasks.filter(x => x.id === "b")[0];
+    const agrees = PMS.utils.taskNumber(d, bTask) === map.b;
+    const allDistinct = new Set(Object.keys(map).map(k => map[k])).size === 3;
+    return okOrder && stable && agrees && allDistinct;
+  })());
+  ok("task numbers survive reordering and stay unique", (function () {
+    const d = {
+      tasks: [
+        { id: "x", createdAt: "2026-02-02T00:00:00.000Z" },
+        { id: "y", createdAt: "2026-02-01T00:00:00.000Z" },
+        { id: "z", createdAt: "2026-02-03T00:00:00.000Z" }
+      ]
+    };
+    const before = PMS.utils.taskNumbers(d);
+    // a different array order must not change anybody's number
+    const shuffled = { tasks: [d.tasks[2], d.tasks[0], d.tasks[1]] };
+    const after = PMS.utils.taskNumbers(shuffled);
+    return before.x === after.x && before.y === after.y && before.z === after.z
+      && new Set(Object.keys(after).map(k => after[k])).size === 3;
+  })());
+  ok("tasks with no creation date still get distinct numbers", (function () {
+    const d = { tasks: [{ id: "p" }, { id: "q" }, { id: "r" }] };
+    const map = PMS.utils.taskNumbers(d);
+    const nums = Object.keys(map).map(k => map[k]);
+    return nums.length === 3 && new Set(nums).size === 3;
+  })());
+  ok("sorting by the number column orders by the number shown", (function () {
+    const d = PMS.store.data;
+    const sorted = PMS.filterEngine.sortTasks(PMS.repos.tasks.all(), "number", "asc", d);
+    const nums = sorted.map(t => PMS.utils.taskNumber(d, t));
+    for (let i = 1; i < nums.length; i++) {
+      if (!(nums[i - 1] <= nums[i])) return false;
+    }
+    return nums.length > 1;
+  })());
+  ok("sorting by the number does not rebuild a map per comparison", (function () {
+    // A quadratic sort on a long list is a hang the user would feel, not a slow
+    // test. The sorter must not reach for the number map at all.
+    let body = "";
+    try { body = fs.readFileSync(path.join(APP, "js/services/filter-engine.js"), "utf8"); }
+    catch (e) { body = ""; }
+    const block = (body.match(/number:\s*function[\s\S]*?\n    \},/) || [""])[0];
+    return !!block && block.indexOf("taskNumber") === -1 && block.indexOf("taskNumbers") === -1;
+  })());
+
+// ---- tasks: numbers up front, sub-tasks folded until expanded -----------
   errors.length = 0;
   route("/tasks");
   const parentWithKids = PMS.repos.tasks.all().find(t => !t.parentTaskId && PMS.repos.tasks.children(t.id).length > 0);
   ok("a parent with sub-tasks is in the list", !!parentWithKids);
   const twisty = root().querySelector(".vt-twisty:not(.vt-twisty-leaf)");
   ok("the parent row gets a collapse/expand chevron", !!twisty && !!parentWithKids);
+
   const subRowSel = ".vt-row-sub";
-  const subRowsBefore = root().querySelectorAll(subRowSel).length;
-  ok("sub-tasks render as nested rows under their parent", subRowsBefore > 0);
-  const subTitles = Array.from(root().querySelectorAll(subRowSel)).map(r => (r.textContent || "").trim());
-  ok("a known sub-task is rendered", subTitles.some(txt => txt.indexOf(PMS.repos.tasks.children(parentWithKids.id)[0].title) !== -1));
-  ok("nested rows are indented", parseFloat(root().querySelector(subRowSel).style.paddingInlineStart) > 0);
-  // Collapse a parent whose children are actually on screen: the list windows
-  // its rows, so a parent's children may be outside the rendered window.
-  const renderedSubIds = () => Array.from(root().querySelectorAll(subRowSel)).map((r) => r.dataset.id);
+  // Folded to begin with: the sub-task block is not in the list at all.
+  ok("sub-tasks stay out of the list until the parent is expanded", root().querySelectorAll(subRowSel).length === 0);
+
+  // Every row leads with a unique number, so a task can be named out loud.
+  const headCells = Array.from(root().querySelectorAll(".vt-head .vt-th")).map(c => ((c.querySelector("span") || {}).textContent || "").trim());
+  ok("the task number heads the table", headCells[0] === PMS.i18n.t("tasks.number"));
+  const numbered = Array.from(root().querySelectorAll(".vt-row .vt-td-num")).map(n => n.textContent || "");
+  ok("every row shows its number", numbered.length > 0 && numbered.every(x => /^#\d+$/.test(x)));
+  ok("the numbers shown are unique", new Set(numbered).size === numbered.length);
+
+  // Work on a parent that is actually on screen: the list is virtualized, so a
+  // parent's children can sit outside the rendered window.
+  const renderedIds = () => Array.from(root().querySelectorAll(".vt-row")).map(r => r.dataset.id);
+  const liveParent = renderedIds().map(id => PMS.repos.tasks.get(id))
+    .find(t => t && !t.parentTaskId && PMS.repos.tasks.children(t.id).length > 0);
+  ok("a parent with sub-tasks is on screen", !!liveParent);
   const twistyFor = (id) => root().querySelector('.vt-row[data-id="' + id + '"] .vt-twisty');
-  const candidateParent = PMS.repos.projects.all() && PMS.repos.tasks.all().find((t) => {
-    if (t.parentTaskId) return false;
-    const kids = PMS.repos.tasks.children(t.id).map((k) => k.id);
-    return kids.length > 0 && kids.every((k) => renderedSubIds().indexOf(k) > -1);
-  });
-  ok("a parent with all of its sub-tasks on screen exists", !!candidateParent);
-  const kidsCount = candidateParent ? PMS.repos.tasks.children(candidateParent.id).length : 0;
-  // The window reflows when rows are hidden, so count arithmetic is not stable
-  // here; what matters is that this parent's own sub-tasks disappear and return.
-  const rowsBeforeCollapse = root().querySelectorAll(subRowSel).length;
-  const clickTwisty = twistyFor(candidateParent && candidateParent.id);
-  if (clickTwisty) clickTwisty.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  const kidTitles = liveParent ? PMS.repos.tasks.children(liveParent.id).map(k => k.title) : [];
+
+  if (liveParent) twistyFor(liveParent.id).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   route("/tasks");
-  const stillThere = candidateParent
-    ? PMS.repos.tasks.children(candidateParent.id).filter((k) => renderedSubIds().indexOf(k.id) > -1)
-    : [{}];
-  ok("collapsing a parent hides its sub-tasks",
-    !!candidateParent && kidsCount > 0 && rowsBeforeCollapse > kidsCount && stillThere.length === 0);
-  // expand again
-  const again = twistyFor(candidateParent && candidateParent.id);
-  if (again) again.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  const expandedRows = Array.from(root().querySelectorAll(subRowSel));
+  ok("expanding the parent lists its sub-tasks under it", expandedRows.length > 0);
+  ok("the expanded sub-tasks belong to that parent",
+    expandedRows.every(r => PMS.repos.tasks.get(r.dataset.id) && PMS.repos.tasks.get(r.dataset.id).parentTaskId === liveParent.id));
+  ok("a known sub-task is rendered", expandedRows.some(r => kidTitles.indexOf((r.textContent || "").trim()) > -1 || kidTitles.some(t2 => (r.textContent || "").indexOf(t2) > -1)));
+  ok("nested rows are indented", expandedRows.length > 0 && parseFloat(expandedRows[0].style.paddingInlineStart) > 0);
+
+  if (liveParent) twistyFor(liveParent.id).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   route("/tasks");
-  ok("expanding the parent brings the sub-tasks back", root().querySelectorAll(subRowSel).length === rowsBeforeCollapse);
-  ok("collapse/expand all sub-tasks buttons exist", (root().textContent || "").indexOf(PMS.i18n.t("tasks.collapseAllSubtasks")) !== -1 &&
-    (root().textContent || "").indexOf(PMS.i18n.t("tasks.expandAllSubtasks")) !== -1);
-  // a nested row still opens the editor on double click
-  const subRow = root().querySelector(subRowSel);
-  subRow.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
-  ok("double clicking a sub-task opens its editor", PMS.modal.isOpen && !!PMS.modal.body.querySelector('.field[data-key="title"]'));
+  ok("collapsing the parent hides them again", root().querySelectorAll(subRowSel).length === 0);
+
+  if (liveParent) twistyFor(liveParent.id).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+  ok("expanding brings them back", root().querySelectorAll(subRowSel).length === expandedRows.length);
+
+  // collapse/expand everything, both directions
+  const allBtn = Array.from(root().querySelectorAll(".btn")).find(b => (b.textContent || "").indexOf(PMS.i18n.t("tasks.collapseAllSubtasks")) > -1);
+  const anyBtn = Array.from(root().querySelectorAll(".btn")).find(b => (b.textContent || "").indexOf(PMS.i18n.t("tasks.expandAllSubtasks")) > -1);
+  if (allBtn) allBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+  ok("collapse all folds every sub-task list", root().querySelectorAll(subRowSel).length === 0);
+  if (anyBtn) anyBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+  ok("expand all opens them back up", root().querySelectorAll(subRowSel).length > 0);
+  if (allBtn) allBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  route("/tasks");
+
+  // double click READS the task, it does not start editing it
+  const rowToOpen = root().querySelector(subRowSel) || root().querySelector(".vt-row");
+  rowToOpen.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+  ok("double clicking a row opens the task details", PMS.modal.isOpen && !!PMS.modal.body.querySelector(".task-detail-body"));
+  ok("double click does not drop straight into the editor", !PMS.modal.body.querySelector('.field[data-key="title"]'));
   PMS.modal.close();
 
   // ---- meetings: filter defaults to All + tasks/pillars on the card ------

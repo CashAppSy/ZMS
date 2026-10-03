@@ -111,15 +111,17 @@
       var row = h("div.gantt-row" + (isSub ? ".gantt-row-sub" : ""), { style: { height: "40px" } });
       var labelCell = h("div.gantt-label-col", { style: { padding: "0 12px", borderInlineEnd: "1px solid var(--border)" } });
       if (isSub) labelCell.style.paddingInlineStart = "28px";
-      labelCell.appendChild(h("span.u-ellipsis", { text: tsk.title }));
+      // Title and dates are stacked and each truncates on its own, so the cell
+      // keeps one fixed width no matter how long the title is.
+      labelCell.appendChild(h("span.gantt-label-title", { text: tsk.title, attrs: { title: tsk.title } }));
       var startD = PMS.utils.parseDate(tsk.startDate);
       var endD = PMS.utils.parseDate(tsk.dueDate);
       var rangeText;
       if (!startD && !endD) rangeText = t("gantt.noDate");
       else if (!startD) rangeText = t("gantt.due") + " " + PMS.utils.formatDate(tsk.dueDate, PMS.i18n);
       else if (!endD) rangeText = t("gantt.from") + " " + PMS.utils.formatDate(tsk.startDate, PMS.i18n);
-      else rangeText = PMS.utils.formatDate(tsk.startDate, PMS.i18n) + " \u2192 " + PMS.utils.formatDate(tsk.dueDate, PMS.i18n);
-      labelCell.appendChild(h("div.u-muted", { text: rangeText, style: { fontSize: "0.7rem", lineHeight: "1.2", direction: "ltr", textAlign: "start" } }));
+      else rangeText = PMS.utils.formatDate(tsk.startDate, PMS.i18n) + " → " + PMS.utils.formatDate(tsk.dueDate, PMS.i18n);
+      labelCell.appendChild(h("div.gantt-label-dates.u-muted", { text: rangeText, style: { direction: "ltr", textAlign: "start" }, attrs: { title: rangeText } }));
       row.appendChild(labelCell);
 
       var timeCell = h("div.gantt-time-col", { style: { position: "relative" } });
@@ -140,7 +142,9 @@
           click: function (e) { e.stopPropagation(); PMS.taskDetail.open(tsk.id); }
         }
       });
-      bar.textContent = tsk.title;
+      // Wrapped so the bar's own overflow clips the text with an ellipsis;
+      // a bare text node cannot be truncated by text-overflow.
+      bar.appendChild(h("span", { text: tsk.title }));
       addDragBar(bar, tsk, start, min, end, render, container, zoom);
       timeCell.appendChild(bar);
 

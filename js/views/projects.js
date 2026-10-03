@@ -10,6 +10,10 @@
   // scoped: progress percentages must not count work the reader may not see
   var data = function () { return PMS.repos.scopedData(); };
 
+  // Task ids whose nested work is expanded on a pillar page. Module level
+  // because the page re-renders on every store change.
+  var openTasks = {};
+
   function buildTree(progressMap) {
     var projs = data().projects || [];
     var pctOf = function (p) {
@@ -301,7 +305,7 @@
     var taskWrap = h("div.card");
     taskWrap.appendChild(h("div.card-header", [h("div.card-title", { text: t("projects.tasks") + " (" + tasks.length + ")" })]));
     var taskBody = tasks.length
-      ? taskRows(tasks)
+      ? taskRows(tasks, container, id)
       : [h("div.empty-state", [
         h("div", { text: t("projects.noTasks") })
       ])];
@@ -361,18 +365,78 @@
     });
   }
 
-  // Program > Pillar > Task > Sub-task: clicking a pillar lists its tasks with
-  // their sub-tasks nested underneath, each carrying its weight and progress.
-  function taskRows(tasks) {
+  // Program > Pillar > Task > Sub-task: a pillar lists its own top-level tasks,
+  // each with the work underneath it folded away until the user opens it.
+  //
+  // Which tasks are open has to live at module level: renderDetail rebuilds this
+  // page from scratch on every store change, so state kept inside the render
+  // would collapse the list again the moment a progress bar moved.
+  function taskRows(tasks, container, projectId) {
     var PP = PMS.programProgress;
     var data = PMS.store.data;
     var out = [];
-    tasks.filter(function (tsk) { return !tsk.parentTaskId; }).forEach(function (tsk) {
-      var row = h("div.project-tree-row");
+    // Ranked once: taskNumber rebuilds the map on every call, and a per-row call
+    // would rank the whole program once for every row on the page.
+    var numbers = PMS.utils.taskNumbers(data);
+    var inThisPillar = {};
+    tasks.forEach(function (tsk) { inThisPillar[tsk.id] = true; });
+
+    // A child task belongs under its parent. If that parent is not in this
+    // pillar's list (a task pointed at something the member cannot see, say) then
+    // the child is promoted to a row of its own rather than vanishing.
+    function isTopLevel(tsk) {
+      return !tsk.parentTaskId || !inThisPillar[tsk.parentTaskId];
+    }
+
+    function childTasksOf(tsk) {
+      return tasks.filter(function (x) { return x.parentTaskId === tsk.id; });
+    }
+
+    function subtaskList(tsk) {
+      return PP.subtasksOf(data, tsk.id);
+    }
+
+    function isOpen(id) {
+      return !!openTasks[id];
+    }
+
+    function toggle(el, id) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openTasks[id] = !isOpen(id);
+        // Repaint in place: the page keeps its scroll and filters, and the arrow
+        // the user just pressed stays under the cursor.
+        renderDetail(container, projectId);
+      });
+    }
+
+    // One row of a task, at whatever depth, with the same cells either way.
+    function taskRow(tsk, depth) {
+      var row = h("div.project-tree-row", { style: { paddingInlineStart: (8 + depth * 20) + "px" } });
       row.style.cursor = "pointer";
-      row.addEventListener("click", function () { PMS.router.navigate("/tasks?highlight=" + tsk.id); });
-      row.appendChild(h("span", { text: "☑" }));
-      row.appendChild(h("span.u-grow.u-ellipsis", { text: tsk.title }));
+      row.dataset.id = tsk.id;
+
+      var kids = childTasksOf(tsk);
+      var subs = subtaskList(tsk);
+      var hasKids = kids.length > 0 || subs.length > 0;
+      var open = isOpen(tsk.id);
+
+      if (hasKids) {
+        var twisty = h("span.pt-twisty" + (open ? ".open" : ""), {
+          text: "▾",
+          attrs: { title: open ? t("tasks.collapseSubtasks") : t("tasks.expandSubtasks") }
+        });
+        toggle(twisty, tsk.id);
+        row.appendChild(twisty);
+      } else {
+        row.appendChild(h("span.pt-twisty.pt-twisty-leaf", { text: depth ? "•" : "" }));
+      }
+
+      row.appendChild(h("span.u-muted", {
+        text: numbers[tsk.id] ? "#" + numbers[tsk.id] : "",
+        style: { fontSize: "0.75rem", fontVariantNumeric: "tabular-nums" }
+      }));
+      row.appendChild(h("span.u-grow.u-ellipsis" + (depth ? ".u-muted" : ""), { text: tsk.title }));
       row.appendChild(h("span.u-muted", {
         text: t("projects.taskWeight") + " " + PP.taskWeight(data, tsk),
         style: { fontSize: "0.75rem" }
@@ -380,17 +444,36 @@
       row.appendChild(PMS.vformat.statusBadge(tsk.status, "task"));
       row.appendChild(h("span.progress-label", { text: PMS.utils.pct(PP.taskProgress(data, tsk)) }));
       row.appendChild(PMS.vformat.priorityBadge(tsk.priority));
-      out.push(row);
 
-      PP.subtasksOf(data, tsk.id).forEach(function (sub) {
-        var done = sub.status === "done" || Number(sub.progress) >= 100;
-        var subRow = h("div.project-tree-row", { style: { paddingLeft: "28px" } });
-        subRow.appendChild(h("span", { text: done ? "☑" : "☐" }));
-        subRow.appendChild(h("span.u-grow.u-ellipsis.u-muted", { text: sub.title }));
-        subRow.appendChild(PMS.vformat.statusBadge(sub.status, "task"));
-        out.push(subRow);
+      // Single click jumps to the task in the full table, as it always has.
+      row.addEventListener("click", function () {
+        PMS.router.navigate("/tasks?highlight=" + tsk.id);
       });
+      // Double click reads the task itself, in place, rather than sending the
+      // user off to a filter and making them hunt for the row again.
+      row.addEventListener("dblclick", function (e) {
+        e.stopPropagation();
+        PMS.taskDetail.open(tsk.id);
+      });
+      return row;
+    }
+
+    function subtaskRow(sub, depth) {
+      var done = sub.status === "done" || Number(sub.progress) >= 100;
+      var subRow = h("div.project-tree-row", { style: { paddingInlineStart: (8 + depth * 20) + "px" } });
+      subRow.appendChild(h("span", { text: done ? "☑" : "☐" }));
+      subRow.appendChild(h("span.u-grow.u-ellipsis.u-muted", { text: sub.title }));
+      subRow.appendChild(PMS.vformat.statusBadge(sub.status, "task"));
+      return subRow;
+    }
+
+    tasks.filter(isTopLevel).forEach(function (tsk) {
+      out.push(taskRow(tsk, 0));
+      if (!isOpen(tsk.id)) return;
+      childTasksOf(tsk).forEach(function (child) { out.push(taskRow(child, 1)); });
+      subtaskList(tsk).forEach(function (sub) { out.push(subtaskRow(sub, 1)); });
     });
+
     return out;
   }
 

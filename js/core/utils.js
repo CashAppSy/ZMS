@@ -189,6 +189,37 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
+  // Stable, human-sized task numbers.
+  //
+  // Ids are UUIDs, which nobody can read out loud across a room, and a counter
+  // minted at render time would renumber the whole list on every sort and every
+  // repaint. So a task's number is its rank in creation order: it never changes
+  // for a given task, and it is unique across the program.
+  function byCreatedThenId(a, b) {
+    var ca = String(a.createdAt || "");
+    var cb = String(b.createdAt || "");
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    return String(a.id || "") < String(b.id || "") ? -1 : 1;
+  }
+
+  // Build the whole id -> number map in one pass, for a list that renders many
+  // rows. Callers render a row per task, so ranking inside the cell would make
+  // the table quadratic.
+  function taskNumbers(data) {
+    var map = {};
+    ((data && data.tasks) || []).slice().sort(byCreatedThenId).forEach(function (t, i) {
+      map[t.id] = i + 1;
+    });
+    return map;
+  }
+
+  // Same number for a single task, for the one-off callers (a pillar page, a
+  // detail modal). Fine on its own; use taskNumbers() inside a list.
+  function taskNumber(data, task) {
+    if (!task || !task.id) return "";
+    return taskNumbers(data)[task.id] || "";
+  }
+
   PMS.utils = {
     escapeHtml: escapeHtml, escapeAttr: escapeAttr,
     debounce: debounce, throttle: throttle,
@@ -197,6 +228,7 @@
     formatDate: formatDate, diffDays: diffDays, hashCode: hashCode,
     colorForSeed: colorForSeed, avatarFor: avatarFor,
     money: money, hours: hours, pct: pct, pctBand: pctBand, clamp: clamp,
+    taskNumbers: taskNumbers, taskNumber: taskNumber,
     debouncedById: debouncedById, trigger: trigger, download: download
   };
 })(window.PMS);

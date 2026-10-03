@@ -9,20 +9,48 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
+  // id -> task number, refreshed on every table paint and read by cellNumber.
+  var numberMap = {};
+
+  // The task's stable number, so a row can be pointed at out loud ("task 12").
+  // The full id sits in the tooltip for anyone who needs to copy it.
+  function cellNumber(row) {
+    var n = numberMap[row.id];
+    return h("span.vt-td-num", {
+      text: n ? "#" + n : "",
+      attrs: { title: row.id }
+    });
+  }
+
   var state = {
     query: {},
     sortKey: "due",
     sortDir: "asc",
     group: "none",
     columns: null,
-    // collapsed task ids (their subtask block is hidden)
+    // Which tasks have their sub-task block folded away. `collapsed` holds only
+    // the tasks the user touched; `defaultCollapsed` decides the rest, so a
+    // sub-task list starts folded without having to write an entry per task.
     collapsed: {},
-    subtasksExpanded: true
+    defaultCollapsed: true
   };
+
+  // A task is folded unless it was explicitly opened. Sub-tasks stay out of the
+  // list until their parent is expanded, which is what keeps a long program from
+  // arriving as one wall of rows.
+  function isCollapsed(id) {
+    var own = state.collapsed[id];
+    return own === undefined ? state.defaultCollapsed : !!own;
+  }
+
+  function setCollapsed(id, collapsed) {
+    state.collapsed[id] = collapsed;
+  }
 
   function defaultColumns() {
     return [
-      { key: "title", label: t("tasks.title"), width: "26%", render: cellTitle, visible: true, sortable: true },
+      { key: "number", label: t("tasks.number"), width: "68px", render: cellNumber, visible: true, sortable: true },
+      { key: "title", label: t("tasks.title"), width: "24%", render: cellTitle, visible: true, sortable: true },
       { key: "project", label: t("tasks.project"), render: cellProject, visible: true, sortable: true },
       { key: "status", label: t("common.status"), render: cellStatus, visible: true, sortable: true },
       { key: "priority", label: t("common.priority"), render: cellPriority, visible: true, sortable: true },
@@ -135,6 +163,9 @@
     var visible = columns.filter(function (c) { return c.visible !== false; });
     var template = visible.map(function (col) { return col.width || "1fr"; }).join(" ");
     var scroll = h("div.vt-scroll", { style: { maxHeight: "calc(100vh - 320px)", minHeight: "300px" } });
+    // Ranked once per paint, not once per cell: the list is virtualized and
+    // recomputes on every scroll tick.
+    numberMap = PMS.utils.taskNumbers(PMS.store.data);
 
     // Header (grid, sticky)
     var head = h("div.vt-head", { style: { gridTemplateColumns: template } });
@@ -181,13 +212,15 @@
       var visual = [];
       function push(task, depth) {
         var kids = childrenOf(task.id).filter(matchesQuery);
-        var isCollapsed = !!state.collapsed[task.id];
+        var collapsed = isCollapsed(task.id);
         visual.push({
           type: "row", row: task, depth: depth,
           height: depth === 0 ? ROW_H : SUB_H,
-          hasKids: kids.length > 0, isCollapsed: isCollapsed, kidCount: kids.length
+          hasKids: kids.length > 0, isCollapsed: collapsed, kidCount: kids.length
         });
-        if (isCollapsed) return;
+        // Folded: the sub-task block is not in the list at all, not just hidden
+        // behind a toggle that has to be found.
+        if (collapsed) return;
         kids.forEach(function (k) { push(k, depth + 1); });
       }
       if (!state.group || state.group === "none") {
@@ -257,7 +290,7 @@
     var depth = item ? item.depth : 0;
     var rowEl = h("div.vt-row" + (depth ? ".vt-row-sub" : "") + (item && item.isCollapsed ? ".vt-row-collapsed" : ""), {
       dataset: { id: row.id, depth: depth },
-      attrs: { title: t("tasks.doubleClickToEdit") }
+      attrs: { title: t("tasks.doubleClickForDetails") }
     });
     if (depth) {
       // guide rail that makes the nesting obvious at a glance
@@ -269,13 +302,12 @@
       else cell.textContent = "";
       rowEl.appendChild(cell);
     });
-    // double click anywhere on the row -> open the FULL task editor
+    // Double click reads the task, it does not edit it. Opening straight into the
+    // editor meant a stray double click on a row you only meant to look at could
+    // start rewriting it; the detail view carries an explicit Edit button, and the
+    // row's own pencil still goes straight to the editor.
     rowEl.addEventListener("dblclick", function () {
-      if (PMS.auth && !PMS.auth.canEditTask(row)) {
-        PMS.toast.show(t("auth.forbidden"), "error");
-        return;
-      }
-      PMS.editors.openTaskEditor(row, {});
+      PMS.taskDetail.open(row.id);
     });
     return rowEl;
   }
@@ -288,7 +320,7 @@
       on: {
         click: function (e) {
           e.stopPropagation();
-          state.collapsed[row.id] = !state.collapsed[row.id];
+          setCollapsed(row.id, !isCollapsed(row.id));
           PMS.router.handle();
         }
       }
@@ -338,12 +370,10 @@
   }
 
   function setAllSubtasks(collapsed) {
+    // Set the default rather than writing an entry per task: the list is long and
+    // the per-task map is only for the ones the user then touches.
+    state.defaultCollapsed = !!collapsed;
     state.collapsed = {};
-    if (collapsed) {
-      PMS.repos.tasks.all().forEach(function (tk) {
-        if (PMS.repos.tasks.children(tk.id).length) state.collapsed[tk.id] = true;
-      });
-    }
     render(currentContainer());
   }
 

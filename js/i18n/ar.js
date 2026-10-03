@@ -137,6 +137,8 @@
       subtasks: "مهام فرعية",
       collapseSubtasks: "طي المهام الفرعية", expandSubtasks: "توسيع المهام الفرعية",
       collapseAllSubtasks: "طي المهام الفرعية", expandAllSubtasks: "توسيع المهام الفرعية",
+      number: "رقم",
+      doubleClickForDetails: "اضغط مرتين على الصف لعرض تفاصيل المهمة ومهامها الفرعية",
       assignees: "إسناد إلى", estimated: "الساعات التقديرية", actual: "الساعات الفعلية",
       createdBy: "أنشأها",
       progress: "نسبة الإنجاز", checklist: "قائمة تحقق", comments: "تعليقات",

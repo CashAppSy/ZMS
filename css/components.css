@@ -506,13 +506,35 @@ table.tbl {
   align-items: center;
   border-block-end: 1px solid var(--border);
 }
+/* One width for the header and every row, so the timeline can never start at a
+   different x per row. */
+.gantt-root { --gantt-label-w: 260px; }
 .gantt-label-col {
-  flex: 0 0 260px;
+  flex: 0 0 var(--gantt-label-w, 260px);
   flex-shrink: 0;
+  /* Column, not row: the title sits above the date range. As a row the two sat
+     side by side, and because a nowrap flex item refuses to shrink below its own
+     text width, a long title pushed the dates out and spilled past the divider
+     into the timeline - which is what made the column look ragged row to row. */
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
   padding-inline-end: var(--space-3);
+}
+/* min-width:0 lets the ellipsis actually engage inside the fixed-width cell. */
+.gantt-label-col > * { min-width: 0; max-width: 100%; }
+.gantt-label-title {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600;
+}
+.gantt-label-dates {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.7rem; line-height: 1.2;
 }
 .gantt-time-col { position: relative; flex: 1; height: 100%; }
 .gantt-bar {
@@ -528,9 +550,12 @@ table.tbl {
   font-size: 0.7rem;
   color: #fff;
   overflow: hidden;
-  user-select: none;
+  /* Long titles fade out with an ellipsis instead of being sliced mid-letter. */
   white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
 }
+.gantt-bar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gantt-row-sub .gantt-label-col { color: var(--text-muted); }
 .gantt-bar-sub { opacity: 0.55; }
 .gantt-bar.resizing { cursor: ew-resize; }

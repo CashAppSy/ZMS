@@ -78,6 +78,20 @@
   margin-block-end: 3px;
 }
 .project-tree-row:hover { background: var(--bg-hover); border-color: var(--border); }
+/* Disclosure arrow for the work nested under a task on a pillar page. Shares the
+   virtual table's chevron styling so the two lists feel like one control. */
+.pt-twisty {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 auto;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 0.7rem; line-height: 1; cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.pt-twisty:hover { background: var(--primary-soft); color: var(--primary); }
+.pt-twisty:not(.open) { transform: rotate(-90deg); }
+.pt-twisty-leaf { border: none; background: none; color: var(--text-faint); cursor: default; }
+.pt-twisty-leaf:hover { background: none; color: var(--text-faint); }
 
 /* ---------- Project detail header ---------- */
 .project-hero { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-start; }
@@ -260,6 +274,16 @@ html[dir="rtl"] .switch input:checked + .slider::before { transform: translateX(
 .vt-twisty-leaf { border: none; background: none; color: var(--text-faint); cursor: default; }
 .vt-td { padding: 8px 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .vt-td, .vt-td > * { min-width: 0; }
+/* The task number anchors the left edge, so it gets a fixed slot and tabular
+   figures: right-aligned digits line up instead of jittering per row. */
+.vt-td-num {
+  display: block;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: default;
+}
 .vt-group {
   position: absolute; inset-inline: 0;
   display: flex; align-items: center;
