@@ -185,6 +185,8 @@ const root = () => document.getElementById("view-root");
   const depB = PMS.repos.tasks.add({ title: "depB", status: "todo", projectId: "P1", dependencies: [depA.id] });
   PMS.repos.tasks.remove(depA.id);
   ok("task removal cleans dependencies", PMS.repos.tasks.get(depB.id).dependencies.length === 0);
+  ok("a bare id dependency still reads after the cleanup",
+    PMS.dependencies.predecessors(PMS.repos.tasks.get(depB.id)).length === 0);
 
   const pk = PMS.repos.people.add({ name: "Doomed", email: "bad", departmentId: null });
   PMS.repos.people.archive(pk.id);
@@ -248,7 +250,168 @@ const root = () => document.getElementById("view-root");
   const mig = PMS.migrations.migrate(old);
   ok("migrations.migrate safe on old data", mig && Array.isArray(mig.departments) && typeof mig.schemaVersion === "number");
   ok("migrations 1 -> 2 add meetings + task link/meeting fields",
-    mig.schemaVersion === 2 && Array.isArray(mig.meetings) && Array.isArray(mig.tasks[0].linkedTaskIds) && mig.tasks[0].meetingId === null);
+    mig.schemaVersion === PMS.migrations.CURRENT && Array.isArray(mig.meetings) && Array.isArray(mig.tasks[0].linkedTaskIds) && mig.tasks[0].meetingId === null);
+
+  // a v2 store holds bare predecessor ids, which could only ever mean FS
+  const v2 = PMS.migrations.migrate({
+    schemaVersion: 2,
+    tasks: [{ id: "a", title: "A" }, { id: "b", title: "B", dependencies: ["a", "a"] }]
+  });
+  ok("migrations 2 -> 3 give every dependency a type and a lag",
+    v2.schemaVersion === PMS.migrations.CURRENT &&
+    v2.tasks[1].dependencies.length === 1 &&
+    v2.tasks[1].dependencies[0].id === "a" &&
+    v2.tasks[1].dependencies[0].type === "FS" &&
+    v2.tasks[1].dependencies[0].lag === 0,
+    JSON.stringify(v2.tasks[1].dependencies));
+  ok("a task with no dependencies ends up with an empty list, not undefined",
+    Array.isArray(v2.tasks[0].dependencies) && v2.tasks[0].dependencies.length === 0);
+
+  // ---- the task network: typed links, waiting, and the critical path --------
+  section("dependencies");
+  const DD = PMS.dependencies;
+  const task = (id, s, e, deps) => ({ id: id, title: id, startDate: s, dueDate: e, dependencies: deps || [], status: "todo" });
+  const net = (...tasks) => ({ tasks: tasks });
+  const D1 = "2026-01-01", D2 = "2026-01-02", D3 = "2026-01-03", D4 = "2026-01-04", D5 = "2026-01-05", D6 = "2026-01-06";
+
+  // duration is counted in whole days with both ends counted, the way a bar is drawn
+  ok("a task lasting one day measures 1", DD.durationDays(task("x", D1, D1)) === 1);
+  ok("a task spanning three days measures 3", DD.durationDays(task("x", D1, D3)) === 3);
+  ok("a task with no dates still occupies a slot", DD.durationDays(task("x", null, null)) === 1);
+  ok("a task with one date still occupies a slot", DD.durationDays(task("x", D3, null)) === 1);
+
+  // the old shape still reads
+  ok("a bare id reads as finish-to-start with no lag",
+    DD.norm("a").type === "FS" && DD.norm("a").lag === 0 && DD.norm("a").id === "a");
+  ok("an unknown type falls back to FS rather than breaking the network",
+    DD.norm({ id: "a", type: "ZZ" }).type === "FS");
+  ok("a lag is kept as whole days, negatives included",
+    DD.norm({ id: "a", lag: 2.4 }).lag === 2 && DD.norm({ id: "a", lag: -3 }).lag === -3);
+  ok("junk entries are dropped instead of becoming empty links",
+    DD.normList([null, "", {}, 7, { id: "a" }]).length === 1);
+  ok("one link per pair of tasks, first mention wins",
+    DD.normList([{ id: "a", type: "FF" }, { id: "a", type: "SS" }]).length === 1 &&
+    DD.normList([{ id: "a", type: "FF" }, { id: "a", type: "SS" }])[0].type === "FF");
+
+  // FS chain A -> B -> C: every task on the only chain, so every one is critical
+  const fsChain = net(
+    task("A", D1, D3),                                  // 3 days
+    task("B", D4, D5, [{ id: "A", type: "FS", lag: 0 }]),   // 2 days
+    task("C", D2, D2, [{ id: "B", type: "FS", lag: 0 }])    // 1 day
+  );
+  const fsR = DD.analyze(fsChain);
+  ok("a straight chain is 6 days long", fsR.length === 6, "length " + fsR.length);
+  ok("every task on the only chain is critical", DD.isCritical(fsR, "A") && DD.isCritical(fsR, "B") && DD.isCritical(fsR, "C"));
+  ok("a task on the chain has no slack", DD.slackOf(fsR, "B") === 0);
+  ok("the chain is not reported as looping", fsR.cyclic === false);
+
+  // an unrelated task has slack and is not critical
+  const withFree = DD.analyze(net(fsChain.tasks[0], fsChain.tasks[1], fsChain.tasks[2],
+    task("D", D1, D1)));
+  ok("a task on no chain is not critical", !DD.isCritical(withFree, "D"));
+  ok("a task on no chain keeps its float", DD.slackOf(withFree, "D") === 5, "slack " + DD.slackOf(withFree, "D"));
+
+  // the four types must not quietly behave like FS
+  const typeNet = (type) => DD.analyze(net(
+    task("A", D1, D3),                        // ES 0, EF 3, 3 days
+    task("B", D2, D3, [{ id: "A", type: type, lag: 0 }])  // 2 days
+  ));
+  ok("FS puts the successor's start at the predecessor's finish", DD.analyze(net(task("A", D1, D3), task("B", D2, D3, [{ id: "A", type: "FS" }]))).es.B === 3);
+  ok("SS lets the successor start with the predecessor", typeNet("SS").es.B === 0, "es " + typeNet("SS").es.B);
+  ok("FF lines the finishes up, not the starts", typeNet("FF").es.B === 1, "es " + typeNet("FF").es.B);
+  ok("FS and FF keep both tasks on the critical path",
+    ["FS", "FF"].every(x => DD.isCritical(typeNet(x), "A") && DD.isCritical(typeNet(x), "B")));
+  // Under SS the successor starts with the predecessor, so its own length is
+  // free at the end and it carries slack. Calling that critical would put the
+  // whole list on the critical path and say nothing.
+  ok("SS leaves the successor with slack, so only the predecessor is critical",
+    DD.isCritical(typeNet("SS"), "A") && !DD.isCritical(typeNet("SS"), "B"),
+    "slack " + DD.slackOf(typeNet("SS"), "B"));
+
+  // SF ties the successor's FINISH to the predecessor's START, so it only bites
+  // once the predecessor has been pushed out by something else. Against a
+  // predecessor that starts at day zero the constraint is already satisfied and
+  // says nothing - which is why it needs its own fixture here.
+  const sfNet = DD.analyze(net(
+    task("R", D1, D3),                                        // 3 days
+    task("A", D2, D2, [{ id: "R", type: "FS", lag: 0 }]),      // starts at day 3
+    task("B", D2, D3, [{ id: "A", type: "SF", lag: 0 }])       // must finish with A's start
+  ));
+  ok("SF puts the successor's finish at the predecessor's start", sfNet.ef.B === 3, "ef " + sfNet.ef.B);
+  ok("SF is not FS: the same pair starts earlier under SF than under FS", sfNet.es.B === 1, "es " + sfNet.es.B);
+  ok("a predecessor sitting at day zero leaves an SF link slack", typeNet("SF").es.B === 0, "es " + typeNet("SF").es.B);
+
+  // a lag pushes the successor back
+  ok("a lag of 3 days pushes the start out by 3", DD.analyze(net(
+    task("A", D1, D2), task("B", D1, D2, [{ id: "A", type: "FS", lag: 3 }])
+  )).es.B === 5);
+  ok("a negative lag overlaps the two tasks", DD.analyze(net(
+    task("A", D1, D3), task("B", D1, D2, [{ id: "A", type: "FS", lag: -2 }])
+  )).es.B === 1, "es " + DD.analyze(net(task("A", D1, D3), task("B", D1, D2, [{ id: "A", type: "FS", lag: -2 }]))).es.B);
+
+  // a link naming a task that is gone is a leftover, not an edge to wait on
+  ok("a link to a deleted task is not an edge", DD.edges(net(task("B", D1, D2, [{ id: "gone", type: "FS" }]))).length === 0);
+  ok("a task waiting on a deleted predecessor is not blocked by it", DD.blocking(net(task("B", D1, D2, [{ id: "gone" }])), task("B", D1, D2, [{ id: "gone" }])).length === 0);
+
+  // a loop has no longest path, so no task may be called critical
+  const looped = DD.analyze(net(
+    task("A", D1, D2, [{ id: "B", type: "FS" }]),
+    task("B", D1, D2, [{ id: "A", type: "FS" }])
+  ));
+  ok("a loop in the network is reported, not silently analysed", looped.cyclic === true);
+  ok("no task is called critical while the network loops", Object.keys(looped.critical).length === 0 && !DD.isCritical(looped, "A"));
+  ok("float is withheld while the network loops", DD.slackOf(looped, "A") === null);
+
+  // ---- writing links ------------------------------------------------------
+  PMS.store.setData(PMS.seed.build());
+  const netA = PMS.repos.tasks.add({ title: "dep A", status: "todo", startDate: D1, dueDate: D3 });
+  const netB = PMS.repos.tasks.add({ title: "dep B", status: "todo", startDate: D4, dueDate: D4 });
+  ok("a task starts with no dependencies", Array.isArray(netA.dependencies) && netA.dependencies.length === 0);
+  ok("a typed link is stored with its type and lag",
+    PMS.repos.tasks.addDependency(netB.id, netA.id, "SS", 2).type === "SS" &&
+    PMS.repos.tasks.dependenciesOf(netB.id)[0].lag === 2);
+  ok("a task's dependencies are readable", PMS.repos.tasks.dependenciesOf(netB.id).length === 1);
+  ok("the reverse direction finds who waits on a task", PMS.repos.tasks.dependentsOf(netA.id).some(d => d.task.id === netB.id));
+  ok("a task cannot wait on itself", PMS.repos.tasks.addDependency(netA.id, netA.id, "FS").error === "self");
+  ok("an unknown type is refused", PMS.repos.tasks.addDependency(netB.id, netA.id, "ZZ").error === "type");
+  ok("re-linking the same pair replaces it instead of stacking a second constraint",
+    PMS.repos.tasks.addDependency(netB.id, netA.id, "FF", 0).type === "FF" && PMS.repos.tasks.dependenciesOf(netB.id).length === 1);
+  ok("a link that would close a loop is refused",
+    PMS.repos.tasks.addDependency(netA.id, netB.id, "FS").error === "cycle");
+  ok("a refused loop leaves the network alone", PMS.repos.tasks.dependenciesOf(netA.id).length === 0);
+  ok("the loop check is available before writing", PMS.repos.tasks.wouldCycle(netA.id, netB.id) === true);
+  ok("removing a link takes it out", PMS.repos.tasks.removeDependency(netB.id, netA.id) === true && PMS.repos.tasks.dependenciesOf(netB.id).length === 0);
+  ok("removing a link that is not there reports so", PMS.repos.tasks.removeDependency(netB.id, netA.id) === false);
+
+  // deleting a predecessor takes the links pointing at it with it
+  PMS.repos.tasks.addDependency(netB.id, netA.id, "FS", 0);
+  PMS.repos.tasks.remove(netA.id);
+  ok("deleting a predecessor clears the links that named it", PMS.repos.tasks.dependenciesOf(netB.id).length === 0);
+
+  // ---- waiting ------------------------------------------------------------
+  PMS.store.setData(PMS.seed.build());
+  const gate = PMS.repos.tasks.add({ title: "gate", status: "todo" });
+  const waiter = PMS.repos.tasks.add({ title: "waiter", status: "todo" });
+  PMS.repos.tasks.addDependency(waiter.id, gate.id, "FS", 0);
+  ok("a task with an unfinished predecessor is blocked", DD.isBlocked(PMS.store.data, waiter) === true);
+  ok("the blocking predecessor is named", DD.blocking(PMS.store.data, waiter)[0].task.id === gate.id);
+  ok("a task with no predecessors is not blocked", DD.isBlocked(PMS.store.data, gate) === false);
+  PMS.repos.tasks.setStatus(gate.id, "done");
+  ok("finishing the predecessor clears the block", DD.isBlocked(PMS.store.data, waiter) === false);
+  ok("blocked-by-empty work is not blocked", DD.blocking(PMS.store.data, waiter).length === 0);
+
+  // a link kept or broken against the dates on the bars
+  const early = { startDate: D1, dueDate: D2 };
+  const late = { startDate: D3, dueDate: D4 };
+    ok("FS is satisfied when the successor starts after the predecessor ends",
+    DD.isSatisfied({ type: "FS", lag: 0 }, early, late) === true,
+    "got " + DD.isSatisfied({ type: "FS", lag: 0 }, early, late) + " early=" + JSON.stringify(early) + " late=" + JSON.stringify(late));
+  ok("FS is broken when the successor starts before the predecessor ends",
+    DD.isSatisfied({ type: "FS", lag: 0 }, late, early) === false);
+  ok("a link with no dates to judge is left undecided",
+    DD.isSatisfied({ type: "FS", lag: 0 }, {}, { startDate: D1, dueDate: D2 }) === null);
+  ok("the cached analysis agrees with a fresh one",
+    DD.analyzeCached(PMS.store.data).length === DD.analyze(PMS.store.data).length);
 
   // i18n parity
   const walkKeys = (obj, pre) => Object.keys(obj || {}).reduce((acc, k) => {

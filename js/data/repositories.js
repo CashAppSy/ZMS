@@ -220,6 +220,27 @@
     return record;
   }
 
+  // Writes one dependency link into place. Module level because both
+  // addDependency and setDependency need it and a repo method cannot call its
+  // neighbour by bare name. Keeping the pair down to one link is the point:
+  // the type describes the two tasks, so a second entry would be two
+  // contradictory constraints rather than a stricter one.
+  // The type is checked BEFORE normalizing, and that order matters: norm() folds
+  // an unknown type to FS so that old or hand-edited data still draws, which
+  // would make a check on the normalized value true forever.
+  function writeDependency(taskId, predecessorId, type, lag) {
+    var t = find("tasks", taskId);
+    if (!t) return { error: "notfound" };
+    if (type !== undefined && type !== null && type !== "" && !PMS.dependencies.isType(type)) {
+      return { error: "type" };
+    }
+    var dep = PMS.dependencies.norm({ id: predecessorId, type: type, lag: lag });
+    var kept = PMS.dependencies.predecessors(t).filter(function (d) { return d.id !== predecessorId; });
+    kept.push(dep);
+    update("tasks", taskId, { dependencies: kept });
+    return dep;
+  }
+
   function update(collection, id, patch) {
     var record = find(collection, id);
     if (!record) return null;
@@ -351,6 +372,10 @@
         obj.parentTaskId = obj.parentTaskId || null;
         obj.meetingId = obj.meetingId || null;
         if (!Array.isArray(obj.linkedTaskIds)) obj.linkedTaskIds = [];
+        // dependencies are links with a type and a lag; a bare id list is
+        // accepted on input and normalized once, here, so nothing downstream has
+        // to cope with both shapes.
+        obj.dependencies = PMS.dependencies.normList(obj.dependencies);
         // `priority` is the single importance field; a stale `importance` from
         // before that cleanup is folded in, then dropped.
         var levels = (PMS.programProgress && PMS.programProgress.IMPORTANCE_LEVELS) || ["low", "medium", "high", "urgent"];
@@ -449,8 +474,11 @@
             d.subtasks = d.subtasks.filter(function (s) { return toDelete.indexOf(s.taskId) === -1; });
           }
           d.tasks.forEach(function (t) {
+            // links naming a deleted task are dropped. The entry is {id,type,lag}
+            // now, but older files hold bare ids and both are read here.
             t.dependencies = (t.dependencies || []).filter(function (dep) {
-              return toDelete.indexOf(dep) === -1;
+              var id = typeof dep === "string" ? dep : (dep && (dep.id || dep.taskId));
+              return id && toDelete.indexOf(id) === -1;
             });
             // task-to-task links pointing at a deleted task are dropped too
             t.linkedTaskIds = (t.linkedTaskIds || []).filter(function (lid) {
@@ -469,6 +497,64 @@
       },
       forMeeting: function (meetingId) {
         return visible("tasks").filter(function (t) { return t.meetingId === meetingId; });
+      },
+      // ---- typed dependencies: what this task waits on, and what waits on it --
+      //
+      // These are deliberately separate from linkedTaskIds. A link is "these two
+      // are related"; a dependency is an ordering constraint that the schedule
+      // and the critical path have to obey, so it is directed, typed, and
+      // checked for loops.
+      dependenciesOf: function (taskId) {
+        var t = findVisible("tasks", taskId);
+        return PMS.dependencies.predecessors(t);
+      },
+      dependentsOf: function (taskId) {
+        return PMS.dependencies.successors(PMS.store.data, taskId).filter(function (s) {
+          return findVisible("tasks", s.task.id) !== null;
+        });
+      },
+      // Link `predecessorId` in front of `taskId`. Refuses a task depending on
+      // itself and any link that would close a loop: a cycle has no earliest
+      // start, so it would leave the whole network unanalysable rather than
+      // just this task wrong.
+      addDependency: function (taskId, predecessorId, type, lag) {
+        var t = find("tasks", taskId);
+        var p = find("tasks", predecessorId);
+        if (!t || !p) return { error: "notfound" };
+        if (taskId === predecessorId) return { error: "self" };
+        var dep = PMS.dependencies.norm({ id: predecessorId, type: type, lag: lag });
+        var current = PMS.dependencies.predecessors(t);
+        // Re-linking an existing pair is how its type or lag gets changed, and
+        // it cannot loop anything: the edge is already there.
+        if (current.some(function (d) { return d.id === predecessorId; })) {
+          return writeDependency(taskId, predecessorId, type, lag);
+        }
+        // taskId already waits on predecessorId further down the chain, so
+        // pointing it back at predecessorId closes a loop. This has to be the
+        // whole chain, not the direct links: A waits on B and B waits on C, so
+        // making C wait on A is just as much a loop as A waiting on C directly.
+        if (PMS.dependencies.reaches(PMS.store.data, taskId, predecessorId)) {
+          return { error: "cycle" };
+        }
+        return writeDependency(taskId, predecessorId, type, lag);
+      },
+      setDependency: function (taskId, predecessorId, type, lag) {
+        return writeDependency(taskId, predecessorId, type, lag);
+      },
+      removeDependency: function (taskId, predecessorId) {
+        var t = find("tasks", taskId);
+        if (!t) return false;
+        var kept = PMS.dependencies.predecessors(t).filter(function (d) { return d.id !== predecessorId; });
+        if (kept.length === PMS.dependencies.predecessors(t).length) return false;
+        update("tasks", taskId, { dependencies: kept });
+        return true;
+      },
+      // Would linking predecessor -> task close a loop? Checked before the
+      // write and re-checked over the stored data, so the editor can grey the
+      // option out instead of only reporting the refusal afterwards.
+      wouldCycle: function (taskId, predecessorId) {
+        if (taskId === predecessorId) return true;
+        return PMS.dependencies.reaches(PMS.store.data, taskId, predecessorId);
       },
       // task-to-task links (symmetric stored one-way: A lists B)
       linksOf: function (taskId) {

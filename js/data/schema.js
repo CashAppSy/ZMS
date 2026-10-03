@@ -66,5 +66,5 @@
     };
   }
 
-  PMS.schema = { VERSION: 2, defaultData: defaultData, stub: stub };
+  PMS.schema = { VERSION: 3, defaultData: defaultData, stub: stub };
 })(window.PMS);

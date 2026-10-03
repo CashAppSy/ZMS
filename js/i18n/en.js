@@ -209,6 +209,24 @@
     calendar: {
       title: "Calendar", month: "Month", week: "Week", dayEvents: "tasks"
     },
+    deps: {
+      title: "Dependencies",
+      typeFS: "Finish to start", typeFF: "Finish to finish",
+      typeSS: "Start to start", typeSF: "Start to finish",
+      typeLabel: "Type", lag: "Lag", lagDays: "days",
+      lagHint: "Days to wait past the constraint. Negative overlaps the two tasks.",
+      predecessor: "Waits for", successor: "Waiting on it",
+      add: "Add a dependency", none: "No dependencies",
+      critical: "Critical path",
+      criticalHint: "On the critical path — a delay here moves the end of the program",
+      slack: "Slack", slackDays: "slack", blocked: "Blocked", blockedBy: "Blocked by",
+      broken: "Scheduled before its predecessor finishes",
+      cycleRefused: "That link would loop back on itself",
+      selfRefused: "A task cannot wait on itself",
+      showCritical: "Critical path", showBlocked: "Blocked only",
+      preds: "waits for", succs: "blocks",
+      chain: "chain"
+    },
     people: {
       title: "People", departments: "Departments", people: "People",
       name: "Name", jobTitle: "Job title", department: "Department",

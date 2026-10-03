@@ -204,6 +204,24 @@
       from: "من", due: "استحقاق", noDate: "بدون تواريخ"
     },
     calendar: { title: "التقويم", month: "شهري", week: "أسبوعي", dayEvents: "مهمة" },
+    deps: {
+      title: "الاعتماديات",
+      typeFS: "من الانتهاء إلى البدء", typeFF: "من الانتهاء إلى الانتهاء",
+      typeSS: "من البدء إلى البدء", typeSF: "من البدء إلى الانتهاء",
+      typeLabel: "النوع", lag: "المهلة", lagDays: "يوم",
+      lagHint: "أيام الانتظار بعد الشرط. القيمة السالبة تعني تداخل المهامتين.",
+      predecessor: "ينتظر", successor: "ينتظره",
+      add: "إضافة اعتمادية", none: "لا توجد اعتماديات",
+      critical: "المسار الحرج",
+      criticalHint: "ضمن المسار الحرج — أي تأخير هنا يؤخر نهاية البرنامج",
+      slack: "هامش", slackDays: "هامش", blocked: "معطّلة", blockedBy: "معطّلة بواسطة",
+      broken: "مجدولة قبل انتهاء مقدمةها",
+      cycleRefused: "هذا الربط سيُنشئ حلقة مغلقة",
+      selfRefused: "لا يمكن للمهمة أن تنتظر نفسها",
+      showCritical: "المسار الحرج", showBlocked: "المعطّلة فقط",
+      preds: "ينتظر", succs: "يعطّل",
+      chain: "سلسلة"
+    },
     people: {
       title: "الأشخاص", departments: "الأقسام", people: "الأشخاص",
       name: "الاسم", jobTitle: "المسمى الوظيفي", department: "القسم",
