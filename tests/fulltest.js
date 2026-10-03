@@ -1205,6 +1205,61 @@ const root = () => document.getElementById("view-root");
     c.remove();
     return folded && hasArrow && opened;
   })());
+  ok("clicking a pillar task opens its sub-tasks in place", (function () {
+    // Clicking a task used to jump to the task table filtered to that one row.
+    // That threw away the pillar the user was reading, and since everything here
+    // starts folded it dropped them on a list with the sub-tasks hidden too.
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.forProject(p2.id)[0];
+    PMS.repos.subtasks.add({ taskId: t.id, title: "click-open marker", status: "todo" });
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    const before = PMS.router.current;
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    const row = c.querySelector('.project-tree-row[data-id="' + t.id + '"]');
+    if (row) row.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }));
+    const txt = c.textContent || "";
+    c.remove();
+    return !!row && txt.indexOf("click-open marker") > -1 && txt.indexOf(t.title) > -1 && PMS.router.current === before;
+  })());
+  ok("a second click folds the pillar task back up", (function () {
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.forProject(p2.id)[0];
+    PMS.repos.subtasks.add({ taskId: t.id, title: "click-open marker", status: "todo" });
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    c.querySelector('.project-tree-row[data-id="' + t.id + '"]').dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }));
+    c.querySelector('.project-tree-row[data-id="' + t.id + '"]').dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }));
+    const txt = c.textContent || "";
+    c.remove();
+    return txt.indexOf("click-open marker") === -1;
+  })());
+  ok("double clicking a pillar task opens its details, not a filter", (function () {
+    PMS.store.setData(PMS.seed.build());
+    const p2 = PMS.repos.projects.all()[0];
+    const t = PMS.repos.tasks.forProject(p2.id)[0];
+    PMS.repos.subtasks.add({ taskId: t.id, title: "detail marker", status: "todo" });
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    PMS.registry.getView("projects").render(c, { id: p2.id });
+    let openedId = null;
+    const realOpen = PMS.taskDetail.open;
+    PMS.taskDetail.open = function (id) { openedId = id; };
+    // A real double click arrives as click(detail 1), click(detail 2), dblclick.
+    // The second click must not be treated as another fold, or the pair would
+    // open and shut the row and repaint the page twice on the way to the detail.
+    const row = c.querySelector('.project-tree-row[data-id="' + t.id + '"]');
+    row.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }));
+    row.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 2 }));
+    row.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    PMS.taskDetail.open = realOpen;
+    const stillOnPillar = (c.textContent || "").indexOf("detail marker") > -1;
+    c.remove();
+    return openedId === t.id && stillOnPillar;
+  })());
   ok("a pillar lists every one of its own tasks, children included", (function () {
     PMS.store.setData(PMS.seed.build());
     const p2 = PMS.repos.projects.all()[0];
@@ -1522,6 +1577,23 @@ const root = () => document.getElementById("view-root");
   const subRowSel = ".vt-row-sub";
   // Folded to begin with: the sub-task block is not in the list at all.
   ok("sub-tasks stay out of the list until the parent is expanded", root().querySelectorAll(subRowSel).length === 0);
+
+  // ...and they have to leave the list, not be re-homed. Promoting a folded
+  // sub-task to a row of its own made every folded child read as a top-level
+  // task, which is the opposite of what folding is for. Counting rendered rows
+  // cannot see it either way: the list is virtualized, so a promoted row lands at
+  // the end of the model and sits outside the window. The scroll height is the
+  // one number that accounts for every row, scrolled to or not.
+  const shownTasks = () => Array.from(root().querySelectorAll(".vt-row")).map(r => PMS.repos.tasks.get(r.dataset.id)).filter(Boolean);
+  const shownIds = {};
+  shownTasks().forEach(t => { shownIds[t.id] = true; });
+  ok("a folded sub-task is never re-listed as a top-level task",
+    shownTasks().every(t => !t.parentTaskId || !shownIds[t.parentTaskId]),
+    shownTasks().filter(t => t.parentTaskId && shownIds[t.parentTaskId]).map(t => t.title).slice(0, 3).join(" | "));
+  const foldedTopLevel = PMS.repos.tasks.all().filter(t => !t.parentTaskId).length;
+  ok("the folded list is exactly the top-level tasks, no extra rows",
+    parseFloat(root().querySelector(".vt-body").style.height) === foldedTopLevel * 44,
+    "height " + root().querySelector(".vt-body").style.height + " for " + foldedTopLevel + " top-level tasks");
 
   // Every row leads with a unique number, so a task can be named out loud.
   const headCells = Array.from(root().querySelectorAll(".vt-head .vt-th")).map(c => ((c.querySelector("span") || {}).textContent || "").trim());
@@ -2850,7 +2922,21 @@ section("Meeting creator + file attachments + member scoping + people/sections")
   ok("scopedData() narrows the meeting array for a member", PMS.repos.scopedData().meetings.length === PMS.repos.meetings.all().length);
   ok("scopedData() leaves the other collections intact", PMS.repos.scopedData().projects.length === PMS.store.data.projects.length);
   const lvDashText = (function () { route("/dashboard"); return root().textContent || ""; })();
-  ok("the member's dashboard counts only the visible tasks", lvDashText.indexOf(String(visibleTasks.length)) !== -1, "expected " + visibleTasks.length + " on screen");
+  // A member is not allowed to open the dashboard at all (ROLE_ROUTES), so the
+  // router turns them away and paints their own home view. The old check here
+  // read the landing page and looked for the number in it, which meant it was
+  // really asserting that some digit appeared somewhere in the task table - it
+  // passed or failed on a coincidence, not on the leak it claimed to test. The
+  // leak is proved against the page the member actually gets.
+  ok("a member is turned away from the dashboard", PMS.router.current !== "/dashboard", "landed on " + PMS.router.current);
+  const scopeHiddenIds = PMS.store.data.tasks.filter(tsk => !visibleTasks.some(v => v.id === tsk.id)).map(tsk => tsk.id);
+  ok("no hidden task id reaches the member's page", scopeHiddenIds.every(id => root().innerHTML.indexOf(id) === -1),
+    scopeHiddenIds.filter(id => root().innerHTML.indexOf(id) !== -1).slice(0, 3).join(","));
+  const memberRowIds = Array.prototype.slice.call(root().querySelectorAll(".vt-row")).map(el => el.dataset.id).filter(Boolean);
+  ok("the member's task list is drawn from visible tasks only", memberRowIds.length > 0 && memberRowIds.every(id => visibleTasks.some(v => v.id === id)),
+    memberRowIds.filter(id => !visibleTasks.some(v => v.id === id)).slice(0, 3).join(","));
+  ok("the member's task list never shows more rows than they have tasks", memberRowIds.length <= visibleTasks.length,
+    memberRowIds.length + " rows for " + visibleTasks.length + " tasks");
   ok("the member's dashboard never shows the full store count", adminTasks === visibleTasks.length || lvDashText.indexOf(adminTasks + " " + PMS.i18n.t("dashboard.totalTasks")) === -1);
   ok("the member's dashboard still renders", lvDashText.length > 0);
   const lvReportText = (function () { route("/reports"); return root().textContent || ""; })();

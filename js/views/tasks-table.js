@@ -223,11 +223,17 @@
         if (collapsed) return;
         kids.forEach(function (k) { push(k, depth + 1); });
       }
+      // A sub-task with no parent here (filtered out, or in another view's data)
+      // still needs to be visible, so it is promoted to a row of its own. The test
+      // is whether the parent exists at all, NOT whether the parent emitted it: a
+      // collapsed parent deliberately emits nothing, and promoting its kids would
+      // defeat the fold and re-list them as top-level tasks.
+      var present = {};
+      dataRows.forEach(function (r) { present[r.id] = true; });
       if (!state.group || state.group === "none") {
         dataRows.filter(function (r) { return !r.parentTaskId; }).forEach(function (r) { push(r, 0); });
-        // orphans (parent filtered out) still need to be visible
         dataRows.filter(function (r) { return !!r.parentTaskId; }).forEach(function (r) {
-          if (!visual.some(function (v) { return v.row.id === r.id; })) push(r, 0);
+          if (!present[r.parentTaskId]) push(r, 0);
         });
       } else {
         var groups = {};
@@ -239,7 +245,7 @@
           visual.push({ type: "group", label: g, height: GROUP_H });
           groups[g].filter(function (r) { return !r.parentTaskId; }).forEach(function (r) { push(r, 0); });
           groups[g].filter(function (r) { return !!r.parentTaskId; }).forEach(function (r) {
-            if (!visual.some(function (v) { return v.row.id === r.id; })) push(r, 0);
+            if (!present[r.parentTaskId]) push(r, 0);
           });
         });
       }

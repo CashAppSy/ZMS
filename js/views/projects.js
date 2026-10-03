@@ -445,14 +445,30 @@
       row.appendChild(h("span.progress-label", { text: PMS.utils.pct(PP.taskProgress(data, tsk)) }));
       row.appendChild(PMS.vformat.priorityBadge(tsk.priority));
 
-      // Single click jumps to the task in the full table, as it always has.
-      row.addEventListener("click", function () {
-        PMS.router.navigate("/tasks?highlight=" + tsk.id);
+      // Clicking a task opens the work underneath it in place. It used to jump
+      // to the task table filtered to this one row, which threw away the pillar
+      // context the user was reading and - since every task here starts folded -
+      // landed them on a list where the sub-tasks were hidden too.
+      //
+      // A real double click fires click, click, dblclick. e.detail counts the
+      // clicks, so the second click is ignored here and the pair is left to the
+      // dblclick handler below; otherwise the row would fold and unfold itself
+      // twice and repaint the page on the way to opening the detail.
+      row.addEventListener("click", function (e) {
+        if (e.detail > 1) return;
+        if (!hasKids) return;
+        openTasks[tsk.id] = !isOpen(tsk.id);
+        renderDetail(container, projectId);
       });
-      // Double click reads the task itself, in place, rather than sending the
-      // user off to a filter and making them hunt for the row again.
+      // Double click reads the task itself, in place, and leaves the nesting open
+      // so the detail is shown with the work under it, not folded away.
       row.addEventListener("dblclick", function (e) {
+        e.preventDefault();
         e.stopPropagation();
+        if (hasKids && !isOpen(tsk.id)) {
+          openTasks[tsk.id] = true;
+          renderDetail(container, projectId);
+        }
         PMS.taskDetail.open(tsk.id);
       });
       return row;
