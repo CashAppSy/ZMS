@@ -155,6 +155,26 @@
     return list(collection).find(function (x) { return x.id === id; }) || null;
   }
 
+  // Tell the user a `done` was refused, and name what is still open so they can
+  // go and finish it. A count alone ("3 sub-tasks open") leaves the user hunting
+  // for which three; listing the first few titles answers it on the spot. Kept
+  // here because both refusing paths (update and setStatus) must say the same
+  // thing, whichever screen the change came from.
+  function warnNotDone(check) {
+    if (!PMS.toast) return;
+    var titles = (check.titles || []).filter(Boolean);
+    var msg = PMS.i18n.t("projects.subtaskNotDone", { n: check.open });
+    if (titles.length) {
+      // Name the first few so the user can go straight to them, and say how many
+      // are left out so the list never reads as the whole story.
+      var shown = titles.slice(0, 3).join(", ");
+      var rest = titles.length - 3;
+      msg += " " + PMS.i18n.t("projects.subtaskNotDoneList", { names: shown });
+      if (rest > 0) msg += " " + PMS.i18n.t("projects.subtaskNotDoneMore", { n: rest });
+    }
+    PMS.toast.show(msg, "error");
+  }
+
   // Members only ever see their own work: the tasks assigned to them (or made
   // by them) and the meetings they attended (or created). Managers and admins
   // see everything.
@@ -376,7 +396,7 @@
             var doneCheck = PMS.programProgress.canMarkTaskDone(PMS.store.data, target);
             if (!doneCheck.ok) {
               // Warn here too: a full task edit reaches this path, not setStatus.
-              if (PMS.toast) PMS.toast.show(PMS.i18n.t("projects.subtaskNotDone", { n: doneCheck.open }), "error");
+              warnNotDone(doneCheck);
               return { error: doneCheck.reason, open: doneCheck.open, titles: doneCheck.titles };
             }
           }
@@ -392,7 +412,7 @@
         if (status === "done") {
           var check = PMS.programProgress.canMarkTaskDone(PMS.store.data, rec);
           if (!check.ok) {
-            if (PMS.toast) PMS.toast.show(PMS.i18n.t("projects.subtaskNotDone", { n: check.open }), "error");
+            warnNotDone(check);
             // Same shape as a refused update(), so callers only test `.error`.
             return { error: check.reason, open: check.open, titles: check.titles };
           }

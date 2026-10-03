@@ -783,6 +783,86 @@ const root = () => document.getElementById("view-root");
     // 2 of 4 units finished.
     return near(PP.taskProgress(d, d.tasks[0]), 22.45, 0.001);
   })());
+  ok("an open child task also holds the parent's done", (function () {
+    const d = {
+      settings: {},
+      tasks: [
+        { id: "gp", title: "parent", status: "inprogress" },
+        { id: "gk1", title: "closed breakdown", parentTaskId: "gp", status: "done" },
+        { id: "gk2", title: "open breakdown", parentTaskId: "gp", status: "inprogress" }
+      ],
+      subtasks: []
+    };
+    const c = PP.canMarkTaskDone(d, d.tasks[0]);
+    return !c.ok && c.open === 1 && c.titles.join() === "open breakdown";
+  })());
+  // Later suites reimport the live store and compare task counts, so a fixture
+  // left behind would fail them. store.commit mutates the live arrays in place,
+  // so keep the ids we started with and drop anything else afterwards.
+  function withoutStoreLeaks(fn) {
+    const keepTasks = new Set(PMS.store.data.tasks.map((t) => t.id));
+    const keepSubs = new Set(PMS.store.data.subtasks.map((s) => s.id));
+    try { return fn(); }
+    finally {
+      PMS.store.data.tasks = PMS.store.data.tasks.filter((t) => keepTasks.has(t.id));
+      PMS.store.data.subtasks = PMS.store.data.subtasks.filter((s) => keepSubs.has(s.id));
+    }
+  }
+  // The warning has to name what is still open, not just count it, and it has to
+  // say when the list it shows is not the whole story.
+  ok("the refused-done warning names the open items", withoutStoreLeaks(function () {
+    const shown = [];
+    const realToast = PMS.toast.show;
+    PMS.toast.show = function (m, k) { shown.push(String(m)); };
+    try {
+      PMS.store.commit((d) => {
+        d.tasks.push({ id: "wp", title: "parent", status: "inprogress", plannedSubtasks: 5 });
+        d.subtasks.push({ id: "wa", taskId: "wp", title: "first", status: "todo" });
+        d.subtasks.push({ id: "wb", taskId: "wp", title: "second", status: "todo" });
+        d.subtasks.push({ id: "wc", taskId: "wp", title: "third", status: "todo" });
+        d.subtasks.push({ id: "wd", taskId: "wp", title: "fourth", status: "todo" });
+        d.tasks.push({ id: "wk", title: "breakdown", parentTaskId: "wp", status: "todo" });
+      }, "test-warn");
+      const res = PMS.repos.tasks.setStatus("wp", "done");
+      const msg = shown[0] || "";
+      return !!res.error
+        && res.open === 5
+        && PMS.repos.tasks.get("wp").status === "inprogress"
+        && /first/.test(msg) && /second/.test(msg)
+        && /2/.test(msg);
+    } finally { PMS.toast.show = realToast; }
+  }));
+  ok("a clear task is marked done with no warning", withoutStoreLeaks(function () {
+    const shown = [];
+    const realToast = PMS.toast.show;
+    PMS.toast.show = function (m) { shown.push(String(m)); };
+    try {
+      PMS.store.commit((d) => {
+        d.tasks.push({ id: "cp", title: "parent", status: "inprogress", plannedSubtasks: 2 });
+        d.subtasks.push({ id: "ca", taskId: "cp", title: "done one", status: "done" });
+      }, "test-clear");
+      const res = PMS.repos.tasks.setStatus("cp", "done");
+      return !res.error
+        && PMS.repos.tasks.get("cp").status === "done"
+        && shown.length === 0
+        && PP.taskProgress(PMS.store.data, PMS.repos.tasks.get("cp")) === 100;
+    } finally { PMS.toast.show = realToast; }
+  }));
+  ok("a full task edit refuses done with the same warning", withoutStoreLeaks(function () {
+    const shown = [];
+    const realToast = PMS.toast.show;
+    PMS.toast.show = function (m) { shown.push(String(m)); };
+    try {
+      PMS.store.commit((d) => {
+        d.tasks.push({ id: "ep", title: "parent", status: "inprogress", plannedSubtasks: 1 });
+        d.subtasks.push({ id: "ea", taskId: "ep", title: "open", status: "inprogress" });
+      }, "test-edit-done");
+      const res = PMS.repos.tasks.update("ep", { status: "done" });
+      return !!res.error
+        && PMS.repos.tasks.get("ep").status === "inprogress"
+        && shown.length === 1 && /open/.test(shown[0]);
+    } finally { PMS.toast.show = realToast; }
+  }));
   ok("subtask repository counts completions", (function () {
     PMS.store.commit((d) => {
       d.tasks.push({ id: "st_parent", title: "with subtasks", status: "inprogress", plannedSubtasks: 4 });

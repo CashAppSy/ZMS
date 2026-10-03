@@ -163,15 +163,42 @@ Key rules implemented (per spec):
     return subtasksOf(data, task && task.id).filter(function (s) { return !isSubtaskDone(s); });
   }
 
-  // A task may only be `done` once every one of its subtasks is done. This is
+  // Child tasks that are not finished yet. They are measured as part of the
+  // parent (see taskProgress), so they have to hold the parent's `done` too -
+  // otherwise a task could be declared finished while work under it is still open.
+  function openChildTasksOf(data, task) {
+    return childTasksOf(data, task && task.id).filter(function (k) {
+      return !(k.status === "done" && canMarkTaskDone(data, k).ok);
+    });
+  }
+
+  // Everything under a task that is not finished yet, in the order it appears on
+  // screen: sub-tasks first, then breakdown tasks. `open` is the total, and
+  // `titles` lets the warning name them instead of only counting them.
+  function openWorkOf(data, task) {
+    var openSubs = openSubtasksOf(data, task);
+    var openKids = openChildTasksOf(data, task);
+    var all = openSubs.concat(openKids);
+    return {
+      count: all.length,
+      subtasks: openSubs,
+      children: openKids,
+      titles: all.map(function (w) { return w.title; })
+    };
+  }
+
+  // A task may only be `done` once every one of its sub-tasks is done. This is
   // the check the UI warns with, so the rule lives in one place.
   function canMarkTaskDone(data, task) {
     if (!task) return { ok: false, reason: "notFound" };
     // No "already done" shortcut here on purpose: a record that was forced to
     // done while a sub-task was open still has to report the open sub-task.
-    var open = openSubtasksOf(data, task);
-    if (open.length) {
-      return { ok: false, reason: "openSubtasks", open: open.length, titles: open.map(function (s) { return s.title; }) };
+    var open = openWorkOf(data, task);
+    if (open.count) {
+      return {
+        ok: false, reason: "openSubtasks", open: open.count, titles: open.titles,
+        subtasks: open.subtasks, children: open.children
+      };
     }
     return { ok: true };
   }
@@ -460,6 +487,8 @@ Key rules implemented (per spec):
     subtasksOf: subtasksOf,
     childTasksOf: childTasksOf,
     openSubtasksOf: openSubtasksOf,
+    openChildTasksOf: openChildTasksOf,
+    openWorkOf: openWorkOf,
     subtaskWeight: subtaskWeight,
     canMarkTaskDone: canMarkTaskDone,
     canNestSubtask: canNestSubtask,
