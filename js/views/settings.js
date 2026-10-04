@@ -15,6 +15,50 @@
     return !!(PMS.cloudsync && PMS.cloudsync.isConfigured && PMS.cloudsync.isConfigured());
   }
 
+  /* The account list an admin sees. Accounts live in Firebase Auth, so the local
+     users[] array only ever holds the accounts this browser adopted - on a fresh
+     browser that is the signed-in admin and nothing else. The cloud directory
+     (zms_auth_users, admin-readable by the existing rules) is merged in by
+     cloudUid so the team shows on every device; a local record still wins for
+     the fields only it knows (lastLoginAt, the local id the edit/reset/delete
+     commands use), while role/active/personId stay cloud-authoritative. */
+  function accountRows() {
+    var local = PMS.auth.users() || [];
+    var dir = (PMS.store.data && PMS.store.data.cloudAccounts) || [];
+    var rows = local.map(function (u) {
+      var c = dir.filter(function (x) { return x.cloudUid && x.cloudUid === u.cloudUid; })[0];
+      if (!c) return u;
+      return {
+        id: u.id, cloudUid: u.cloudUid, username: u.username, name: u.name,
+        personId: c.personId || u.personId || null, lastLoginAt: u.lastLoginAt,
+        role: c.role, active: c.active, local: true
+      };
+    });
+    dir.forEach(function (c) {
+      if (rows.some(function (r) { return r.cloudUid && r.cloudUid === c.cloudUid; })) return;
+      rows.push({
+        id: "cloud:" + c.cloudUid, cloudUid: c.cloudUid, username: c.email,
+        name: c.displayName || c.email, email: c.email, personId: c.personId,
+        role: c.role, active: c.active, lastLoginAt: null, cloudOnly: true
+      });
+    });
+    return rows;
+  }
+
+  // The directory is a cloud read: fetch it the first time the tab is opened
+  // (or forced after an account change) and re-render when it lands.
+  var dirRequested = false;
+  function refreshDirectory(force) {
+    if (!cloudReady() || !PMS.cloudsync || !PMS.cloudsync.cloudAccounts) return;
+    if (dirRequested && !force) return;
+    dirRequested = true;
+    PMS.cloudsync.cloudAccounts(force).then(function () {
+      if (PMS.router.current === "/settings" && section === "accounts") {
+        render(document.getElementById("view-root"));
+      }
+    });
+  }
+
   function render(container) {
     container.innerHTML = "";
     var header = h("div.page-header");
@@ -36,7 +80,10 @@
     sections.forEach(function (s) {
       var btn = h("button.nav-item" + (section === s[0] ? ".active" : ""), {
         text: s[1],
-        on: { click: function () { section = s[0]; render(container); } }
+        // Switching tab re-arms the cloud account directory: an admin who
+        // promotes or adds somebody on another device has to see it on the next
+        // visit, not only on the first one this page load.
+        on: { click: function () { section = s[0]; dirRequested = false; render(container); } }
       });
       nav.appendChild(btn);
     });
@@ -768,7 +815,7 @@
     ]));
     var b = h("div.card-body");
     b.appendChild(h("p.u-muted", { text: t("auth.accountsHint"), style: { marginBlockEnd: "8px" } }));
-    var list = PMS.auth.users();
+    var list = accountRows();
     if (!list.length) b.appendChild(h("div.u-muted", { text: t("common.noResults") }));
     list.forEach(function (u) {
       var row = h("div.account-row");
@@ -801,9 +848,27 @@
       // active toggle
       var toggle = h("label.switch", { attrs: { title: t("auth.activeToggle") } });
       var chk = h("input", { type: "checkbox", checked: u.active !== false, on: { change: function (e) {
+        // A cloud-only row has no local record: the authoritative flag lives in
+        // zms_auth_users, which is what every other device (and the Firestore
+        // rules) reads.
+        if (u.cloudOnly && u.cloudUid) {
+          var want = e.target.checked;
+          if (PMS.cloudsync && PMS.cloudsync.setCloudActive) {
+            e.target.checked = u.active !== false;
+            PMS.cloudsync.setCloudActive(u.cloudUid, want).then(function () {
+              refreshDirectory(true);
+              render(document.getElementById("view-root"));
+            }).catch(function () {
+              e.target.checked = u.active !== false;
+              PMS.toast.show(PMS.authUI.errorMessage("generic"), "error");
+            });
+          }
+          return;
+        }
         var res = PMS.auth.updateUser(u.id, { active: e.target.checked });
         if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); render(document.getElementById("view-root")); return; }
         PMS.store.flush();
+        if (u.cloudUid) { if (PMS.cloudsync && PMS.cloudsync.setCloudActive) PMS.cloudsync.setCloudActive(u.cloudUid, e.target.checked); refreshDirectory(true); }
       } } });
       toggle.appendChild(chk);
       toggle.appendChild(h("span.slider"));
@@ -819,6 +884,7 @@
     }
     card.appendChild(b);
     body.appendChild(card);
+    refreshDirectory(false);
   }
 
   function accountOptions() {
@@ -863,10 +929,13 @@
           onClick: function (_, body) {
             var v = body.querySelector("form")._getValues();
             if (!isEdit && v.password !== v.confirm) { PMS.toast.show(t("auth.mismatch"), "error"); return; }
-            var res;
-            if (isEdit) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
-            else res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
-            if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
+            // A cloud-only row (an account this browser never adopted) has no
+            // local record to update: the local update is skipped and the cloud
+            // writes below become the only place the change is recorded.
+            var res = null;
+            if (!isEdit) res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
+            else if (!user.cloudOnly) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
+            if (res && res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
             // reverse-sync: keep the linked person's email in lockstep with the
             // account's sign-in email (person e-mail is the profile of record).
             if (isEdit && v.username && v.personId && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.username) && PMS.repos && PMS.repos.people) {
@@ -910,6 +979,7 @@
             PMS.modal.close();
             PMS.store.flush();
             render(document.getElementById("view-root"));
+            refreshDirectory(true);
           }
         }
       ]
@@ -947,6 +1017,7 @@
               PMS.store.flush();
               PMS.toast.show(t("auth.cloudAccountCreated"), "success");
               render(document.getElementById("view-root"));
+              refreshDirectory(true);
             }).catch(function (err) {
               PMS.toast.show(PMS.authUI.errorMessage((err && err.userCode) || "generic"), "error");
               console.error("[zms] create cloud account failed:", err && err.code || err, err);
@@ -1050,6 +1121,7 @@
               PMS.modal.close();
               PMS.store.flush();
               render(document.getElementById("view-root"));
+              refreshDirectory(true);
             }).catch(function (err) {
               PMS.modal.close();
               PMS.toast.show((err && err.userCode) === "backendRequired"

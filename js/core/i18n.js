@@ -50,11 +50,21 @@
   function getLang() { return lang; }
 
   function trilingual(code) {
-    // for bilingual fields {en, ar}
+    // Bilingual fields are {en, ar}, but a label may also be a PLAIN STRING:
+    // older datasets and hand-edited imports store names that way, and the
+    // custom-field editor only ever writes {en, ar}. Returning "" for a string
+    // made those records render nameless (and an edit of one wiped the name),
+    // so a string is passed through untouched.
+    // A missing or EMPTY translation also falls back to the other language:
+    // `!= null` used to accept "" as a translation, which blanked every
+    // Arabic-only-viewed field whose (AR) box had been left empty.
     return function (obj) {
-      if (!obj) return "";
-      if (lang === "ar" && obj.ar != null) return obj.ar;
-      return obj.en != null ? obj.en : (obj.ar != null ? obj.ar : "");
+      if (obj == null) return "";
+      if (typeof obj === "string") return obj;
+      var ar = obj.ar == null ? "" : obj.ar;
+      var en = obj.en == null ? "" : obj.en;
+      if (lang === "ar") return ar || en;
+      return en || ar;
     };
   }
 

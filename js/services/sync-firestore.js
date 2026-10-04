@@ -288,6 +288,71 @@
     });
   }
 
+  /* ---------------- cloud account directory: read side ----------------
+     Accounts live in Firebase Auth, so a fresh browser has exactly ONE local
+     record: the account it signed in with. Settings -> Accounts & access used
+     to render PMS.auth.users() alone, which is why an admin opening the app on
+     another browser saw only their own login and concluded the team was gone.
+
+     The rules ALREADY let an admin read every zms_auth_users/<uid> document
+     ("allow read: if request.auth.uid == uid || isAdmin(...)"), so the
+     directory needs no rules deployment - only a client-side read that is
+     admin-gated exactly like accountEvents(). Each document carries
+     {email, role, displayName, personId, active, createdAt}; nothing secret is
+     in it (passwords never leave Firebase Auth).
+     -------------------------------------------------------------------- */
+  var cloudAccountsFetchedFor = null;
+
+  function cacheCloudAccounts(rows) {
+    if (!PMS.store || !PMS.store.data) return;
+    PMS.store.data.cloudAccounts = rows || [];
+    // flush() does NOT emit "store:changed", so a directory read can never be
+    // mistaken for an account edit and echo itself back to the cloud.
+    if (PMS.store.flush) { try { PMS.store.flush(); } catch (e) {} }
+  }
+
+  function normalizeCloudAccount(uid, d) {
+    d = d || {};
+    return {
+      cloudUid: uid,
+      email: d.email || "",
+      role: d.role === "admin" || d.role === "manager" ? d.role : "member",
+      displayName: d.displayName || "",
+      personId: d.personId || null,
+      active: d.active !== false,
+      createdAt: d.createdAt || ""
+    };
+  }
+
+  // Resolves with the sanitized directory. Admin-only by design: the rules deny
+  // these documents to non-admins, and a non-admin simply gets the local cache
+  // rather than a failed read. Never rejects.
+  function cloudAccounts(force) {
+    var cached = (PMS.store && PMS.store.data && PMS.store.data.cloudAccounts) || [];
+    if (!enabled || !isAdminReader()) return Promise.resolve(cached);
+    // keyed by uid: signing out and back in as a different admin in the same tab
+    // must not serve the previous admin's cached directory
+    var me = PMS.auth.currentUser() || {};
+    var uid = me.cloudUid || me.id || "";
+    if (cloudAccountsFetchedFor === uid && !force) return Promise.resolve(cached);
+    return waitForSignedIn().then(function (ok) {
+      if (!ok) return cached;
+      return ensureReady();
+    }).then(function () {
+      return firestore.collection("zms_auth_users").get();
+    }).then(function (qs) {
+      var rows = [];
+      qs.forEach(function (ds) { if (ds.exists) rows.push(normalizeCloudAccount(ds.id, ds.data())); });
+      rows.sort(function (a, b) { return String(a.email || "").localeCompare(String(b.email || "")); });
+      cloudAccountsFetchedFor = uid;
+      cacheCloudAccounts(rows);
+      return rows;
+    }).catch(function (e) {
+      console.warn("[cloudsync] cloud account directory unavailable:", e);
+      return cached;
+    });
+  }
+
   /* ---------------- Firebase SDK loader (dynamic) ---------------- */
   function injectScript(url) {
     return new Promise(function (resolve, reject) {
@@ -1737,6 +1802,7 @@
     dataReplaced: dataReplaced,
     pull: pull,
     accountEvents: accountEvents,
+    cloudAccounts: cloudAccounts,
     saveBackup: saveBackup,
     listBackups: listBackups,
     loadBackup: loadBackup,

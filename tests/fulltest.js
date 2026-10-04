@@ -2734,6 +2734,105 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   PMS.router.navigate("/");
   PMS.router.handle();
 
+  // ---- ZMS: trilingual must never blank a label ----
+  // A custom field whose (AR) box was left empty rendered as an EMPTY row in
+  // Arabic, and a label stored as a plain string (older datasets, imports)
+  // rendered empty in EVERY language -- which is what made Settings > Custom
+  // fields look like a list of unsaveable rows and an edit wiped the name.
+  section("Bilingual labels (trilingual fallback)");
+  const prevLang = PMS.i18n.getLang();
+  const tri = PMS.i18n.trilingual;
+  ok("trilingual passes a plain string through", tri(null)("Ticket ID") === "Ticket ID");
+  PMS.i18n.setLang("ar");
+  ok("Arabic falls back to EN when the AR label is empty", tri(null)({ en: "Client", ar: "" }) === "Client");
+  ok("Arabic uses the AR label when present", tri(null)({ en: "Story points", ar: "قصة القصة" }) === "قصة القصة");
+  PMS.i18n.setLang("en");
+  ok("English falls back to AR when the EN label is empty", tri(null)({ en: "", ar: "قسم" }) === "قسم");
+  ok("trilingual on null is empty, not a crash", tri(null)(null) === "" && tri(null)(undefined) === "");
+  PMS.i18n.setLang(prevLang);
+
+  // ---- ZMS: Accounts & access must list the team from the cloud directory ----
+  // Accounts live in Firebase Auth, so a fresh browser only adopts the account it
+  // signed in with. Settings rendered PMS.auth.users() alone, so an admin on
+  // another browser saw ONLY their own login. The admin-readable zms_auth_users
+  // directory is now merged in by cloudUid.
+  section("Accounts & access: cloud directory merge");
+  PMS.auth.login("boss", "pw1234"); // /settings is admin-only and the guard above left a manager signed in
+  PMS.router.navigate("/settings");
+  PMS.router.handle();
+  ok("admin reaches /settings for the accounts list", PMS.router.current === "/settings");
+  const settingsNav = () => Array.from(root().querySelectorAll(".settings-nav .nav-item"));
+  settingsNav()[1].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  const accRowsBefore = root().querySelectorAll(".account-row").length;
+  ok("accounts tab renders a row per local account", accRowsBefore === PMS.auth.users().length,
+    accRowsBefore + " rows vs " + PMS.auth.users().length + " accounts");
+  const bossRow = Array.from(root().querySelectorAll(".account-row")).find(r => r.textContent.indexOf("boss") !== -1);
+  ok("the signed-in admin's own account is listed with the 'you' chip", !!bossRow && bossRow.textContent.indexOf("you") !== -1);
+
+  // a fresh browser: one local account, three in the cloud directory
+  const dirBoss = { cloudUid: "uid-boss", email: "boss@zms.test", role: "admin", displayName: "Boss", personId: null, active: true };
+  const dirMember = { cloudUid: "uid-maria", email: "maria@zms.test", role: "manager", displayName: "Maria", personId: linaP.id, active: true };
+  const dirOff = { cloudUid: "uid-sami", email: "sami@zms.test", role: "member", displayName: "Sami", personId: null, active: false };
+  PMS.store.data.cloudAccounts = [dirBoss, dirMember, dirOff];
+  // the admin's local record carries its cloudUid, so the two must merge into one
+  const bossLocal = PMS.auth.users().find(u => u.role === "admin");
+  bossLocal.cloudUid = dirBoss.cloudUid;
+  settingsNav()[1].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  const mergedRows = Array.from(root().querySelectorAll(".account-row"));
+  ok("the cloud-only team accounts are listed too", mergedRows.length === PMS.auth.users().length + 2,
+    mergedRows.length + " rows vs " + PMS.auth.users().length + " local");
+  const mariaRow = mergedRows.find(r => r.textContent.indexOf("maria@zms.test") !== -1);
+  ok("a cloud-only account shows its email, role and linked person",
+    !!mariaRow && mariaRow.textContent.indexOf("Manager") !== -1 && mariaRow.textContent.indexOf("Lina Haddadin") !== -1);
+  const samiRow = mergedRows.find(r => r.textContent.indexOf("sami@zms.test") !== -1);
+  ok("a disabled cloud account is flagged inactive", !!samiRow && samiRow.textContent.indexOf(PMS.i18n.t("auth.inactiveFlag")) !== -1);
+  ok("a cloud-only account offers Edit/reset/delete (its cloudUid is set)",
+    !!mariaRow && mariaRow.querySelectorAll("button").length === 3);
+  ok("the local account store is NOT polluted by the directory",
+    PMS.auth.users().every(u => ["boss", "lina", "omar", "acm"].indexOf(u.username) !== -1),
+    PMS.auth.users().map(u => u.username).join(","));
+  ok("a cloud-only row keeps its cloud role without a local record",
+    mariaRow.textContent.indexOf("Manager") !== -1 && !PMS.auth.users().some(u => u.cloudUid === dirMember.cloudUid));
+
+  // The directory is a cloud-ONLY admin-read cache: it must never be pushed back
+  // as project data, and a snapshot must not carry it (a restored snapshot would
+  // resurrect a stale account list instead of the real one).
+  ok("cloudsync exposes cloudAccounts", typeof PMS.cloudsync.cloudAccounts === "function");
+  const syncSrcDir = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+  ok("the account directory is not a pushed collection",
+    !/var COLLECTIONS = [^;]*cloudAccounts/.test(syncSrcDir) && !/WHOLE_COLS = \[[^\]]*cloudAccounts/.test(syncSrcDir));
+  ok("a snapshot never carries the account directory",
+    /delete d\.cloudAccounts/.test(fs.readFileSync(path.join(APP, "js", "data", "backup.js"), "utf8")));
+  ok("the rules already let an admin read the whole account directory",
+    /match \/zms_auth_users\/\{uid\}/.test(fs.readFileSync(path.join(APP, "firestore.rules"), "utf8")) &&
+    /allow read: if request\.auth\.uid == uid \|\| isAdmin\(request\.auth\.uid\)/.test(fs.readFileSync(path.join(APP, "firestore.rules"), "utf8")));
+  delete PMS.store.data.cloudAccounts;
+  PMS.store.flush();
+
+  // The directory is fetched asynchronously and re-renders the tab when it
+  // lands. That must settle: an unthrottled re-render would spin forever on a
+  // live cloud account.
+  let dirCalls = 0;
+  const prevIsConfigured = PMS.cloudsync.isConfigured;
+  const prevCloudAccounts = PMS.cloudsync.cloudAccounts;
+  PMS.cloudsync.isConfigured = () => true;
+  PMS.cloudsync.cloudAccounts = function () {
+    dirCalls++;
+    PMS.store.data.cloudAccounts = [dirMember];
+    return Promise.resolve([dirMember]);
+  };
+  settingsNav()[0].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); // leave the tab
+  settingsNav()[1].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); // come back
+  ok("the accounts tab asks the cloud for the directory", dirCalls === 1, dirCalls + " calls");
+  await Promise.resolve().then(() => new Promise(r => setTimeout(r, 30)));
+  ok("the directory re-render settles instead of looping", dirCalls === 1, dirCalls + " calls after re-render");
+  ok("the directory rows are on screen after the fetch",
+    Array.from(root().querySelectorAll(".account-row")).some(r => r.textContent.indexOf("maria@zms.test") !== -1));
+  PMS.cloudsync.isConfigured = prevIsConfigured;
+  PMS.cloudsync.cloudAccounts = prevCloudAccounts;
+  delete PMS.store.data.cloudAccounts;
+  PMS.store.flush();
+
   // last-admin protection
   PMS.auth.login("boss", "pw1234");
   const adminAcct = PMS.auth.users().find(u => u.role === "admin");
