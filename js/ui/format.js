@@ -22,7 +22,27 @@
     return badge;
   }
 
-  function priorityBadge(prioKey) {
+  // "Blocked" is a status the task is really in, not a footnote under it: the
+// dependency condition is unmet, so the next step forward is refused. It is
+// drawn in the same shape as every other status - dot plus label - so it reads
+// as a status wherever it turns up (table row, kanban card, calendar pill,
+// detail), and the hover names what is holding the task back.
+function blockedBadge(open, opts) {
+  opts = opts || {};
+  var list = open || [];
+  var pill = h("span.badge.badge-blocked");
+  pill.appendChild(h("span.badge-dot"));
+  pill.appendChild(h("span", { text: (opts.glyph ? "⛔ " : "") + t("deps.blocked") }));
+  if (list.length) {
+    pill.setAttribute("title", t("deps.blockedBy") + ": " + list.map(function (b) {
+      return (b.task && b.task.title ? b.task.title : "") +
+        " (" + PMS.dependencies.label(b.dep.type) + ")";
+    }).join(", "));
+  }
+  return pill;
+}
+
+function priorityBadge(prioKey) {
     var p = (PMS.store.data.priorities || []).find(function (x) { return x.key === prioKey; });
     var name = p ? PMS.i18n.trilingual(p.name)(p.name) : prioKey;
     var color = p ? p.color : "#6b7280";
@@ -150,14 +170,7 @@
     var DD = PMS.dependencies;
     var blocked = DD.blocking(data, task);
     if (blocked.length) {
-      out.push(h("span.dep-marker.dep-marker-blocked", {
-        text: "⛔ " + t("deps.blocked"),
-        attrs: {
-          title: t("deps.blockedBy") + ": " + blocked.map(function (b) {
-            return (b.task.title || "") + " (" + DD.label(b.dep.type) + ")";
-          }).join(", ")
-        }
-      }));
+      out.push(blockedBadge(blocked, { glyph: true }));
     }
     if (DD.isCritical(analysis, task.id)) {
       out.push(h("span.dep-marker.dep-marker-critical", {
@@ -207,6 +220,7 @@
 
   PMS.vformat = {
     statusBadge: statusBadge,
+  blockedBadge: blockedBadge,
     priorityBadge: priorityBadge,
     projectBadge: projectBadge,
     avatar: avatar,

@@ -24,6 +24,11 @@
   var ROW_H = 40;   // px per task row
   var BAR_H = 22;   // px bar height
   var ARROW_DY = ROW_H / 2; // centre line of a row: where an arrow enters/leaves
+  /* Width of the label column. One value, pushed into CSS as a custom property,
+     because the timeline geometry depends on it twice: the bars are placed from
+     the time column's own left edge, and the arrow overlay has to start exactly
+     there too. */
+  var LABEL_W = 260;
 
   function tasksForGantt() {
     return PMS.repos.tasks.all();
@@ -74,7 +79,16 @@
     var gridStep = Math.max(1, Math.ceil(timeSpanDays / 240));
 
     var root = h("div.gantt-root", { style: { background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" } });
+    // CSS reads the column width from here rather than keeping its own copy, so
+    // the rows and the arrow overlay can never disagree about where the timeline
+    // begins.
+    root.style.setProperty("--gantt-label-w", LABEL_W + "px");
     var wrap = h("div.gantt-wrap");
+    // The label column plus the whole timeline. Without this the wrapper was
+    // sized by the arrow overlay alone, which squeezed the time column by the
+    // width of the label column and pushed the last bars past the right edge.
+    var timelineW = timeSpanDays * zoom;
+    wrap.style.minWidth = "max(100%, " + (LABEL_W + timelineW) + "px)";
     root.appendChild(wrap);
 
     // ---- header row ----
@@ -120,7 +134,11 @@
     // ---- body rows ----
     var body = h("div.gantt-body");
     var SVG_NS = "http://www.w3.org/2000/svg";
-    var linksSvg = h("svg.gantt-links", { attrs: { width: ((timeSpanDays) * zoom) + "px", height: (tasks.length * ROW_H) + "px", style: "position:absolute;top:0;left:0;pointer-events:none;" } });
+    /* The overlay sits over the time column, not over the whole chart: it is offset
+       by the label column so its x origin is the same origin the bars are placed
+       from. Anchored at 0 it drew every arrow one label-column to the left of the
+       bar it belonged to. */
+    var linksSvg = h("svg.gantt-links", { attrs: { width: (timelineW) + "px", height: (tasks.length * ROW_H) + "px", style: "position:absolute;top:0;left:" + LABEL_W + "px;pointer-events:none;" } });
     try {
       // One marker per link type, so the arrowhead carries the same colour as
       // its line. A single marker would be filled one colour and every arrow
@@ -148,14 +166,18 @@
       var row = h("div.gantt-row" + (isSub ? ".gantt-row-sub" : ""), { style: { height: ROW_H + "px" } });
       var labelCell = h("div.gantt-label-col", { style: { padding: "0 12px", borderInlineEnd: "1px solid var(--border)" } });
       if (isSub) labelCell.style.paddingInlineStart = "28px";
-      // Title and dates are stacked and each truncates on its own, so the cell
-      // keeps one fixed width no matter how long the title is.
-      labelCell.appendChild(h("span.gantt-label-title", { text: tsk.title, attrs: { title: tsk.title } }));
-      if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("is-critical");
-      PMS.vformat.depMarkers(PMS.store.data, tsk, netAnalysis).forEach(function (m) {
-        labelCell.appendChild(m);
-      });
-      var startD = PMS.utils.parseDate(tsk.startDate);
+// Title and dates are stacked and each truncates on its own, so the cell
+    // keeps one fixed width no matter how long the title is. The markers ride
+    // on the title's own line: appended as siblings they became extra rows in
+    // this column flex, and with the row only ROW_H tall the overflow spilled
+    // over the dates and made the fields look stacked on top of each other.
+    var labelHead = h("div.gantt-label-head");
+    labelHead.appendChild(h("span.gantt-label-title", { text: tsk.title, attrs: { title: tsk.title } }));
+    var markers = PMS.vformat.depMarkers(PMS.store.data, tsk, netAnalysis);
+    markers.forEach(function (m) { labelHead.appendChild(m); });
+    labelCell.appendChild(labelHead);
+if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("is-critical");
+    var startD = PMS.utils.parseDate(tsk.startDate);
       var endD = PMS.utils.parseDate(tsk.dueDate);
       var rangeText;
       if (!startD && !endD) rangeText = t("gantt.noDate");
@@ -331,10 +353,12 @@
       if (x2 < x1 + 16) {
         // The successor starts before the predecessor ends, so a straight run
         // would go backwards through both bars. Route it out to the side, down
-        // and back in, and let the markerhead do the pointing.
+        // and back in from the right, so the head still points into the bar: the
+        // last segment has to travel towards x2, not away from it, or the
+        // arrowhead lands short of the target and faces the wrong way.
         var dip = 14;
-        d = "M " + x1 + " " + y1 + " h " + dip + " V " + y2 + " H " + (x2 - dip) +
-          " a " + dip + " " + (dip / 2) + " 0 0 1 " + dip + " " + (dip / 2) + " h -" + dip;
+        d = "M " + x1 + " " + y1 + " h " + dip + " V " + y2 + " H " + (x2 + dip) +
+          " a " + dip + " " + (dip / 2) + " 0 0 1 " + (-dip) + " " + (dip / 2);
       } else {
         d = "M " + x1 + " " + y1 + " H " + (x1 + 8) + " C " + (x1 + 18) + " " + y1 + ", " + (x2 - 18) + " " + y2 + ", " + (x2 - 8) + " " + y2 + " H " + x2;
       }

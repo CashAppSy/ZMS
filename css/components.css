@@ -119,15 +119,20 @@
   white-space: nowrap;
 }
 .badge .badge-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.8; }
-/* The blocked badge rides next to the status control, so it stays compact and
-   never grows a second pill-height inside a table row. */
+/* Blocked is a status, not a footnote: it is drawn like the other status pills
+    (dot + label) and carries the weight of the row, so the status a task is
+    really in is the first thing read. */
 .badge-blocked {
   color: var(--warning);
   background: var(--warning-soft);
   border: 1px solid var(--warning);
-  font-size: 0.7rem;
-  padding: 1px 6px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 2px 8px;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- KPI ---------- */
@@ -523,7 +528,11 @@ table.tbl {
 .kanban-card .kc-meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-block-start: 8px; }
 
 /* ---------- Gantt ---------- */
-.gantt-root { overflow: auto; }
+/* The chart lays itself out left to right even in an RTL page: a timeline whose
+   scale runs the other way reads backwards, and physical `left` offsets (which
+   every bar and arrow is placed with) would stop lining up. The text inside the
+   cells keeps its own base direction, so an Arabic title still shapes correctly. */
+.gantt-root { overflow: auto; direction: ltr; }
 .gantt-wrap { position: relative; min-width: 100%; }
 .gantt-header { position: sticky; top: 0; }
 .gantt-body { position: relative; }
@@ -533,7 +542,8 @@ table.tbl {
   border-block-end: 1px solid var(--border);
 }
 /* One width for the header and every row, so the timeline can never start at a
-   different x per row. */
+   different x per row. The value is pushed in from JS, next to the geometry that
+   depends on it. */
 .gantt-root { --gantt-label-w: 260px; }
 .gantt-label-col {
   flex: 0 0 var(--gantt-label-w, 260px);
@@ -550,13 +560,25 @@ table.tbl {
   overflow: hidden;
   padding-inline-end: var(--space-3);
 }
+/* Title and its markers share one line: the title gives up the space it needs,
+   the markers never wrap, and the cell stays exactly two lines tall. */
+.gantt-label-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 /* min-width:0 lets the ellipsis actually engage inside the fixed-width cell. */
 .gantt-label-col > * { min-width: 0; max-width: 100%; }
+.gantt-label-head > * { min-width: 0; }
 .gantt-label-title {
   display: block;
+  flex: 1 1 auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-weight: 600;
+  unicode-bidi: plaintext;
 }
+.gantt-label-head > .badge, .gantt-label-head > .dep-marker { flex: 0 0 auto; }
 .gantt-label-dates {
   display: block;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -590,7 +612,10 @@ table.tbl {
   .gantt-month-label { pointer-events: none; border-inline-end: 1px solid var(--border); background: var(--bg-subtle); }
   .gantt-day-label { position: absolute; font-size: 0.6rem; color: var(--text-faint); text-align: center; min-width: 24px; pointer-events: none; }
   .gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; }
-.gantt-links { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+/* Sits over the time column, so its left edge is set in JS next to the geometry
+   that places the bars. No inset here: stretching the box across the whole chart
+   desynced it from the bars it is supposed to point at. */
+.gantt-links { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; }
 /* No marker-end here: every dependency path now sets its own per-type arrow as
    an attribute, and a CSS marker-end would override all of them with one
    default arrowhead. */

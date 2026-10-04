@@ -63,7 +63,9 @@
       // together, and the network is a different kind of fact again.
       { key: "dependencies", label: t("deps.title"), width: "210px", render: cellDependencies, visible: true },
       { key: "dueDate", label: t("tasks.dueDate"), render: cellDue, visible: true, sortable: true },
-      { key: "estimatedHours", label: t("tasks.estimated"), render: cellEst, visible: true, sortable: true },
+      // hidden for now: the estimate stays in the data and in the export, it is just
+  // off the table; flip visible to true to bring the column back
+  { key: "estimatedHours", label: t("tasks.estimated"), render: cellEst, visible: false, sortable: true },
       { key: "actualHours", label: t("tasks.actual"), render: cellActual, visible: false, sortable: true },
       { key: "progress", label: t("tasks.progress"), width: "120px", render: cellProgress, visible: true, sortable: true }
     ];
@@ -436,23 +438,19 @@
       var changed = PMS.repos.tasks.setStatus(row.id, sel.value);
       if (changed && changed.error) sel.value = row.status;
     });
-    // The status a task is really in, next to the one it is filed under. A
-    // blocked task still has a status of its own, so it stays in the dropdown
-    // and keeps its colour; this badge is what says the next step is refused.
-    // Derived from PMS.dependencies.blocking, the same call the refusal path
-    // reads, so the two can never disagree.
+    // The status a task is really in, above the one it is filed under. A blocked
+    // task keeps its own status in the dropdown, but "Blocked" is what governs
+    // it until the dependency is met, so it gets the status pill treatment -
+    // same shape as every other status in the app - and the hover names the
+    // predecessors holding it. Derived from PMS.dependencies.blocking, the same
+    // call the refusal path reads, so the two can never disagree.
     var held = PMS.dependencies.blocking(PMS.store.data, row);
     if (!held.length) return sel;
-    var wrapEl = h("div.u-flex", { style: { gap: "4px", alignItems: "center" } });
+    var wrapEl = h("div.u-flex", {
+      style: { flexDirection: "column", alignItems: "stretch", gap: "3px" }
+    });
+    wrapEl.appendChild(PMS.vformat.blockedBadge(held, { glyph: true }));
     wrapEl.appendChild(sel);
-    wrapEl.appendChild(h("span.badge.badge-blocked", {
-      text: "⛔ " + PMS.i18n.t("deps.blocked"),
-      attrs: {
-        title: PMS.i18n.t("deps.blockedBy") + ": " + held.map(function (b) {
-          return (b.task.title || "") + " (" + PMS.dependencies.label(b.dep.type) + ")";
-        }).join(", ")
-      }
-    }));
     return wrapEl;
   }
 

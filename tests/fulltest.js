@@ -383,7 +383,22 @@ const root = () => document.getElementById("view-root");
       .indexOf("gate work") !== -1);
   ok("the table's dependencies column is labelled",
     Array.from(root().querySelectorAll(".vt-th")).some(th => th.textContent.trim() === PMS.i18n.t("deps.title")));
-  ok("a blocked task is marked in the table", !!root().querySelector('.dep-marker-blocked'));
+  ok("a blocked task is marked in the table", !!root().querySelector('.badge-blocked'));
+  // Blocked has to read as the status governing the task, so it sits above the
+  // select rather than trailing beside it in a cramped row.
+  const blockedRow = root().querySelector('.vt-row .badge-blocked');
+  const blockedCell = blockedRow && blockedRow.parentElement;
+  ok("blocked reads as the task's status, above the status control",
+    !!blockedRow && !!blockedRow.querySelector(".badge-dot") &&
+    !!blockedCell && blockedCell.firstElementChild === blockedRow &&
+    !!blockedCell.querySelector("select"));
+  // Estimated hours is off the table for now. It is hidden, not deleted: the
+  // estimate stays in the data and in the export, and the column picker can
+  // still bring it back.
+  ok("the estimated hours column is hidden from the table",
+    !Array.from(root().querySelectorAll(".vt-th")).some(th => th.textContent.trim() === PMS.i18n.t("tasks.estimated")));
+  ok("estimated hours is still available in the column picker",
+    /key:\s*"estimatedHours"[^}]*visible:\s*false/.test(cssOf("js/views/tasks-table.js")));
   ok("the critical task is marked on its row", !!root().querySelector('.vt-row.is-critical'));
   ok("the tasks table renders clean with the network on it", errors.length === 0);
 
@@ -435,6 +450,28 @@ const root = () => document.getElementById("view-root");
   ok("the gantt marks the critical bar", !!root().querySelector(".gantt-bar.is-critical"));
   ok("the gantt shows a mark on a blocked bar", !!root().querySelector(".gantt-bar.is-blocked"));
   ok("the gantt renders clean with the network on it", errors.length === 0);
+
+  // The arrow overlay used to be anchored over the whole chart while the bars
+  // were placed from the time column's own left edge, one label-column further
+  // right. Every arrow was therefore drawn a whole label-column to the left of
+  // the bar it belonged to - the reason the links looked wrong. Both sides are
+  // now offset by the same shared width, so this holds them to it.
+  const linksOverlay = root().querySelector(".gantt-links");
+  const labelCellWidth = parseFloat(cssOf("css/components.css").match(/--gantt-label-w:\s*(\d+)px/)[1]);
+  ok("the arrow overlay starts where the bars start, not at the chart edge",
+    linksOverlay && Math.round(parseFloat(linksOverlay.style.left)) === labelCellWidth,
+    linksOverlay ? "left=" + linksOverlay.style.left + " expected " + labelCellWidth + "px" : "no overlay");
+  // And the chart has to be wide enough for label column + timeline, or the
+  // timeline is squeezed and the bars run past the right edge.
+  const chartRoot = root().querySelector(".gantt-root");
+  const chartWrap = root().querySelector(".gantt-wrap");
+  // min-width reads "max(100%, <px>)", so the number to check is inside it.
+  const wrapFloor = chartWrap && parseFloat((chartWrap.style.minWidth.match(/([\d.]+)px/) || [])[1]);
+  ok("the chart reserves the label column plus the whole timeline",
+    !!chartRoot && wrapFloor >= labelCellWidth + parseFloat(linksOverlay.getAttribute("width")),
+    chartWrap ? chartWrap.style.minWidth : "no wrap");
+  ok("the gantt is laid out left to right so bar and arrow offsets agree",
+    /direction:\s*ltr/.test(cssRule(".gantt-root")));
 
   errors.length = 0; route("/tasks/calendar");
   ok("the calendar marks the critical task's pill", !!root().querySelector(".cal-task.is-critical"));
@@ -701,8 +738,18 @@ const root = () => document.getElementById("view-root");
   ok("every gantt row has a label cell", root().querySelectorAll(".gantt-row .gantt-label-col").length === root().querySelectorAll(".gantt-row").length);
   ok("the gantt title and dates are stacked in separate elements",
     Array.from(root().querySelectorAll(".gantt-row")).every(r =>
-      !!r.querySelector(".gantt-label-col > .gantt-label-title") &&
+      !!r.querySelector(".gantt-label-col > .gantt-label-head > .gantt-label-title") &&
       !!r.querySelector(".gantt-label-col > .gantt-label-dates")));
+  // The dependency markers used to be appended straight into the column flex,
+  // so each one became a row of its own. In a ROW_H cell the overflow spilled
+  // over the dates and the fields read as stacked on top of each other; they
+  // ride on the title's line now, which keeps the cell at two lines.
+  ok("gantt label markers share the title's line instead of adding rows",
+    Array.from(root().querySelectorAll(".gantt-row")).every(r => {
+      const cell = r.querySelector(".gantt-label-col");
+      return cell && cell.querySelectorAll(":scope > .badge, :scope > .dep-marker").length === 0 &&
+        !!cell.querySelector(".gantt-label-head");
+    }));
   ok("the gantt label width comes from one shared token",
     /\.gantt-label-col\s*\{[^}]*flex:\s*0\s+0\s+var\(--gantt-label-w/.test(ganttLabelRule()));
   ok("the gantt label cell stacks its content and clips it",
