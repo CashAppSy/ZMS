@@ -90,6 +90,7 @@
   var firestore = null;
   var enabled = false;
   var applying = false;   // true while we apply a pulled dataset (no echo push)
+  var forceWhole = false; // the next push replaces the reference collections wholesale
   var debounce = null;
   var timer = null;
   var lastPulled = 0;
@@ -771,6 +772,147 @@
     saveMirror(m);
   }
 
+  /* ---- whole-dataset reference collections: change-aware publishing ----
+     departments / people / customFieldDefs / savedFilters and the status lists
+     live as ONE document per collection, so a single write replaces every
+     record in it. Publishing that document verbatim made each device the
+     authority on the whole collection: a browser whose local copy was one edit
+     behind overwrote everyone else's people and custom fields, and a delete
+     "came back" the moment the next stale device saved. That is what made an
+     added person vanish and a deleted field reappear.
+
+     They are merged instead, against the baseline this device last pulled, and
+     written inside a transaction so two devices editing different records cannot
+     lose each other's work. The baseline is a content signature per record, so
+     "changed here", "changed there" and "deleted here" are all distinguishable.
+     -------------------------------------------------------------------- */
+  var ADOPT_KEY = "pms-cloud-adopted";
+
+  // Deterministic string for a record, independent of key order, so two copies
+  // of the same record always produce the same signature.
+  function canonical(v) {
+    if (v === null || v === undefined) return String(v);
+    if (typeof v !== "object") return JSON.stringify(v);
+    if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
+    return "{" + Object.keys(v).sort().map(function (k) {
+      return JSON.stringify(k) + ":" + canonical(v[k]);
+    }).join(",") + "}";
+  }
+
+  function wholeSig(rec) { return rec ? canonical(rec) : null; }
+
+  // Has this device ever adopted the shared dataset? A brand-new browser has
+  // not, and its local store is a fresh seed - never an edit worth publishing.
+  // The marker records WHICH cloud was adopted, so pointing the app at another
+  // Firebase project starts over instead of trusting a marker from the old one.
+  function adoptedClock() {
+    try {
+      var raw = window.localStorage.getItem(ADOPT_KEY) || "";
+      if (!raw) return null;
+      var at = raw.indexOf("|");
+      var proj = at === -1 ? "" : raw.slice(0, at);
+      var clock = at === -1 ? "" : raw.slice(at + 1);
+      var c = config() || {};
+      if (proj !== (c.projectId || "")) return null; // a different cloud
+      return clock || null;
+    } catch (e) { return null; }
+  }
+  function markAdopted(v) {
+    try {
+      if (!v) { window.localStorage.removeItem(ADOPT_KEY); return; }
+      var c = config() || {};
+      window.localStorage.setItem(ADOPT_KEY, (c.projectId || "") + "|" + v);
+    } catch (e) {}
+  }
+
+  /* Merge one reference collection. Pure, so it is testable without a network.
+       - only remote has it      -> keep it (someone else added it)
+       - only local has it, id was in the baseline -> we deleted it, drop it
+       - only local has it, id was never in the baseline -> ours is new, keep it
+       - both have it, only ours differs from the baseline -> our edit wins
+       - both have it, only theirs differs -> their edit wins
+       - both changed -> the newer updatedAt wins
+       - neither changed -> the cloud's copy is kept */
+  function mergeWholeCol(cname, local, remote, baseline) {
+    var base = baseline || {};
+    var index = function (arr) {
+      var map = {}, order = [], loose = [];
+      (arr || []).forEach(function (r) {
+        // A record with no id cannot be matched or merged. Repositories always
+        // assign one, so this is broken data in practice - but dropping it
+        // silently is still data loss, so it is carried through untouched.
+        if (!r || !r.id) { if (r) loose.push(r); return; }
+        map[r.id] = r;
+        if (order.indexOf(r.id) === -1) order.push(r.id);
+      });
+      return { map: map, order: order, loose: loose };
+    };
+    var L = index(local), R = index(remote);
+    var out = [], seen = {}, seenSig = {};
+    var keep = function (rec) { out.push(rec); seenSig[wholeSig(rec)] = true; };
+    // Remote order first: it is the order the cloud settled on, and it keeps
+    // additions at the end instead of reshuffling everyone's list.
+    R.order.forEach(function (id) {
+      seen[id] = true;
+      var r = R.map[id], l = L.map[id];
+      if (!l) {
+        // Only the cloud has it. If this device published it before and it is
+        // gone from the local copy, WE deleted it and that delete has to travel
+        // - this is the deleted custom field. If this device never had it, the
+        // record is somebody else's addition and must be kept.
+        if (!base[id]) keep(r);
+        return;
+      }
+      if (!base[id]) { keep(l); return; } // never published from here
+      var lChanged = wholeSig(l) !== base[id], rChanged = wholeSig(r) !== base[id];
+      if (lChanged && !rChanged) { keep(l); return; }
+      if (!lChanged && rChanged) { keep(r); return; }
+      if (lChanged && rChanged) { keep(isNewer(l.updatedAt, r.updatedAt) ? l : r); return; }
+      keep(r);
+    });
+    L.order.forEach(function (id) {
+      if (seen[id]) return;
+      if (R.map[id]) return;
+      if (base[id]) return;  // we had it, it is gone locally: we deleted it
+      keep(L.map[id]);        // never published: an addition of ours
+    });
+    // Unmatchable records last, ours first, skipping exact duplicates.
+    L.loose.concat(R.loose).forEach(function (rec) {
+      var s = wholeSig(rec);
+      if (seenSig[s]) return;
+      seenSig[s] = true;
+      out.push(rec);
+    });
+    return out;
+  }
+
+  // Read-modify-write the shared document inside a transaction. The transaction
+  // retries if another device writes concurrently, so a merge can never be
+  // computed from a copy that has already gone stale.
+  // `replace` is for a deliberate wholesale replacement (load demo data, restore
+  // a backup, replace import, erase all data): there the local dataset IS the
+  // intended truth, so records the cloud still holds and the local copy does not
+  // have to go. It is never used for an ordinary edit.
+  function pushWholeCol(cname, d, t, replace) {
+    var local = Array.isArray(d[cname]) ? PMS.utils.deepClone(d[cname]) : [];
+    var baseline = mirrorFor(cname);
+    var ref = colRef(cname);
+    return firestore.runTransaction(function (tx) {
+      return tx.get(ref).then(function (snap) {
+        var existed = snap.exists;
+        var body = existed ? (snap.data() || {}) : {};
+        var remote = Array.isArray(body.items) ? body.items : [];
+        var merged = replace ? local : mergeWholeCol(cname, local, remote, baseline);
+        var unchanged = existed && wholeSig(remote) === wholeSig(merged);
+        // Nothing of ours to publish and nothing new to adopt: leave the
+        // document (and its clock) completely alone.
+        if (unchanged) return { items: merged, changed: false };
+        tx.set(ref, { items: merged, updatedAt: t });
+        return { items: merged, changed: true };
+      });
+    });
+  }
+
   // A whole-dataset replacement (load demo data, restore a backup, replace
   // import, erase all data) swaps the store wholesale without going through
   // repositories.update(), so the mirror still describes the PREVIOUS dataset.
@@ -784,7 +926,17 @@
     lastPulled = 0;
     lastPushAt = 0;
     if (!enabled || applying) return Promise.resolve(false);
-    return push();
+    // The caller replaced the whole dataset on purpose, so this push is
+    // authoritative for the reference collections too - it is the one case where
+    // records the cloud still holds must NOT be preserved.
+    forceWhole = true;
+    return push().then(function (r) {
+      forceWhole = false;
+      return r;
+    }, function (e) {
+      forceWhole = false;
+      throw e;
+    });
   }
 
   // Per-record models (create/update per document) cover both the mutable
@@ -1009,7 +1161,7 @@
     });
   }
 
-  /* ---------------- push (local -> cloud) ---------------- */
+/* ---------------- push (local -> cloud) ---------------- */
   function push() {
     if (!enabled || applying) return Promise.resolve(false);
     var d = PMS.store.data;
@@ -1026,73 +1178,97 @@
         var t = now();
         return canWriteShared().then(function (sharedWrite) {
           var ops = [];
-          // whole-dataset reference collections: only manager/admin (+bootstrap)
-          if (sharedWrite) {
-            WHOLE_COLS.forEach(function (cname) {
-              if (Array.isArray(d[cname])) {
-                ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
-              }
-            });
-          }
-          // per-record collections (projects/tasks)
           var mirrorPatches = {};
           var skippedByCol = {};
-          RECORD_COLS.forEach(function (cname) {
-            var built = buildRecordOps(cname, d, idn, t);
-            ops = ops.concat(built.ops);
-            if (built.mirror) mirrorPatches[cname] = built.mirror;
-            if (built.skipped && built.skipped.length) skippedByCol[cname] = built.skipped;
-          });
-          // append-only per-record collections (activity log)
-          APPEND_COLS.forEach(function (cname) {
-            var built = buildAppendOps(cname, d, idn, t);
-            ops = ops.concat(built.ops);
-            if (built.mirror) mirrorPatches[cname] = built.mirror;
-          });
-          // legacy round-3 wrapper cleanup (admin only)
-          return legacyCleanupOps(idn).then(function (legacyOps) {
-            ops = ops.concat(legacyOps);
-            // state clock: managers/admins write the full state doc; members
-            // only bump the clock (updatedAt) so other devices pull the change
-            if (sharedWrite) {
-              ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
-            } else if (ops.length) {
-              ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
-            }
-            if (!ops.length) return false;
-            return Promise.all(ops).then(function () {
-              // persist the mirror only after the writes succeeded
-              Object.keys(mirrorPatches).forEach(function (cname) {
-                var next = PMS.utils.deepClone(mirrorFor(cname));
-                Object.keys(mirrorPatches[cname]).forEach(function (id) {
-                  var v = mirrorPatches[cname][id];
-                  if (v === null) delete next[id];
-                  else next[id] = v;
+          var wroteWhole = false;
+
+          // Whole-dataset reference collections (departments, people,
+          // customFieldDefs, savedFilters, statuses, priorities): only
+          // manager/admin (+bootstrap). These are merged into the cloud inside a
+          // transaction instead of overwriting it. A verbatim write made each
+          // device the authority on the entire collection, so a browser one
+          // edit behind erased everyone else's people, and a deleted custom
+          // field reappeared as soon as the next stale device saved.
+          var wholeJob = sharedWrite
+            ? Promise.all(WHOLE_COLS.map(function (cname) {
+              if (!Array.isArray(d[cname])) return null;
+              return pushWholeCol(cname, d, t, forceWhole).then(function (res) {
+                if (!res || !res.changed) return;
+                wroteWhole = true;
+                // The baseline is now what the cloud holds, not what this
+                // device started from, so the next push sees no phantom diff.
+                var map = {};
+                (res.items || []).forEach(function (rec) {
+                  if (rec && rec.id) map[rec.id] = wholeSig(rec);
                 });
-                setMirrorFor(cname, next);
+                mirrorPatches[cname] = map;
               });
-              // align the in-memory clock with what we uploaded (and persist
-              // it) so the next poll/reboot does not re-import our own data
-              // back onto this device. flush() does not emit "store:changed",
-              // so this cannot loop.
-              var dd = PMS.store.data;
-              if (dd && dd.meta) {
-                dd.meta.updatedAt = t;
-                PMS.store.flush();
+            }))
+            : Promise.resolve();
+
+          return wholeJob.then(function () {
+            // per-record collections (projects/tasks/meetings)
+            RECORD_COLS.forEach(function (cname) {
+              var built = buildRecordOps(cname, d, idn, t);
+              ops = ops.concat(built.ops);
+              if (built.mirror) mirrorPatches[cname] = built.mirror;
+              if (built.skipped && built.skipped.length) skippedByCol[cname] = built.skipped;
+            });
+            // append-only per-record collections (activity log)
+            APPEND_COLS.forEach(function (cname) {
+              var built = buildAppendOps(cname, d, idn, t);
+              ops = ops.concat(built.ops);
+              if (built.mirror) mirrorPatches[cname] = built.mirror;
+            });
+            // legacy round-3 wrapper cleanup (admin only)
+            return legacyCleanupOps(idn).then(function (legacyOps) {
+              ops = ops.concat(legacyOps);
+              // state clock: managers/admins write the full state doc; members
+              // only bump the clock (updatedAt) so other devices pull the change
+              if (sharedWrite && (ops.length || wroteWhole)) {
+                ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
+              } else if (ops.length) {
+                ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
               }
-              lastPushed = Date.now();
-              PMS.bus.emit("cloud:state", { pushed: true });
-              var summarized = {};
-              COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
-              console.info("[cloudsync] push ok", summarized);
-              // Never let a refused write pass as a clean push. These records
-              // are still only local, and the next pull will drop them as if a
-              // remote writer had deleted them, so surface the reason now.
-              if (Object.keys(skippedByCol).length) {
-                console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
-                PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
-              }
-              return true;
+              if (!ops.length && !wroteWhole) return false;
+              return Promise.all(ops).then(function () {
+                // persist the mirror only after the writes succeeded
+                Object.keys(mirrorPatches).forEach(function (cname) {
+                  var next = PMS.utils.deepClone(mirrorFor(cname));
+                  Object.keys(mirrorPatches[cname]).forEach(function (id) {
+                    var v = mirrorPatches[cname][id];
+                    if (v === null) delete next[id];
+                    else next[id] = v;
+                  });
+                  setMirrorFor(cname, next);
+                });
+                // align the in-memory clock with what we uploaded (and persist
+                // it) so the next poll/reboot does not re-import our own data
+                // back onto this device. flush() does not emit "store:changed",
+                // so this cannot loop.
+                var dd = PMS.store.data;
+                if (dd && dd.meta) {
+                  dd.meta.updatedAt = t;
+                  PMS.store.flush();
+                }
+                // This device has now published (or confirmed) its copy of the
+                // shared dataset, so a later boot may treat local as editable
+                // rather than as an unadopted seed.
+                markAdopted(t);
+                lastPushed = Date.now();
+                PMS.bus.emit("cloud:state", { pushed: true });
+                var summarized = {};
+                COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
+                console.info("[cloudsync] push ok", summarized);
+                // Never let a refused write pass as a clean push. These records
+                // are still only local, and the next pull will drop them as if a
+                // remote writer had deleted them, so surface the reason now.
+                if (Object.keys(skippedByCol).length) {
+                  console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
+                  PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
+                }
+                return true;
+              });
             });
           });
         });
@@ -1123,13 +1299,21 @@
       var localData = PMS.store.data;
       var localUpdated = localData.meta && localData.meta.updatedAt;
       var localEmpty = USER_COLS.every(function (c) { return !Array.isArray(localData[c]) || localData[c].length === 0; });
+      // A device that has never adopted this cloud has nothing worth
+      // protecting locally: its store is a fresh seed (or a leftover from before
+      // it was ever connected). Judging that against the remote clock let a
+      // newly opened browser decide it was "ahead" - its seed is stamped now,
+      // the shared data was written days ago - so it published the seed over the
+      // cloud and deleted the people everyone else had added. Adopt first, and
+      // only then may this device publish.
+      var unadopted = !adoptedClock();
       if (mode !== "replace" && mode !== "merge") {
         // automatic pull: apply when the remote is newer, or whenever this
         // device has no real content yet (fresh browser) so it adopts the
         // shared dataset regardless of clocks. An empty local store must never
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
-        if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
+        if (!unadopted && !localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
         if (isRecordCol(cname)) {
@@ -1192,7 +1376,10 @@
       COLLECTIONS.forEach(function (cname) {
         var map = {};
         (rawRemote[cname] || []).forEach(function (rec) {
-          if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : true;
+          if (!rec || !rec.id) return;
+          // Reference collections are compared by content signature on push,
+          // so their baseline has to be the signature and not a bare `true`.
+          map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : wholeSig(rec);
         });
         setMirrorFor(cname, map);
       });
@@ -1202,6 +1389,10 @@
       // drop it (setData() replaces the store, and this key is not rebuilt
       // from a pull). It is refreshed explicitly by accountEvents().
       if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
+      // This device now holds the shared dataset. Until this is recorded, every
+      // later boot treats the local store as an unadopted seed and refuses to
+      // publish it over the cloud.
+      markAdopted(remoteUpdated || now());
       applying = false;
       lastPulled = Date.now();
       PMS.bus.emit("cloud:state", { pulled: true });
@@ -1249,14 +1440,20 @@
     COLLECTIONS.forEach(function (cname) {
       var incoming = remoteObj[cname] || [];
       var existing = merged[cname] || [];
-      // Per-record collections carry a mirror of every id this device has
+      // Every synced collection carries a baseline of what this device has
       // actually published, so "not in the mirror" means "the cloud has never
       // seen this record". Such a record must never be judged by the
       // remote-clock heuristic below: that heuristic is meant to detect a
       // record a remote writer DELETED, and treating a never-uploaded local
       // record that way destroys work silently (a task a manager created in a
-      // pillar they do not manage was lost exactly this way).
-      var recMirror = RECORD_COLS.indexOf(cname) !== -1 ? mirrorFor(cname) : null;
+      // pillar they do not manage was lost exactly this way). This covers the
+      // reference collections too now: a person added here and not yet pushed
+      // must not be dropped because another device happened to save first.
+      // The guard only ever KEEPS records - a remote delete still lands through
+      // the `incoming.some(...)` test - and the baseline is rebuilt from the raw
+      // remote snapshot on every successful pull, so a cleared mirror
+      // self-heals on the next sync instead of freezing deletions forever.
+      var recMirror = mirrorFor(cname);
       incoming.forEach(function (item) {
         var idx = -1;
         for (var i = 0; i < existing.length; i++) {
@@ -1370,6 +1567,16 @@
         if (d.hasData === false) return hasLocal ? push() : false;
         var remote = d.updatedAt;
         if (!remote) return hasLocal ? push() : false;
+        // This device has never adopted the shared dataset, so its local copy is
+        // a fresh seed, not an edit. Publishing it would delete every record
+        // another user has added - which is exactly what happened when the app
+        // was opened in a browser it had never run in before. Adopt the cloud
+        // instead; the pull marks this device adopted, and from then on ordinary
+        // local edits are published normally.
+        if (!adoptedClock()) {
+          console.info("[cloudsync] first run on this device: adopting the shared dataset instead of publishing the local seed");
+          return pull();
+        }
         var localAt = local.meta && local.meta.updatedAt;
         if (localAt && remote < localAt) return hasLocal ? push() : false;
         return false;
@@ -1565,6 +1772,9 @@
   // window.PMS.cloudsync carries no internal bridge/test surface in the app.
   if (typeof window !== "undefined" && window.__ZMS_TEST__) {
     PMS.cloudsync._mergeForTest = mergeWithLocal;
+    PMS.cloudsync._mergeWholeForTest = mergeWholeCol;
+    PMS.cloudsync._adoptedClockForTest = adoptedClock;
+    PMS.cloudsync._markAdoptedForTest = markAdopted;
     PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
     PMS.cloudsync._getMirrorForTest = mirrorFor;
     PMS.cloudsync._setMirrorForTest = setMirrorFor;

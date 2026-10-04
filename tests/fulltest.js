@@ -3108,6 +3108,82 @@ section("Cloud sync (offline-safe API)");
     else window.localStorage.setItem("pms-cloud-mirror", mtgSavedMirror);
     ok("a pull imports meetings, keeps never-synced ones and applies deletions", mtgMergeOk);
   }
+
+  /* ---- reference collections (people, custom fields) used to be published as
+     one blind overwrite per collection. Every device therefore became the
+     authority on the WHOLE collection: opening the app in a second browser
+     stamped its fresh seed "now", judged itself newer than the shared data, and
+     published that seed over the cloud - deleting the people added since. And a
+     browser one edit behind re-uploaded its stale people/custom-field list on
+     its next save, which is why a deleted field came back and an added person
+     vanished from the other accounts. These tests pin the merge that replaced
+     that write. */
+  {
+    const M = PMS.cloudsync._mergeWholeForTest;
+    const sig = (rec) => JSON.stringify(rec, Object.keys(rec).sort());
+    const pAli = { id: "p1", name: "Ali", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const pNew = { id: "p2", name: "Sara", updatedAt: "2026-01-09T00:00:00.000Z" };
+    // This device last pulled a cloud that held only Ali.
+    const baseline = { p1: sig(pAli) };
+
+    ok("a person added in another browser is not deleted by a stale device",
+      M("people", [pAli], [pAli, pNew], baseline).some(p => p.id === "p2"));
+    ok("a person added here is published, not treated as a remote deletion",
+      M("people", [pAli, pNew], [pAli], baseline).some(p => p.id === "p2"));
+    ok("an unchanged local copy does not fight a remote edit",
+      M("people", [pAli], [{ id: "p1", name: "Ali R.", updatedAt: "2026-01-08T00:00:00.000Z" }], baseline)
+        .some(p => p.name === "Ali R."));
+    ok("a local edit is published over an unchanged cloud copy",
+      M("people", [{ id: "p1", name: "Ali (edited)", updatedAt: "2026-01-07T00:00:00.000Z" }], [pAli], baseline)
+        .some(p => p.name === "Ali (edited)"));
+    ok("when both sides changed, the newer record wins",
+      M("people",
+        [{ id: "p1", name: "Mine", updatedAt: "2026-01-09T00:00:00.000Z" }],
+        [{ id: "p1", name: "Theirs", updatedAt: "2026-01-10T00:00:00.000Z" }],
+        baseline).some(p => p.name === "Theirs"));
+    // A custom field deleted here must actually disappear from the shared list.
+    const f1 = { id: "f1", label: "Client", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const f2 = { id: "f2", label: "Phase", updatedAt: "2026-01-01T00:00:00.000Z" };
+    ok("a deleted custom field is published as deleted",
+      !M("customFieldDefs", [f2], [f1, f2], { f1: sig(f1), f2: sig(f2) }).some(f => f.id === "f1"));
+    ok("a custom field added elsewhere survives a stale device's save",
+      M("customFieldDefs", [f1], [f1, f2], { f1: sig(f1) }).some(f => f.id === "f2"));
+    ok("a record with no id is never silently dropped by the merge",
+      M("people", [{ name: "nameless" }], [], {}).length === 1);
+  }
+
+  // The first run on a device must ADOPT the shared dataset, never publish its
+  // own seed over it. The marker is what tells the two apart, and it is written
+  // by both a successful pull and a successful push.
+  {
+    const A = PMS.cloudsync._adoptedClockForTest;
+    const M = PMS.cloudsync._markAdoptedForTest;
+    const savedAdopt = window.localStorage.getItem("pms-cloud-adopted");
+    M(null);
+    const fresh = A() === null;
+    M("2026-01-01T00:00:00.000Z");
+    const marked = A() === "2026-01-01T00:00:00.000Z";
+    // The marker is per cloud: pointing the app at another Firebase project must
+    // not inherit the old one's "already adopted" state.
+    const savedCfg = PMS.cloudsync.config();
+    PMS.cloudsync.saveConfig({ projectId: "some-other-cloud", apiKey: savedCfg.apiKey });
+    const otherCloud = A() === null;
+    PMS.cloudsync.clearConfig();
+    if (savedAdopt === null) window.localStorage.removeItem("pms-cloud-adopted");
+    else window.localStorage.setItem("pms-cloud-adopted", savedAdopt);
+    ok("a browser that never adopted the cloud knows it", fresh);
+    ok("adoption is recorded once the shared dataset is taken", marked);
+    ok("adoption does not carry over to a different cloud", otherCloud);
+
+    const src = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    ok("an unadopted device adopts the cloud instead of publishing its seed",
+      /if \(!adoptedClock\(\)\) \{[\s\S]{0,400}?return pull\(\);/.test(src));
+    ok("reference collections are published through a transaction, not a blind set",
+      /function pushWholeCol[\s\S]*?firestore\.runTransaction/.test(src) &&
+      !/WHOLE_COLS\.forEach\(function \(cname\) \{[\s\S]{0,200}?colRef\(cname\)\.set\(/.test(src));
+    ok("a wholesale replace still publishes the reference collections verbatim",
+      /forceWhole = true/.test(src) && /var merged = replace \? local : mergeWholeCol/.test(src));
+  }
   // --- account audit trail + shared backups + the copy/label cleanups ---
   {
     const mtgSyncSrc2 = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
