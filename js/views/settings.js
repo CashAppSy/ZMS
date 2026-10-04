@@ -310,7 +310,22 @@
       content: h("p", { text: t("confirm.deleteField") }),
       footer: [
         { label: t("common.cancel"), onClick: function () { PMS.modal.close(); } },
-        { label: t("common.delete"), class: "btn-danger", onClick: function () { PMS.repos.fields.remove(field.id); PMS.modal.close(); render(document.getElementById("view-root")); } }
+        { label: t("common.delete"), class: "btn-danger", onClick: function () {
+          // Close first, then remove. The other order leaves the dialog sitting
+          // on screen over a throw from the write, so the click looks like it
+          // did nothing at all - which is exactly how a failed delete reads.
+          // The repaint follows the repository's answer rather than happening
+          // unconditionally: if the field was not there to delete, saying so
+          // beats repainting a list that looks unchanged.
+          PMS.modal.close();
+          var removed = PMS.repos.fields.remove(field.id);
+          render(document.getElementById("view-root"));
+          if (!removed) {
+            if (PMS.toast) PMS.toast.show(t("settings.fieldNotFound"), "error");
+          } else if (PMS.toast) {
+            PMS.toast.show(t("settings.fieldDeleted"), "success");
+          }
+        } }
       ]
     });
   }

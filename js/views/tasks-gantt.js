@@ -12,6 +12,19 @@
   var DAY = 24 * 60 * 60 * 1000;
   var zoom = 40; // px per day
 
+  /* One source of truth for the chart's vertical geometry.
+     The rows are DOM elements and the dependency arrows are an SVG painted on
+     top of them, so the two halves have to agree on how tall a row is and where
+     its centre sits. These were 40 and 20 repeated across four separate places:
+     the row builder, the error-row fallback, the row->y lookup and the arrow
+     maths. Editing any one of them slid the arrows off the bars they belong to
+     - down one row, or by the height of a border - and nothing failed loudly
+     enough to notice. BAR_H is what CSS draws (.gantt-bar); it is named here so
+     the arrow endpoints and the bar share a value rather than a coincidence. */
+  var ROW_H = 40;   // px per task row
+  var BAR_H = 22;   // px bar height
+  var ARROW_DY = ROW_H / 2; // centre line of a row: where an arrow enters/leaves
+
   function tasksForGantt() {
     return PMS.repos.tasks.all();
   }
@@ -65,9 +78,12 @@
     root.appendChild(wrap);
 
     // ---- header row ----
+    // The header is a sticky band sitting on rows of ROW_H. Two pixels shorter, its
+    // month band did not line up with the first row's bar centre, so the sticky
+    // header visibly nudged the grid by 1px when you scrolled past it.
     var headRow = h("div.gantt-header", { style: { display: "flex", borderBlockEnd: "1px solid var(--border)", background: "var(--bg-subtle)" } });
     headRow.appendChild(h("div.gantt-label-col", { text: t("tasks.title"), style: { fontWeight: "700", padding: "12px 12px", borderInlineEnd: "1px solid var(--border)" } }));
-    var timeHead = h("div.gantt-time-col", { style: { position: "relative", height: "38px" } });
+    var timeHead = h("div.gantt-time-col", { style: { position: "relative", height: ROW_H + "px" } });
 
     // month band (date labels)
     var monthStarts = monthStartsIn(min, max);
@@ -82,16 +98,20 @@
       timeHead.appendChild(ml);
 
       // month separator gridline
-      timeHead.appendChild(h("div.gantt-gridline.gantt-monthline", { style: { left: offLeft + "px", top: "0", height: "38px" } }));
+      timeHead.appendChild(h("div.gantt-gridline.gantt-monthline", { style: { left: offLeft + "px", top: "0", height: ROW_H + "px" } }));
     });
 
-    // day numbers
+    // day numbers. They hang under the month band, so the band's own height is
+    // the offset and the row height is the ceiling: the tick marks run to the
+    // bottom of the header whatever that height is, rather than to a second
+    // hand-typed number that quietly stops matching it.
+    var DAY_BAND_TOP = 24;
     for (var i = 0; i <= timeSpanDays; i += gridStep) {
       var dayD = new Date(min.getTime() + i * DAY);
-      var lbl = h("div.gantt-day-label", { style: { left: (i * zoom) + "px", top: "24px" } });
+      var lbl = h("div.gantt-day-label", { style: { left: (i * zoom) + "px", top: DAY_BAND_TOP + "px" } });
       lbl.textContent = String(dayD.getDate());
       timeHead.appendChild(lbl);
-      var gridline = h("div.gantt-gridline", { style: { left: (i * zoom) + "px", top: "24px", height: "14px" } });
+      var gridline = h("div.gantt-gridline", { style: { left: (i * zoom) + "px", top: DAY_BAND_TOP + "px", height: (ROW_H - DAY_BAND_TOP) + "px" } });
       timeHead.appendChild(gridline);
     }
     headRow.appendChild(timeHead);
@@ -100,7 +120,7 @@
     // ---- body rows ----
     var body = h("div.gantt-body");
     var SVG_NS = "http://www.w3.org/2000/svg";
-    var linksSvg = h("svg.gantt-links", { attrs: { width: ((timeSpanDays) * zoom) + "px", height: (tasks.length * 40) + "px", style: "position:absolute;top:0;left:0;pointer-events:none;" } });
+    var linksSvg = h("svg.gantt-links", { attrs: { width: ((timeSpanDays) * zoom) + "px", height: (tasks.length * ROW_H) + "px", style: "position:absolute;top:0;left:0;pointer-events:none;" } });
     try {
       // One marker per link type, so the arrowhead carries the same colour as
       // its line. A single marker would be filled one colour and every arrow
@@ -125,7 +145,7 @@
 
     function buildRow(tsk, idx) {
       var isSub = !!tsk.parentTaskId;
-      var row = h("div.gantt-row" + (isSub ? ".gantt-row-sub" : ""), { style: { height: "40px" } });
+      var row = h("div.gantt-row" + (isSub ? ".gantt-row-sub" : ""), { style: { height: ROW_H + "px" } });
       var labelCell = h("div.gantt-label-col", { style: { padding: "0 12px", borderInlineEnd: "1px solid var(--border)" } });
       if (isSub) labelCell.style.paddingInlineStart = "28px";
       // Title and dates are stacked and each truncates on its own, so the cell
@@ -190,7 +210,7 @@
         buildRow(tsk);
       } catch (e) {
         console.error("[gantt] row render failed", tsk, e);
-        var badRow = h("div.gantt-row", { style: { height: "40px", color: "var(--danger)", padding: "0 12px" } });
+        var badRow = h("div.gantt-row", { style: { height: ROW_H + "px", color: "var(--danger)", padding: "0 12px" } });
         badRow.textContent = (tsk && tsk.title ? tsk.title + " — " : "") + (e && e.message ? e.message : e);
         body.appendChild(badRow);
       }
@@ -292,8 +312,8 @@
 
       var x1 = edge.type === "SS" || edge.type === "SF" ? from.start : from.end;
       var x2 = edge.type === "FS" || edge.type === "SS" ? to.start : to.end;
-      var y1 = taskRowY(edge.fromId) + 20;
-      var y2 = taskRowY(edge.toId) + 20;
+      var y1 = taskRowY(edge.fromId) + ARROW_DY;
+      var y2 = taskRowY(edge.toId) + ARROW_DY;
       // A link whose dates already break it is drawn in the danger colour: the
       // arrow is then saying something is wrong, not just that a link exists.
       var broken = PMS.dependencies.isSatisfied(edge.dep, edge.from, edge.to) === false;
@@ -334,7 +354,7 @@
 
   function taskRowY(taskId) {
     var idx = tasksForGantt().findIndex(function (tsk) { return tsk.id === taskId; });
-    return idx === -1 ? 0 : idx * 40;
+    return idx === -1 ? 0 : idx * ROW_H;
   }
 
   function monthStartsIn(min, max) {

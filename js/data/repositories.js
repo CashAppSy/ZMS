@@ -175,6 +175,41 @@
     PMS.toast.show(msg, "error");
   }
 
+  // Statuses carry an `order`, so a change counts as FORWARD when it lands on a
+  // later one. Backward moves stay allowed: the gate exists to stop work being
+  // marked started before its dependency is ready, not to trap a task that has
+  // to be walked back to undo a mistake.
+  function statusOrder(key) {
+    var s = (PMS.store.data.taskStatuses || []).find(function (x) { return x.key === key; });
+    return s && typeof s.order === "number" ? s.order : 0;
+  }
+
+  // What still holds this task back from moving forward, or null when nothing
+  // does. Reads PMS.dependencies.blocking, so the row the user is looking at and
+  // the rule that refuses the write always agree - the marker says Blocked
+  // because that is exactly what is blocking it, per the link's own type.
+  function dependencyGate(task, nextStatus) {
+    if (!task || !PMS.dependencies || !PMS.dependencies.blocking) return null;
+    if (!nextStatus || nextStatus === task.status) return null;
+    if (statusOrder(nextStatus) <= statusOrder(task.status)) return null;
+    var open = PMS.dependencies.blocking(PMS.store.data, task);
+    if (!open || !open.length) return null;
+    return open;
+  }
+
+  function warnBlocked(open) {
+    if (!PMS.toast) return;
+    var titles = open.map(function (x) { return x && x.task && x.task.title; }).filter(Boolean);
+    var msg = PMS.i18n.t("deps.blockedRefused", { n: open.length });
+    if (titles.length) {
+      var shown = titles.slice(0, 3).join(", ");
+      var rest = titles.length - 3;
+      msg += " " + PMS.i18n.t("projects.subtaskNotDoneList", { names: shown });
+      if (rest > 0) msg += " " + PMS.i18n.t("projects.subtaskNotDoneMore", { n: rest });
+    }
+    PMS.toast.show(msg, "error");
+  }
+
   // Members only ever see their own work: the tasks assigned to them (or made
   // by them) and the meetings they attended (or created). Managers and admins
   // see everything.
@@ -442,6 +477,17 @@
             }
           }
         }
+        // ...and a task may only move forward once its dependencies release it.
+        // Same reasoning: the editor writes a whole patch, so it arrives here
+        // rather than through setStatus, and both must refuse identically.
+        if (patch && patch.status) {
+          var moved = find("tasks", id);
+          var held = dependencyGate(moved, patch.status);
+          if (held) {
+            warnBlocked(held);
+            return { error: "blocked", open: held.length, titles: held.map(function (x) { return x.task.title; }) };
+          }
+        }
         return update("tasks", id, patch);
       },
       // The one place a task status changes. Every screen funnels through here so the
@@ -450,6 +496,15 @@
       setStatus: function (id, status) {
         var rec = find("tasks", id);
         if (!rec) return { error: "notFound" };
+        // The dependency gate runs before the subtask gate: "you cannot start
+        // this yet" is the earlier of the two questions, and answering it first
+        // keeps the message about the link rather than about a sub-task list
+        // that cannot be closed anyway.
+        var held = dependencyGate(rec, status);
+        if (held) {
+          warnBlocked(held);
+          return { error: "blocked", open: held.length, titles: held.map(function (x) { return x.task.title; }) };
+        }
         if (status === "done") {
           var check = PMS.programProgress.canMarkTaskDone(PMS.store.data, rec);
           if (!check.ok) {
@@ -728,11 +783,40 @@
       add: function (obj) { return add("customFieldDefs", obj); },
       update: function (id, patch) { return update("customFieldDefs", id, patch); },
       remove: function (id) {
+        // Report honestly. The caller uses this to decide whether to repaint and
+        // what to say, so a silent "true" for a field that was never there would
+        // leave a stale row on screen looking like the delete had worked.
+        if (!find("customFieldDefs", id)) return false;
         PMS.store.commit(function (d) {
-          d.customFieldDefs = d.customFieldDefs.filter(function (x) { return x.id !== id; });
-          // remove stored values from tasks/projects
-          d.tasks.forEach(function (t) { if (t.customFields) delete t.customFields[id]; });
-          d.projects.forEach(function (p) { if (p.customFields) delete p.customFields[id]; });
+          d.customFieldDefs = (d.customFieldDefs || []).filter(function (x) { return x.id !== id; });
+          // The stored VALUES are keyed by the field's id, so that is the key to
+          // drop from every record that carries one.
+          (d.tasks || []).forEach(function (t) { if (t.customFields) delete t.customFields[id]; });
+          (d.projects || []).forEach(function (p) { if (p.customFields) delete p.customFields[id]; });
+          // Saved filters were the one reference left behind. A filter still
+          // asking for a field that no longer exists either matches nothing or,
+          // worse, quietly stops filtering - so the key goes, and a filter left
+          // with no criteria at all is dropped rather than kept as a saved
+          // filter that returns the whole list under a name that no longer
+          // describes it.
+          (d.savedFilters || []).forEach(function (f) {
+            var q = f && f.query;
+            if (!q || !q.customFields) return;
+            delete q.customFields[id];
+            if (!Object.keys(q.customFields).length) delete q.customFields;
+          });
+          d.savedFilters = (d.savedFilters || []).filter(function (f) {
+            if (!f || !f.query) return true;
+            var q = f.query;
+            var any = ["search", "projectId", "personId", "departmentId", "status",
+              "statusKey", "priority", "priorityKey", "tags", "from", "to",
+              "startFrom", "startTo", "assigneeId", "lateOnly", "blockedOnly",
+              "criticalOnly", "mainOnly", "customFields"].some(function (k) {
+                var v = q[k];
+                return Array.isArray(v) ? v.length > 0 : !!v;
+              });
+            return any;
+          });
         }, "remove-field");
         return true;
       }

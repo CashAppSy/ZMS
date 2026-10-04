@@ -71,6 +71,22 @@
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; }
 
+/* A date range box in the filter bar. The label sits above the input rather than
+   beside it so four ranges can sit in one row without the labels truncating, and
+   the pair reads as one field instead of two unrelated boxes. */
+.date-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.2;
+}
+.date-filter-label {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.date-filter .input { padding: 4px 6px; font-size: 0.78rem; }
+
 /* ---------- Cards ---------- */
 .card {
   background: var(--bg-elevated);
@@ -103,6 +119,16 @@
   white-space: nowrap;
 }
 .badge .badge-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+/* The blocked badge rides next to the status control, so it stays compact and
+   never grows a second pill-height inside a table row. */
+.badge-blocked {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
 
 /* ---------- KPI ---------- */
 .kpi-grid {

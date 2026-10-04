@@ -19,20 +19,34 @@
     var weekEnd = PMS.utils.toISODate(new Date(Date.now() + 7 * 86400000));
     var doneKey = findDoneKey("task");
 
+    // Every TASK number on this screen counts main tasks only. A breakdown task
+    // is part of its parent's work, not a separate piece of it, so counting both
+    // would report the same job twice - "12 tasks" for six pieces of work, and a
+    // completion rate that jumps every time somebody splits a task in two. The
+    // child rows stay visible inside their parent, they just do not get a vote
+    // here. `allTasks` is kept only to derive each task's progress.
+    var allTasks = tasks;
+    var tasks = tasks.filter(function (tsk) { return !tsk.parentTaskId; });
+
     var totalTasks = tasks.length;
     var overdue = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate < today && tsk.status !== doneKey; });
     var dueThisWeek = tasks.filter(function (tsk) { return tsk.dueDate && tsk.dueDate >= today && tsk.dueDate <= weekEnd; });
     var activeProjects = projects.filter(function (p) { return p.status === "active"; });
 
-    // avg progress of top-level tasks (derived from status + sub-tasks)
+    // Progress for the bar drawn on every row, children included: a parent's
+    // percentage comes from its children, so their values have to be here even
+    // though they get no vote below.
     var progSum = 0, progN = 0;
     var progressMap = {};
+    allTasks.forEach(function (tsk) {
+      progressMap[tsk.id] = PMS.programProgress.taskProgress(data, tsk);
+    });
+    // The headline average answers "how far along is the work I asked for", which
+    // is the main tasks. A parent's percentage is already the mean of its
+    // children, so folding the children in as well would count the same day of
+    // work twice and let one large breakdown decide the number.
     tasks.forEach(function (tsk) {
-      var p = PMS.programProgress.taskProgress(data, tsk);
-      // A task flagged as somebody's breakdown is represented by its parent, so
-      // counting both would count the same work twice in this average.
-      if (!tsk.parentTaskId) { progSum += p; progN++; }
-      progressMap[tsk.id] = p;
+      progSum += progressMap[tsk.id] || 0; progN++;
     });
     var avg = progN ? progSum / progN : 0;
 

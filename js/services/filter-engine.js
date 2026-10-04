@@ -2,12 +2,28 @@
    PMS.filterEngine - multi-criteria filtering + search + sort + group.
    Built from a query object:
      { search, projectId, personId, departmentId, status:[...], priority:[...],
-       tags:[...], from, to, lateOnly, customFields:{id:value} }
+       tags:[...], from, to, lateOnly, blockedOnly, criticalOnly, mainOnly,
+       customFields:{id:value} }
+
+   The status and priority keys are accepted in BOTH shapes: the array form
+   (`status: ["done","review"]`) and the singular form the filter bar and older
+   saved filters use (`statusKey: "done"`). Reading only the arrays left the
+   toolbar's Status and Priority selects wired to nothing at all - the query was
+   built, stored and counted in the "N filters" badge, and never matched a row.
    ========================================================================== */
 (function (PMS) {
   "use strict";
 
   function normalize(t) { return String(t || "").trim().toLowerCase(); }
+
+  // A list of allowed keys from either shape, so one comparison covers both.
+  function keysOf(value, single) {
+    var out = [];
+    if (Array.isArray(value)) out = value.filter(Boolean);
+    else if (value) out = [value];
+    if (single) out.push(single);
+    return out.filter(Boolean);
+  }
 
   // Does a task match the given query?
   function matchTask(task, query, ctx) {
@@ -30,23 +46,43 @@
       });
       if (!hit) return false;
     }
-    if (query.status && query.status.length && query.status.indexOf(task.status) === -1) return false;
-    if (query.priority && query.priority.length && query.priority.indexOf(task.priority) === -1) return false;
+    var wantedStatus = keysOf(query.status, query.statusKey);
+    if (wantedStatus.length && wantedStatus.indexOf(task.status) === -1) return false;
+    var wantedPriority = keysOf(query.priority, query.priorityKey);
+    if (wantedPriority.length && wantedPriority.indexOf(task.priority) === -1) return false;
     if (query.tags && query.tags.length) {
       var tt = task.tags || [];
       var ok = query.tags.every(function (tag) { return tt.indexOf(tag) !== -1; });
       if (!ok) return false;
     }
+    // `from`/`to` bracket the task's due date, falling back to its start date for
+    // a task that has no deadline yet - otherwise every open-ended task would
+    // vanish from a date-filtered list, which reads as "the filter is broken".
     if (query.from || query.to) {
       var due = task.dueDate || task.startDate;
       if (!due) return false;
       if (query.from && due < query.from) return false;
       if (query.to && due > query.to) return false;
     }
+    if (query.startFrom || query.startTo) {
+      var sd = task.startDate;
+      if (!sd) return false;
+      if (query.startFrom && sd < query.startFrom) return false;
+      if (query.startTo && sd > query.startTo) return false;
+    }
     if (query.lateOnly) {
       var due2 = task.dueDate;
       if (!due2 || due2 >= PMS.utils.todayISO()) return false;
       if (task.status === "done") return false;
+    }
+    // The three questions a plan gets asked about its work: what is stuck behind
+    // something else, what has no slack left, and what is the plan actually made
+    // of as opposed to what has been broken out into pieces.
+    if (query.mainOnly && task.parentTaskId) return false;
+    if (query.blockedOnly && !(PMS.dependencies && PMS.dependencies.isBlocked(data, task))) return false;
+    if (query.criticalOnly) {
+      if (!PMS.dependencies) return false;
+      if (!PMS.dependencies.isCritical(PMS.dependencies.analyzeCached(data), task.id)) return false;
     }
     if (query.customFields) {
       var cfs = task.customFields || {};

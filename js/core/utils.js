@@ -205,11 +205,19 @@
   // Build the whole id -> number map in one pass, for a list that renders many
   // rows. Callers render a row per task, so ranking inside the cell would make
   // the table quadratic.
+  //
+  // Only MAIN tasks are numbered. A breakdown task belongs to its parent and is
+  // listed under it, so giving it a number of its own would spend one of the
+  // plan's numbers on work that is already represented by its parent - and the
+  // sequence would then jump around whenever somebody split a task. A breakdown
+  // task is therefore absent from the map, and the cells that show a number read
+  // "" for it, which is the honest answer: it is identified by its parent.
   function taskNumbers(data) {
     var map = {};
-    ((data && data.tasks) || []).slice().sort(byCreatedThenId).forEach(function (t, i) {
-      map[t.id] = i + 1;
-    });
+    ((data && data.tasks) || []).filter(function (t) { return t && !t.parentTaskId; })
+      .sort(byCreatedThenId).forEach(function (t, i) {
+        map[t.id] = i + 1;
+      });
     return map;
   }
 

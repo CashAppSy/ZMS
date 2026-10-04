@@ -80,7 +80,14 @@
       personId: q.assigneeId,
       status: q.statusKey ? [q.statusKey] : [],
       priority: q.priorityKey ? [q.priorityKey] : [],
-      lateOnly: q.lateOnly
+      from: q.from,
+      to: q.to,
+      startFrom: q.startFrom,
+      startTo: q.startTo,
+      lateOnly: q.lateOnly,
+      blockedOnly: q.blockedOnly,
+      criticalOnly: q.criticalOnly,
+      mainOnly: q.mainOnly
     };
     var out = eng.filterTasks(all, criteria, PMS.store.data);
     // sort
@@ -104,8 +111,9 @@
     function activeFilterCount(q) {
       var n = 0;
       q = q || {};
-      ["search", "projectId", "statusKey", "priorityKey", "assigneeId"].forEach(function (k) { if (q[k]) n++; });
-      if (q.lateOnly) n++;
+      ["search", "projectId", "statusKey", "priorityKey", "assigneeId",
+        "from", "to", "startFrom", "startTo"].forEach(function (k) { if (q[k]) n++; });
+      ["lateOnly", "blockedOnly", "criticalOnly", "mainOnly"].forEach(function (k) { if (q[k]) n++; });
       return n;
     }
     var actCount = activeFilterCount(state.query);
@@ -423,11 +431,29 @@
     sel.addEventListener("change", function () {
       if (sel.value === row.status) return;
       if (PMS.auth && !PMS.auth.canChangeStatus(row)) { PMS.toast.show(PMS.i18n.t("auth.forbidden"), "error"); sel.value = row.status; return; }
-      // refuses "done" while sub-tasks are open, so snap the control back
+      // refuses "done" while sub-tasks are open, and refuses any forward move
+      // while a dependency still holds the task, so snap the control back
       var changed = PMS.repos.tasks.setStatus(row.id, sel.value);
       if (changed && changed.error) sel.value = row.status;
     });
-    return sel;
+    // The status a task is really in, next to the one it is filed under. A
+    // blocked task still has a status of its own, so it stays in the dropdown
+    // and keeps its colour; this badge is what says the next step is refused.
+    // Derived from PMS.dependencies.blocking, the same call the refusal path
+    // reads, so the two can never disagree.
+    var held = PMS.dependencies.blocking(PMS.store.data, row);
+    if (!held.length) return sel;
+    var wrapEl = h("div.u-flex", { style: { gap: "4px", alignItems: "center" } });
+    wrapEl.appendChild(sel);
+    wrapEl.appendChild(h("span.badge.badge-blocked", {
+      text: "⛔ " + PMS.i18n.t("deps.blocked"),
+      attrs: {
+        title: PMS.i18n.t("deps.blockedBy") + ": " + held.map(function (b) {
+          return (b.task.title || "") + " (" + PMS.dependencies.label(b.dep.type) + ")";
+        }).join(", ")
+      }
+    }));
+    return wrapEl;
   }
 
   function statusName(key) {

@@ -726,15 +726,24 @@ const root = () => document.getElementById("view-root");
   ok("report tables render rows", root().querySelectorAll(".report-card tbody tr").length > 0);
 
   const distinct = arr => Object.keys(arr.reduce((a, x) => (a[x] = 1, a), {}));
+  // Every built-in task report counts MAIN tasks. A breakdown task is part of a
+  // parent's work, not a row of its own, so expecting it in these totals would
+  // demand that each report double-count its own plan.
+  const mainTasks = tasks.filter(t => !t.parentTaskId);
   const exp = {
     projectStatus: topProjects.length,
-    taskStatus: distinct(tasks.map(t => t.status)).length,
-    taskPriority: distinct(tasks.map(t => t.priority)).length,
-    taskPerson: new Set(tasks.reduce((a, t) => a.concat(t.assignees || []), [])).size,
-    lateTasks: tasks.filter(t => t.dueDate && t.dueDate < PMS.utils.todayISO() && t.status !== "done").length,
-    hours: topProjects.length,
-    budget: topProjects.length
+    taskStatus: distinct(mainTasks.map(t => t.status)).length,
+    taskPriority: distinct(mainTasks.map(t => t.priority)).length,
+    taskPerson: new Set(mainTasks.reduce((a, t) => a.concat(t.assignees || []), [])).size,
+    // "Late" is late and NOT finished, and finished is the progress engine's word
+    // (>= 100%), not the status label: a task sitting at 99.9% still has an open
+    // item, so it is still late.
+    lateTasks: mainTasks.filter(t => t.dueDate && t.dueDate < PMS.utils.todayISO() && !PMS.reports.isDone(PMS.store.data, t)).length,
+    hours: topProjects.length
   };
+  // The money report is gone from the registry on purpose: the field stays on the
+  // project model, but a cost breakdown is not something this app decides.
+  ok("no budget report is registered", !PMS.reports.all().some(r => r.id === "budget"));
   Object.keys(exp).forEach(id => {
     const res = PMS.reports.generate(id, PMS.store.data, {});
     ok("report " + id + " (" + exp[id] + " rows expected, got " + (res ? res.rows.length : "ERR") + ")", res && res.rows.length === exp[id]);
@@ -1263,6 +1272,419 @@ const root = () => document.getElementById("view-root");
       if (si > -1) d.subtasks.splice(si, 2);
     }, "test-subtasks-clean");
     return made === 2 && doneMade === 1 && near(prog, 52.475, 0.01);
+  })());
+
+  // ---- this round: dependency gate, top-level stats, filters, fields ----
+  // The store hands out a read-only view of its data, so fixtures are pushed the
+  // same way the app pushes real work (through commit) and taken back out by
+  // withoutStoreLeaks. Each gate case is stated once, in the table below.
+  const GATE_CASES = [
+    { type: "FS", pred: "inprogress", hold: true, why: "holds the successor until the predecessor is finished" },
+    { type: "FS", pred: "todo", hold: true, why: "holds the successor while the predecessor is untouched" },
+    { type: "FF", pred: "inprogress", hold: true, why: "holds the successor until the predecessor is finished" },
+    { type: "SS", pred: "todo", hold: true, why: "holds the successor while the predecessor has not started" },
+    { type: "SS", pred: "inprogress", hold: false, why: "lets the successor start once the predecessor has started" },
+    { type: "SF", pred: "inprogress", hold: false, why: "lets the successor start once the predecessor has started" }
+  ];
+  function seedGate(type, predStatus) {
+    const ids = { pred: "gp" + Math.random().toString(36).slice(2, 8), succ: "gs" + Math.random().toString(36).slice(2, 8) };
+    PMS.store.commit(d => {
+      d.tasks.push({ id: ids.pred, title: "predecessor", status: predStatus });
+      d.tasks.push({ id: ids.succ, title: "successor", status: "todo", dependencies: [{ taskId: ids.pred, type: type }] });
+    }, "test-gate-seed");
+    return ids;
+  }
+  GATE_CASES.forEach(c => {
+    ok(c.type + " " + c.why, withoutStoreLeaks(function () {
+      const shown = [];
+      const real = PMS.toast.show;
+      PMS.toast.show = function (m) { shown.push(String(m)); };
+      try {
+        const ids = seedGate(c.type, c.pred);
+        const succ = PMS.repos.tasks.get(ids.succ);
+        const blocking = PMS.dependencies.blocking(PMS.store.data, succ);
+        const res = PMS.repos.tasks.setStatus(ids.succ, "inprogress");
+        if (c.hold) {
+          // A refusal must be visible AND total: listed as blocked, refused, and
+          // the task left exactly where it was.
+          return blocking.length === 1 && blocking[0].task.id === ids.pred
+            && !!res.error && res.error === "blocked"
+            && res.open === 1 && res.titles.join() === "predecessor"
+            && PMS.repos.tasks.get(ids.succ).status === "todo"
+            && shown.length === 1 && /predecessor/.test(shown[0]);
+        }
+        return blocking.length === 0 && !res.error
+          && PMS.repos.tasks.get(ids.succ).status === "inprogress"
+          && shown.length === 0;
+      } finally { PMS.toast.show = real; }
+    }));
+  });
+  ok("moving backwards is never blocked by a dependency", withoutStoreLeaks(function () {
+    // A task that legitimately has to be re-opened must not be locked by its own
+    // predecessor; gating on "has any dependency" would make that impossible, and
+    // the only way to get out of a wrongly-blocked state is to move backwards.
+    const shown = [];
+    const real = PMS.toast.show;
+    PMS.toast.show = function (m) { shown.push(String(m)); };
+    try {
+      const ids = seedGate("FS", "todo");
+      // Put it in the finished state the way the user would have got there:
+      // through the model, not through the gate under test.
+      PMS.store.commit(d => {
+        d.tasks.find(t => t.id === ids.succ).status = "done";
+      }, "test-gate-back");
+      const res = PMS.repos.tasks.setStatus(ids.succ, "inprogress");
+      return !res.error && PMS.repos.tasks.get(ids.succ).status === "inprogress" && shown.length === 0;
+    } finally { PMS.toast.show = real; }
+  }));
+  ok("restating the same status is allowed and silent", withoutStoreLeaks(function () {
+    const shown = [];
+    const real = PMS.toast.show;
+    PMS.toast.show = function (m) { shown.push(String(m)); };
+    try {
+      const ids = seedGate("FS", "todo");
+      const res = PMS.repos.tasks.setStatus(ids.succ, "todo");
+      return !res.error && shown.length === 0;
+    } finally { PMS.toast.show = real; }
+  }));
+  ok("a dependency saved before types existed still gates as FS", (function () {
+    // Data on disk predates typed links, so a bare taskId must not be read as
+    // "no relationship" and waved through.
+    const d = {
+      settings: {}, subtasks: [],
+      tasks: [
+        { id: "lp", title: "old predecessor", status: "todo" },
+        { id: "ls", title: "old successor", status: "todo", dependencies: [{ taskId: "lp" }] }
+      ]
+    };
+    return PMS.dependencies.blocking(d, d.tasks[1]).map(x => x.task.id).join() === "lp";
+  })());
+  ok("an edit that only sets the status is gated the same way as setStatus", withoutStoreLeaks(function () {
+    const shown = [];
+    const real = PMS.toast.show;
+    PMS.toast.show = function (m) { shown.push(String(m)); };
+    try {
+      const ids = seedGate("FS", "todo");
+      const res = PMS.repos.tasks.update(ids.succ, { status: "inprogress" });
+      return !!res.error && res.error === "blocked" && PMS.repos.tasks.get(ids.succ).status === "todo";
+    } finally { PMS.toast.show = real; }
+  }));
+  ok("a finished task is never reported as blocked", (function () {
+    // Otherwise re-saving a completed plan warns about work that is already closed.
+    const d = {
+      settings: {}, subtasks: [],
+      tasks: [
+        { id: "dp", title: "predecessor", status: "todo" },
+        { id: "dd", title: "finished", status: "done", dependencies: [{ taskId: "dp", type: "FS" }] }
+      ]
+    };
+    return PMS.dependencies.isBlocked(d, d.tasks[1]) === false;
+  }));
+  ok("the blocked badge reaches the rendered row", withoutStoreLeaks(function () {
+    // The badge is the only warning there is before you try to move the task, so
+    // it has to be in the row the user is looking at.
+    errors.length = 0;
+    route("/tasks");
+    const ids = seedGate("FS", "todo");
+    const row = document.querySelector(".vt-row[data-id='" + ids.succ + "']");
+    if (!row) return true; // virtualized out of the window; nothing to assert
+    return !!row.querySelector(".badge-blocked") && /Blocked/.test(row.querySelector(".badge-blocked").textContent);
+  }));
+
+// ---- top-level counting: a breakdown task is part of the work, not a row ----
+  ok("the dashboard headline counts exclude breakdown tasks", (function () {
+    // If children were counted, every parent would be reported at least twice and
+    // "% complete" would be decided by the size of someone's breakdown rather
+    // than by how much of the plan is done.
+    const body = fs.readFileSync(path.join(APP, "js/views/dashboard.js"), "utf8");
+    const cut = body.slice(0, body.indexOf("var overall"));
+    const mainStats = (cut.match(/\btasks\.(length|filter|some|every|reduce|forEach)/g) || []).length;
+    // allTasks is allowed exactly once: building the progress map a row draws.
+    const rawStats = (cut.match(/\ballTasks\.(length|filter|some|every|reduce|forEach)/g) || []).length;
+    return mainStats > 0 && rawStats === 1;
+  })());
+  ok("the dashboard average is taken over main tasks only", (function () {
+    // A parent's percentage is already the mean of its children, so averaging
+    // the children in as well would count the same day of work twice.
+    const body = fs.readFileSync(path.join(APP, "js/views/dashboard.js"), "utf8");
+    const cut = body.slice(0, body.indexOf("var overall"));
+    const at = cut.indexOf("progSum +=");
+    if (at < 0) return false;
+    // Walk back from the accumulation to the loop that owns it: that loop's
+    // receiver is the whole question. "tasks" and "allTasks" differ only by
+    // case at the tail, which is exactly what is being asserted here.
+    const loopAt = cut.slice(0, at).lastIndexOf("forEach(function (tsk)");
+    if (loopAt < 0) return false;
+    const receiver = cut.slice(0, loopAt).trimEnd();
+    // "tasks." and "allTasks." differ only by what precedes the dot, so anchor on
+    // a non-word character: in allTasks the dot is glued to a letter.
+    return /(^|[^\w.])tasks\.$/.test(receiver);
+  })());
+  ok("the progress map still covers breakdown tasks", (function () {
+    // The average is top-level on purpose, but the bar on a parent's row is still
+    // computed from its children; dropping them here would make every parent
+    // render as if it had no progress at all.
+    const body = fs.readFileSync(path.join(APP, "js/views/dashboard.js"), "utf8");
+    return /allTasks\.forEach[\s\S]{0,160}progressMap\[tsk\.id\]/.test(body);
+  })());
+  ok("built-in reports count main tasks only", (function () {
+    const out = PMS.reports.generate("taskStatus", PMS.store.data);
+    const all = PMS.repos.tasks.all().length;
+    const mains = PMS.repos.tasks.all().filter(t => !t.parentTaskId).length;
+    if (!out || !(mains < all)) return true; // no breakdown tasks in this fixture
+    const counted = out.rows.reduce((n, r) => n + Number(r.count), 0);
+    return counted === mains && out.rows.every(r => Number(r.count) <= mains);
+  })());
+  ok("every task report counts the same tasks", (function () {
+    // Two cards that disagree about the size of the plan are worse than one card
+    // that is a little wrong, because there is no way to tell which to believe.
+    const all = PMS.repos.tasks.all();
+    const mains = all.filter(t => !t.parentTaskId);
+    const statuses = PMS.reports.generate("taskStatus", PMS.store.data);
+    const priorities = PMS.reports.generate("taskPriority", PMS.store.data);
+    if (!statuses || !priorities) return false;
+    return statuses.rows.reduce((n, r) => n + Number(r.count), 0) === mains.length
+      && priorities.rows.reduce((n, r) => n + Number(r.count), 0) === mains.length;
+  })());
+  ok("a report's idea of done is the progress engine's, not a guess at the label", (function () {
+    // A report that decides "done" on the status string alone disagrees with the
+    // progress bar the user is looking at, and the two numbers are printed side
+    // by side. Asking the engine also keeps the band rule (a task at 99.9% still
+    // has an open item, so it is not finished) out of the report's own logic.
+    const PP = PMS.programProgress;
+    const mk = (status, kids, planned) => ({
+      settings: {},
+      subtasks: kids.map((s, i) => ({ id: "s" + i, taskId: "pt", title: "s" + i, status: s })),
+      tasks: [{ id: "pt", title: "x", status: status, plannedSubtasks: planned }]
+    });
+    const a = mk("done", [], undefined);
+    const b = mk("review", ["done"], 1);   // every child closed, band still open
+    const c = mk("inprogress", ["done"], 2);
+    return PMS.reports.isDone(a, a.tasks[0]) === true
+      && PMS.reports.isDone(b, b.tasks[0]) === false
+      && PMS.reports.isDone(c, c.tasks[0]) === false
+      // and it agrees with what the bar would show, in every case
+      && [a, b, c].every(d => PMS.reports.isDone(d, d.tasks[0])
+        === (PP.taskProgress(d, d.tasks[0]) >= 100));
+  })());
+  ok("the budget report is no longer offered", (function () {
+    // The field stays on the project model; only the money view is gone.
+    return !PMS.reports.all().some(r => r.id === "budget");
+  })());
+  ok("the pillar report no longer carries a budget column", (function () {
+    const out = PMS.reports.generate("projectStatus", PMS.store.data);
+    return !!out && !out.columns.some(c => /budget/i.test(String(c)));
+  })());
+  ok("the pillar report names its owner from the project's manager", (function () {
+    const out = PMS.reports.generate("projectStatus", PMS.store.data);
+    const d = PMS.store.data;
+    if (!out || out.columns.indexOf("owner") < 0) return false;
+    // Only TOP-LEVEL pillars get a row (a sub-project is reported under its parent),
+    // so the check has to ask about those: a managed sub-project has no row of
+    // its own to look in.
+    const withOwner = d.projects.filter(p => !p.parentId && p.managerId && d.people.some(x => x.id === p.managerId));
+    if (!withOwner.length) return true; // nothing to prove in this fixture
+    return withOwner.every(p => {
+      const who = d.people.find(x => x.id === p.managerId);
+      const hit = out.rows.find(r => r.name === p.name);
+      const want = typeof who.name === "string" ? who.name : PMS.i18n.trilingual(who.name)(who.name);
+      return hit && String(hit.owner) === want && String(hit.owner) !== "";
+    });
+  })());
+  ok("the owner column reads for both name shapes", (function () {
+    // A plain name and a bilingual {en, ar} name are both legal, and the column
+    // has to be readable for both: one used to print "[object Object]", and the
+    // other printed nothing at all once it was passed to a helper that only
+    // understands the bilingual shape.
+    const d = {
+      settings: {},
+      projects: [{ id: "p1", name: "Plain", managerId: "m1" }, { id: "p2", name: "Bilingual", managerId: "m2" }],
+      people: [{ id: "m1", name: "Sara Ahmed" }, { id: "m2", name: { en: "Ali", ar: "علي" } }],
+      tasks: []
+    };
+    const rows = PMS.reports.generate("projectStatus", d).rows;
+    const plain = rows.find(r => r.name === "Plain");
+    const bi = rows.find(r => r.name === "Bilingual");
+    const shown = PMS.i18n.getLang() === "ar" ? "علي" : "Ali";
+    return plain.owner === "Sara Ahmed"
+      && bi.owner === shown
+      && [plain.owner, bi.owner].every(v => typeof v === "string" && v !== "" && v !== "[object Object]");
+  })());
+  ok("the pillar report counts main tasks and completed ones per project", (function () {
+    const out = PMS.reports.generate("projectStatus", PMS.store.data);
+    if (!out) return false;
+    if (out.columns.indexOf("tasks") < 0 || out.columns.indexOf("completed") < 0) return false;
+    // Completed cannot exceed the total, and neither may count a breakdown task
+    // that belongs to a different project.
+    return out.rows.every(r => Number(r.completed) <= Number(r.tasks));
+  }));
+
+  // ---- the filter bar: every control has to reach the engine ----
+  ok("the engine reads a single status as well as a list", (function () {
+    // Saved filters persist one scalar; the picker used to send an array. If the
+    // engine only understands one of those, a saved filter silently matches
+    // nothing when it is applied.
+    const d = { settings: {}, subtasks: [], tasks: [{ id: "1", title: "x", status: "inprogress", dueDate: "2026-10-05" }] };
+    const one = PMS.filterEngine.filterTasks(d.tasks, { statusKey: "inprogress" }, d);
+    const many = PMS.filterEngine.filterTasks(d.tasks, { status: ["inprogress"] }, d);
+    return one.length === 1 && many.length === 1;
+  })());
+  ok("a due-date range is inclusive at both ends", (function () {
+    const d = { settings: {}, subtasks: [], tasks: [
+      { id: "1", title: "a", status: "todo", dueDate: "2026-10-01" },
+      { id: "2", title: "b", status: "todo", dueDate: "2026-10-05" },
+      { id: "3", title: "c", status: "todo", dueDate: "2026-10-10" }
+    ] };
+    const hit = PMS.filterEngine.filterTasks(d.tasks, { from: "2026-10-01", to: "2026-10-05" }, d).map(t => t.id).join();
+    return hit === "1,2";
+  })());
+  ok("the start-date range is separate from the due-date range", (function () {
+    // Testing them through one field would let a filter that says "starts in
+    // October" quietly read the due date instead.
+    const d = { settings: {}, subtasks: [], tasks: [{ id: "1", title: "a", status: "todo", startDate: "2026-10-02", dueDate: "2026-11-20" }] };
+    return PMS.filterEngine.filterTasks(d.tasks, { startFrom: "2026-10-01", startTo: "2026-10-31" }, d).length === 1
+      && PMS.filterEngine.filterTasks(d.tasks, { to: "2026-10-31" }, d).length === 0;
+  })());
+  ok("main-only hides breakdown tasks", (function () {
+    const d = { settings: {}, subtasks: [], tasks: [
+      { id: "1", title: "parent", status: "todo", dueDate: "2026-10-01" },
+      { id: "2", title: "child", status: "todo", parentTaskId: "1", dueDate: "2026-10-01" }
+    ] };
+    return PMS.filterEngine.filterTasks(d.tasks, { mainOnly: true }, d).map(t => t.id).join() === "1";
+  })());
+  ok("blocked-only keeps exactly the tasks a gate would refuse", (function () {
+    const d = {
+      settings: {}, subtasks: [],
+      tasks: [
+        { id: "1", title: "predecessor", status: "todo" },
+        { id: "2", title: "successor", status: "todo", dependencies: [{ taskId: "1", type: "FS" }] },
+        { id: "3", title: "free", status: "todo" }
+      ]
+    };
+    return PMS.filterEngine.filterTasks(d.tasks, { blockedOnly: true }, d).map(t => t.id).join() === "2";
+  })());
+  ok("late-only means unfinished and past due, not merely dated in the past", (function () {
+    const d = { settings: {}, subtasks: [], tasks: [
+      { id: "1", title: "late", status: "inprogress", dueDate: "2020-01-01" },
+      { id: "2", title: "late but finished", status: "done", dueDate: "2020-01-01" },
+      { id: "3", title: "due ahead", status: "todo", dueDate: "2099-01-01" }
+    ] };
+    return PMS.filterEngine.filterTasks(d.tasks, { lateOnly: true }, d).map(t => t.id).join() === "1";
+  })());
+  ok("an empty query matches everything", (function () {
+    // The clear button has to actually clear: if an empty query dropped rows the
+    // user would have to reload the page to get the list back.
+    const d = { settings: {}, subtasks: [], tasks: [
+      { id: "1", title: "a", status: "todo" },
+      { id: "2", title: "b", status: "done" }
+    ] };
+    return PMS.filterEngine.filterTasks(d.tasks, {}, d).length === 2;
+  })());
+  ok("the filter bar exposes each of its criteria to the engine", (function () {
+    // A control that builds a query nobody reads is a control that lies. Read the
+    // view's own source so the check cannot pass while the wiring is absent.
+    const body = fs.readFileSync(path.join(APP, "js/views/tasks-table.js"), "utf8");
+    return ["mainOnly", "blockedOnly", "lateOnly", "criticalOnly", "startFrom", "startTo"]
+      .every(k => body.indexOf(k) > -1);
+  })());
+  ok("the active-filter badge counts what is actually applied", (function () {
+    // A badge stuck on "3" while one criterion is cleared sends people hunting
+    // for a filter that is no longer there.
+    const d = { settings: {}, subtasks: [], tasks: [{ id: "1", title: "a", status: "todo" }] };
+    return PMS.filterEngine.filterTasks(d.tasks, {}, d).length === 1
+      && PMS.filterEngine.filterTasks(d.tasks, { lateOnly: true }, d).length === 0;
+  })());
+  ok("every filter control has a label in both languages", (function () {
+    // An unlabelled control is invisible to a screen reader and to a reviewer.
+    const en = PMS.i18n.t("tasks.mainOnly", "en");
+    const ar = PMS.i18n.t("tasks.mainOnly", "ar");
+    return !!en && !!ar && en !== "tasks.mainOnly" && ar !== "tasks.mainOnly";
+  }));
+
+  // ---- deleting a custom field ----
+  ok("removing a field strips its values from tasks and projects", (function () {
+    // Definitions live in customFieldDefs; the per-record VALUES live in each
+    // record's own customFields map, keyed by the field id. Both have to go.
+    PMS.store.commit(d => {
+      d.customFieldDefs = [{ id: "cf1", name: "Team", type: "text" }];
+      d.tasks.push({ id: "cv1", title: "holder", status: "todo", customFields: { cf1: "alpha" } });
+      d.projects.push({ id: "cp1", name: "holder project", customFields: { cf1: "beta" } });
+    }, "test-field-values");
+    const removed = PMS.repos.fields.remove("cf1");
+    const d = PMS.store.data;
+    const t = d.tasks.find(x => x.id === "cv1");
+    const p = d.projects.find(x => x.id === "cp1");
+    const gone = !(d.customFieldDefs || []).some(f => f.id === "cf1");
+    PMS.store.commit(dd => {
+      dd.tasks = dd.tasks.filter(x => x.id !== "cv1");
+      dd.projects = dd.projects.filter(x => x.id !== "cp1");
+    }, "test-field-values-clean");
+    return removed === true && gone && t && p
+      && t.customFields.cf1 === undefined && p.customFields.cf1 === undefined;
+  })());
+  ok("removing a field takes it out of the saved filters that used it", (function () {
+    PMS.store.commit(d => {
+      d.customFieldDefs = [{ id: "cf2", name: "Region", type: "text" }];
+      d.savedFilters = [
+        { id: "sf-a", name: "by region", query: { customFields: { cf2: "north" }, status: ["todo"] } },
+        { id: "sf-b", name: "unrelated", query: { status: ["done"] } },
+        { id: "sf-c", name: "orphaned", query: { customFields: { cf2: "south" } } }
+      ];
+    }, "test-field-saved");
+    PMS.repos.fields.remove("cf2");
+    const filters = PMS.store.data.savedFilters || [];
+    const ids = filters.map(f => f.id).join();
+    const byRegion = filters.find(f => f.id === "sf-a");
+    PMS.store.commit(d => { d.savedFilters = []; }, "test-field-saved-clean");
+    // The filter that still has a real criterion survives without the dead key;
+    // the one left with nothing to filter on is dropped rather than kept as a
+    // trap that quietly matches everything.
+    return ids.indexOf("sf-a") > -1 && byRegion && byRegion.query.customFields === undefined
+      && ids.indexOf("sf-b") > -1 && ids.indexOf("sf-c") === -1;
+  })());
+  ok("removing a field that is already gone says so instead of throwing", (function () {
+    return PMS.repos.fields.remove("does-not-exist") === false;
+  })());
+  ok("removing a field copes with tasks and projects that hold no values", (function () {
+    // The realistic fresh-install shape: the arrays exist, nothing has used them
+    // yet. Cleanup walks both to strip the field's values, so an empty list is
+    // the case that has to not throw.
+    PMS.store.commit(d => {
+      d.customFieldDefs = [{ id: "cf3", name: "Bare", type: "text" }];
+    }, "test-field-bare");
+    try {
+      return PMS.repos.fields.remove("cf3") === true;
+    } finally {
+      PMS.store.commit(d => {
+        d.customFieldDefs = (d.customFieldDefs || []).filter(f => f.id !== "cf3");
+      }, "test-field-bare-clean");
+    }
+  })());
+  ok("removing a field guards the arrays it walks", (function () {
+    // Missing arrays are checked with the source rather than by breaking the live
+    // store: deleting store.data.tasks fires store:changed, and every view that
+    // repaints on it calls .filter on the very array that is gone.
+    const body = fs.readFileSync(path.join(APP, "js/data/repositories.js"), "utf8");
+    const start = body.indexOf('if (!find("customFieldDefs", id)) return false;');
+    const block = body.slice(start, start + 1600);
+    return start > -1
+      && /tasks\s*\|\|\s*\[\]/.test(block)
+      && /projects\s*\|\|\s*\[\]/.test(block);
+  })());
+  ok("the settings screen says which way the delete went", (function () {
+    const en1 = PMS.i18n.t("settings.fieldDeleted", "en");
+    const en2 = PMS.i18n.t("settings.fieldNotFound", "en");
+    const ar1 = PMS.i18n.t("settings.fieldDeleted", "ar");
+    return !!en1 && !!en2 && !!ar1
+      && [en1, en2, ar1].every(s => s.indexOf("settings.field") !== 0);
+  })());
+  ok("closing the delete dialog does not depend on the record it was given", (function () {
+    // The dialog was being asked to confirm a field it no longer had, which is
+    // why a delete could appear to do nothing. The confirm text must not depend
+    // on a record surviving until the click.
+    const body = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    const idx = body.indexOf("fields.remove");
+    return idx > -1 && body.slice(0, idx).lastIndexOf("modal.close") > body.slice(0, idx).lastIndexOf("requireDelete");
   })());
 
   section("Validation");
@@ -1900,11 +2322,31 @@ const root = () => document.getElementById("view-root");
   ok("sorting by the number column orders by the number shown", (function () {
     const d = PMS.store.data;
     const sorted = PMS.filterEngine.sortTasks(PMS.repos.tasks.all(), "number", "asc", d);
-    const nums = sorted.map(t => PMS.utils.taskNumber(d, t));
+    // Only MAIN tasks carry a number (a breakdown task is identified by its
+    // parent and is deliberately absent from the map), so the agreement this
+    // test is about is between the sorter and the numbers actually on screen.
+    // Comparing across the blank cells would compare "" as 0 and fail on a
+    // correct sort.
+    const nums = sorted.map(t => PMS.utils.taskNumber(d, t)).filter(n => n !== "");
     for (let i = 1; i < nums.length; i++) {
       if (!(nums[i - 1] <= nums[i])) return false;
     }
     return nums.length > 1;
+  })());
+  ok("only main tasks are numbered, and the numbers run 1..N with no gaps", (function () {
+    const d = PMS.store.data;
+    const map = PMS.utils.taskNumbers(d);
+    const all = PMS.repos.tasks.all();
+    const mains = all.filter(t => !t.parentTaskId);
+    const kids = all.filter(t => t.parentTaskId);
+    // every main task has a number...
+    if (!mains.every(t => typeof map[t.id] === "number")) return false;
+    // ...no breakdown task has one, so it never spends a number of its own...
+    if (!kids.every(t => map[t.id] === undefined)) return false;
+    // ...and the sequence is 1..N, because a gap would mean a number was
+    // spent on something invisible.
+    const seq = mains.map(t => map[t.id]).sort((a, b) => a - b);
+    return seq.length === mains.length && seq.every((n, i) => n === i + 1);
   })());
   ok("sorting by the number does not rebuild a map per comparison", (function () {
     // A quadratic sort on a long list is a hang the user would feel, not a slow

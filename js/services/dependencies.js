@@ -319,13 +319,59 @@
     return task.status === "done";
   }
 
+  // Has this task begun any work? Asked of the progress engine rather than read
+  // off the status label, so a task sitting at 0.1% through its band still counts
+  // as started - the same "ask the engine, trust the number" rule as above.
+  function hasStarted(data, task) {
+    if (!task) return true;
+    if (isTaskDone(data, task)) return true;
+    if (PMS.programProgress && PMS.programProgress.taskProgress) {
+      return PMS.programProgress.taskProgress(data, task) > 0;
+    }
+    return task.status !== "todo";
+  }
+
+  /* --------------------------------------------------------------------------
+     The gate each relationship puts in front of the successor.
+
+     What a link waits for is read off its OWN type, because that is what the
+     type means:
+
+       FS  finish-to-start   tied to the predecessor's FINISH  -> wait for done
+       FF  finish-to-finish  tied to the predecessor's FINISH  -> wait for done
+       SS  start-to-start    tied to the predecessor's START   -> wait for started
+       SF  start-to-finish   tied to the predecessor's START   -> wait for started
+
+     Treating every type as "wait until the predecessor is done" would be wrong
+     for the two links that hang off a START: a start-to-start pair is meant to
+     run side by side, so holding it back until the predecessor finishes would
+     deadlock two tasks the plan deliberately overlaps. And treating every type
+     as "wait for started" would let a successor finish early on a finish-to-
+     finish link it was supposed to land alongside.
+
+     `isSatisfied` above answers a different question - whether the DATES on the
+     two bars honour the link - so a link can be satisfied on paper while the
+     work itself has not happened yet. This is the work gate; that is the
+     calendar one.
+     -------------------------------------------------------------------------- */
+  function gateOpen(data, dep, pred) {
+    if (!pred) return true;
+    if (isTaskDone(data, pred)) return true;
+    if (dep.type === "SS" || dep.type === "SF") return hasStarted(data, pred);
+    return false;
+  }
+
   function blocking(data, task) {
+    if (!task) return [];
+    // A finished task is waiting on nothing: its gate opened on the way in, so
+    // painting it Blocked now would contradict the status shown beside it.
+    if (isTaskDone(data, task)) return [];
     var open = [];
     var byId = {};
     (data.tasks || []).forEach(function (t) { if (t && t.id) byId[t.id] = t; });
     predecessors(task).forEach(function (dep) {
       var p = byId[dep.id];
-      if (!p || isTaskDone(data, p)) return;
+      if (!p || gateOpen(data, dep, p)) return;
       open.push({ task: p, dep: dep });
     });
     return open;
@@ -385,6 +431,8 @@
     blocking: blocking,
     isBlocked: isBlocked,
     isTaskDone: isTaskDone,
+    hasStarted: hasStarted,
+    gateOpen: gateOpen,
     isSatisfied: isSatisfied,
     label: label
   };
