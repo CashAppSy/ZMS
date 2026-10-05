@@ -393,7 +393,7 @@
     var embedded = PMS.cloudsync.embedded() && PMS.cloudsync.embedded().projectId;
     var blk = h("div", {}, [
       h("div.u-bold", { text: st.enabled ? t("cloud.connected") : (embedded ? t("cloud.embedded") : (st.projectId ? t("cloud.disconnected") : t("cloud.notConfigured"))) }),
-      h("div.u-muted", { text: (st.projectId ? t("cloud.projectId") + ": " + st.projectId : "") + (st.lastSyncAt ? " · " + t("cloud.lastSync") + ": " + PMS.utils.formatDate(new Date(st.lastSyncAt).toISOString(), PMS.i18n) : "") })
+      h("div.u-muted", { text: (st.projectId ? t("cloud.projectId") + ": " + st.projectId : "") + (st.lastSyncAt ? " · " + t("cloud.lastSync") + ": " + PMS.utils.formatDate(new Date(st.lastSyncAt).toISOString(), PMS.i18n) : "") + " · " + t("settings.buildVersion") + " " + ((PMS.build && PMS.build.version) || "?") })
     ]);
     row.appendChild(blk);
 
@@ -1231,6 +1231,11 @@
     b.appendChild(h("p", { text: t("app.name") + " v" + PMS.version }));
     b.appendChild(h("p.u-muted", { text: t("settings.appVersion") + ": " + PMS.version }));
     b.appendChild(h("p.u-muted", { text: t("settings.schemaVersion") + ": " + PMS.schema.VERSION }));
+    // The build number, so "is this device on the current version?" is a fact
+    // rather than a guess. Two people on different copies is the normal state
+    // here, and it is invisible until a fix appears not to work.
+    var build = PMS.build || {};
+    b.appendChild(h("p.u-muted", { text: t("settings.buildVersion") + ": " + (build.version || "?") + " (" + (build.released || "?") + ")" }));
     card.appendChild(b);
     body.appendChild(card);
   }

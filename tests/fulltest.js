@@ -4903,6 +4903,28 @@ section("Meeting card leads with the creator, logo + favicon");
     return usesCreate && noSet && marksAlreadyExistsOk && treatsExists;
   })());
 
+  // Static files, no build step, no deploy pipeline: every device runs whatever
+  // copy of the folder it has. Two people on two copies is the normal state, and
+  // the only symptom is a fixed bug still reproducing - which is unanswerable
+  // from the inside unless the running version is printed on screen.
+  ok("the running build is visible, so a stale device is identifiable", (function () {
+    const buildSrc = fs.readFileSync(path.join(APP, "js/build.js"), "utf8");
+    const versioned = /version:\s*\d+/.test(buildSrc) && /released:\s*"\d{4}-\d{2}-\d{2}"/.test(buildSrc);
+
+    const html = fs.readFileSync(path.join(APP, "index.html"), "utf8");
+    const loaded = /<script src="js\/build\.js"><\/script>/.test(html);
+    const earlyEnough = html.indexOf("js/build.js") < html.indexOf("js/core/app.js");
+
+    const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    // shown both in About and on the cloud card, which is where sync is debugged
+    const inAbout = /t\("settings\.buildVersion"\)/.test(settingsSrc);
+    const inCloudCard = /PMS\.build && PMS\.build\.version/.test(settingsSrc);
+
+    ok("  (trace: versioned=" + versioned + " loaded=" + loaded + " earlyEnough=" + earlyEnough +
+       " inAbout=" + inAbout + " inCloudCard=" + inCloudCard + ")", true);
+    return versioned && loaded && earlyEnough && inAbout && inCloudCard;
+  })());
+
   // "Upload failed" blamed the rules for every failure, including quota,
   // session and validation errors. The real code and message must be on screen.
   ok("a failed upload shows why, not just that the rules may be at fault", (function () {
@@ -4914,7 +4936,7 @@ section("Meeting card leads with the creator, logo + favicon");
     const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
     const renders = /st\.failed && st\.failed\.length/.test(settingsSrc) && /f\.code/.test(settingsSrc);
 
-    const keys = ["cloud.failedTitle", "cloud.failedBody"].filter(k => !PMS.i18n.t(k));
+    const keys = ["cloud.failedTitle", "cloud.failedBody", "settings.buildVersion"].filter(k => !PMS.i18n.t(k));
     ok("  (trace: recordsWhy=" + recordsWhy + " exposed=" + exposed + " renders=" + renders +
        " missingKeys=" + (keys.join(",") || "none") + ")", true);
     return recordsWhy && exposed && renders && keys.length === 0;

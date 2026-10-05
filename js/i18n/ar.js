@@ -316,7 +316,7 @@
       seedLoaded: "تم تحميل البيانات التجريبية", dataErased: "تم مسح كل البيانات",
       noStatuses: "لا توجد عناصر بعد — أضف واحدًا بـ +",
       restoreDefaults: "استعادة الافتراضيات",
-      schemaVersion: "إصدار المخطط", appVersion: "إصدار التطبيق",
+      schemaVersion: "إصدار المخطط", appVersion: "إصدار التطبيق", buildVersion: "نسخة البناء",
       exportAllJson: "تنزيل كل البيانات (JSON)", importJson: "استيراد JSON",
       importMode: "وضع الاستيراد", merge: "دمج (الاحتفاظ بالموجود)", replace: "استبدال",
       importTitle: "استيراد البيانات", undoRedo: "تراجع/إعادة",

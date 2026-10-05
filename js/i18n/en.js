@@ -321,7 +321,7 @@
       seedLoaded: "Demo data loaded", dataErased: "All data erased",
       noStatuses: "No items yet — add one with +",
       restoreDefaults: "Restore defaults",
-      schemaVersion: "Schema version", appVersion: "App version",
+      schemaVersion: "Schema version", appVersion: "App version", buildVersion: "Build",
       exportAllJson: "Download all data (JSON)", importJson: "Import JSON",
       importMode: "Import mode", merge: "Merge (keep existing)", replace: "Replace",
       importTitle: "Import data", undoRedo: "Undo/Redo",
