@@ -495,6 +495,8 @@
         unreadable: "Part of the shared data cannot be read",
         unreadableBody: "The collections listed below could not be downloaded, so what other people do in them will not appear here. Everything else still syncs."
       },
+      failedTitle: "Some records were not uploaded",
+      failedBody: "These writes did not go through. The code in brackets is what the cloud replied:",
       diagnose: "Diagnose sharing",
       diagnoseRunning: "Checking cloud access…",
       diagnoseTitle: "Cloud access report",

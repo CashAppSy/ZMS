@@ -4760,7 +4760,7 @@ section("Meeting card leads with the creator, logo + favicon");
       ? PMS.utils.readFile("js/services/sync-firestore.js")
       : fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
     ok("every write in a push is labelled with the document it targets",
-      /function writeOp\(label, promise\)/.test(syncSrc) &&
+      /function writeOp\(label, promise, opts\)/.test(syncSrc) &&
       (syncSrc.match(/writeOp\(/g) || []).length >= 8 &&
       !/ops\.push\((recordRef|stateRef)\(/.test(syncSrc),
       "an unlabelled write cannot be named when the rules refuse it");
@@ -4876,6 +4876,48 @@ section("Meeting card leads with the creator, logo + favicon");
     ok("  (trace: readSwallowed=" + readSwallowed + " noNoteDenied=" + noNoteDenied +
        " notConcat=" + notConcat + ")", true);
     return readSwallowed && noNoteDenied && notConcat;
+  })());
+
+  // The activity log is append-only in the rules (allow update: if false). A
+  // set() on an entry the cloud already holds is therefore an update and is
+  // refused - and the mirror is only filled by a pull that actually applied
+  // data, so any device that lost its mirror re-sent all of them and every
+  // admin push came back "Upload failed". create() turns "already there" into a
+  // distinguishable answer, and it is not a failure.
+  ok("an activity entry already in the cloud is not a failed upload", (function () {
+    const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    const fn = src.match(/function buildAppendOps\(cname, d, idn, t\) \{[\s\S]*?\n  \}/);
+    if (!fn) return false;
+    const body = fn[0];
+    const usesCreate = /recordRef\(cname, rec\.id\)\s*\n?\s*\.create\(/.test(body);
+    const noSet = !/\.set\(/.test(body);
+    const marksAlreadyExistsOk = /alreadyExistsOk: true/.test(body);
+
+    // writeOp must turn already-exists into a success for those ops
+    const opFn = src.match(/function writeOp\(label, promise, opts\) \{[\s\S]*?\n  \}/);
+    const opBody = opFn ? opFn[0] : "";
+    const treatsExists = /alreadyExistsOk[\s\S]*?already-exists[\s\S]*?ok: true/.test(opBody);
+
+    ok("  (trace: usesCreate=" + usesCreate + " noSet=" + noSet +
+       " marked=" + marksAlreadyExistsOk + " treatsExists=" + treatsExists + ")", true);
+    return usesCreate && noSet && marksAlreadyExistsOk && treatsExists;
+  })());
+
+  // "Upload failed" blamed the rules for every failure, including quota,
+  // session and validation errors. The real code and message must be on screen.
+  ok("a failed upload shows why, not just that the rules may be at fault", (function () {
+    const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    const recordsWhy = /lastFailed = results\.filter\(function \(r\) \{ return r && r\.ok === false; \}\)/.test(src) &&
+                       /code: \(r\.error && r\.error\.code\) \|\| ""/.test(src);
+    const exposed = /failed: lastFailed/.test(src);
+
+    const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    const renders = /st\.failed && st\.failed\.length/.test(settingsSrc) && /f\.code/.test(settingsSrc);
+
+    const keys = ["cloud.failedTitle", "cloud.failedBody"].filter(k => !PMS.i18n.t(k));
+    ok("  (trace: recordsWhy=" + recordsWhy + " exposed=" + exposed + " renders=" + renders +
+       " missingKeys=" + (keys.join(",") || "none") + ")", true);
+    return recordsWhy && exposed && renders && keys.length === 0;
   })());
 
   // A pull reads every collection with Promise.all. One refused collection used

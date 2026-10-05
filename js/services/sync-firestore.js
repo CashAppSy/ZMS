@@ -139,6 +139,7 @@
       realtime: enabled,
       lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null),
       denied: lastDenied,
+      failed: lastFailed,
       blocked: lastBlocked
     };
   }
@@ -173,6 +174,7 @@
   // write is denied by default. That looks exactly like "my task vanished" from
   // the other devices, with nothing on screen to say why.
   var lastDenied = null;
+  var lastFailed = [];
   function noteDenied(err, where) {
     var code = (err && err.code) || "";
     var msg = (err && err.message) || String(err);
@@ -1112,10 +1114,19 @@
   // the first denial and the mirror was never persisted - so a ruleset that
   // denies one collection silently blocked the bookkeeping for all of them, and
   // the app carried on as if it had uploaded.
-  function writeOp(label, promise) {
+  function writeOp(label, promise, opts) {
     return promise.then(
       function () { return { ok: true, label: label }; },
-      function (e) { return { ok: false, label: label, error: e }; }
+      function (e) {
+        // "already there" is a successful outcome for an append-only create:
+        // the record IS in the cloud, which is all the mirror records.
+        var code = e && e.code || "";
+        if (opts && opts.alreadyExistsOk &&
+            (code === "already-exists" || /already exists/i.test((e && e.message) || ""))) {
+          return { ok: true, label: label, alreadyExisted: true };
+        }
+        return { ok: false, label: label, error: e };
+      }
     );
   }
 
@@ -1251,7 +1262,17 @@
     local.forEach(function (rec) {
       if (!rec || !rec.id) return;
       if (mirror[rec.id]) return;
-      ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
+      // create(), not set(). The activity log is append-only in the rules
+      // (allow update: if false), so a set() on an entry the cloud ALREADY holds
+      // is an update and is refused. The mirror is only ever filled by a pull
+      // that actually applied data, so a device whose mirror was lost (cleared
+      // storage, fresh browser, a pull that short-circuited) holds entries that
+      // are already in the cloud and would re-send every one of them - each one
+      // refused, which is what turned an admin's push into a permanent
+      // "Upload failed". create() makes "already there" an explicit,
+      // distinguishable answer instead of a rules refusal.
+      ops.push(writeOp(cname + "/" + rec.id + " (write)",
+        recordRef(cname, rec.id).create(PMS.utils.deepClone(rec)), { alreadyExistsOk: true }));
       mirrorUpdates[rec.id] = true;
     });
 
@@ -1395,6 +1416,18 @@
                   if (noteDenied(r.error, r.label)) denied.push(r.label);
                   else failed.push(r.label);
                 });
+                // Keep WHY each one failed, not just that it did. "Upload failed"
+                // names only the Firestore rules, so a quota, an expired session
+                // or a value the rules cannot express all read identically.
+                lastFailed = results.filter(function (r) { return r && r.ok === false; })
+                  .map(function (r) {
+                    return {
+                      label: r.label,
+                      code: (r.error && r.error.code) || "",
+                      message: (r.error && r.error.message) || String(r.error)
+                    };
+                  });
+                if (!lastFailed.length) lastFailed = [];
                 if (denied.length) {
                   console.error("[cloudsync] REFUSED by the Firestore rules - these documents were not written:", denied);
                 }

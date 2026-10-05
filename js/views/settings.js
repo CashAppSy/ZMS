@@ -422,6 +422,26 @@
         ]));
       });
     }
+    // A write that failed for a reason OTHER than the rules still blocks the
+    // upload, and the old toast blamed the rules for all of them. Show the real
+    // code and message, so "Upload failed" is answerable without a console.
+    if (st.failed && st.failed.length) {
+      row.appendChild(h("div", {
+        style: {
+          marginBlockStart: "10px", padding: "8px 10px",
+          borderInlineStart: "4px solid var(--danger)",
+          background: "var(--danger-soft)", borderRadius: "6px"
+        }
+      }, [
+        h("div.u-bold", { text: t("cloud.failedTitle") }),
+        h("div", { text: t("cloud.failedBody") })
+      ].concat(st.failed.slice(0, 12).map(function (f) {
+        return h("div.u-muted", {
+          style: { marginBlockStart: "4px", wordBreak: "break-word" },
+          text: (f.label || "?") + (f.code ? " [" + f.code + "]" : "") + (f.message ? " — " + f.message : "")
+        });
+      }))));
+    }
     var sw = h("label.switch");
     var inp = h("input", { type: "checkbox", checked: !!st.enabled, on: { change: function (e) {
       if (e.target.checked) {
@@ -448,7 +468,12 @@
       PMS.auth.confirmSensitive(function () {
         PMS.cloudsync.push().then(function (ok) {
           if (ok) PMS.toast.show(t("cloud.pushDone"), "success");
-          else PMS.toast.show(t("cloud.pushFail"), "error");
+          else {
+            PMS.toast.show(t("cloud.pushFail"), "error");
+            // Re-render so the reason list below appears immediately instead of
+            // waiting for the user to notice a stale card.
+            if (PMS.router && PMS.router.handle) PMS.router.handle();
+          }
         });
       });
     } } }));
