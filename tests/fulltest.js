@@ -4857,21 +4857,25 @@ section("Meeting card leads with the creator, logo + favicon");
            /clearBlocked\("notSignedIn"\)/.test(src);
   })());
 
-  // The legacy round-3 wrapper cleanup runs inside push(). If its read is
-  // refused the rejection used to propagate out and abort the push before any
-  // task write ran - the task then stayed on this device with no error anywhere,
-  // which is exactly the reported symptom.
-  ok("a refused legacy-wrapper read can no longer abort the push", (function () {
+  // Round-4 rules have NO rule for zms_<c>/data (the wrapper docs are gone by
+// design), so the admin-only legacy cleanup reads a path that is refused on
+// EVERY push. It must never be reported as a failure: that is what made a fully
+// successful upload show "Upload failed", and before it was caught the same
+// rejection aborted the push before any task or activity was written.
+  ok("the legacy wrapper cleanup can never fail an upload", (function () {
     const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
     const fn = src.match(/function legacyCleanupOps\(idn\) \{[\s\S]*?\n  \}/);
     if (!fn) return false;
     const body = fn[0];
-    // The read carries a rejection handler ...
-    const readHandled = /\}, function \(e\) \{[\s\S]*?noteDenied\(e, cname \+ "\/data \(legacy cleanup\)"\)/.test(body);
-    // ... and the delete is a settled op like every other write in the push.
-    const deleteSettled = /writeOp\(cname \+ "\/data \(legacy cleanup\)", colRef\(cname\)\.delete\(\)\)/.test(body);
-    ok("  (trace: readHandled=" + readHandled + " deleteSettled=" + deleteSettled + ")", true);
-    return readHandled && deleteSettled;
+    // the refused read is swallowed, and NOT reported as a rules denial
+    const readSwallowed = /function \(e\) \{[\s\S]*?console\.debug[\s\S]*?return \[\];/.test(body);
+    const noNoteDenied = !/noteDenied/.test(body);
+    // its ops are kept out of the pushed op list, so the result cannot turn red
+    const notConcat = /legacyCleanupOps\(idn\)\.catch\(function \(\) \{ return \[\]; \}\)/.test(src) &&
+                      !/ops = ops\.concat\(legacyOps\)/.test(src);
+    ok("  (trace: readSwallowed=" + readSwallowed + " noNoteDenied=" + noNoteDenied +
+       " notConcat=" + notConcat + ")", true);
+    return readSwallowed && noNoteDenied && notConcat;
   })());
 
   // A pull reads every collection with Promise.all. One refused collection used

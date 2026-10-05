@@ -1264,6 +1264,13 @@
   // once every item it holds is present locally (so nothing is lost), leaving
   // per-record documents as the only source of truth.
   function legacyCleanupOps(idn) {
+    // The round-4 ruleset deliberately has NO rule for zms_<c>/data: those
+    // wrapper docs are gone by design, so reading one is REFUSED. This runs on
+    // every admin push, so treating that refusal as a failure made every push
+    // report "Upload failed" - and before it was caught, it aborted the push
+    // before a single task or activity was written. A wrapper doc that the
+    // rules no longer mention cannot exist, so there is nothing here to clean
+    // up: this is best-effort housekeeping and must never colour the result.
     if (!idn.isAdmin) return Promise.resolve([]);
     return Promise.all(RECORD_COLS.map(function (cname) {
       return colRef(cname).get().then(function (s) {
@@ -1275,17 +1282,19 @@
         var mirrored = items.every(function (it) { return it && it.id && localIds[it.id]; });
         return mirrored ? [writeOp(cname + "/data (legacy cleanup)", colRef(cname).delete())] : [];
       }, function (e) {
-        // A ruleset that will not even let us read the legacy wrapper is very
-        // often the very ruleset we are trying to upload past. Letting that
-        // rejection propagate aborted the whole push before a single task write
-        // ran, so the task stayed on this device with no error anywhere.
-        noteDenied(e, cname + "/data (legacy cleanup)");
+        // Expected on the current ruleset: the wrapper doc is not readable
+        // because no rule covers it. Not an error, and not the account's fault.
+        console.debug("[cloudsync] legacy wrapper " + cname + "/data not present or not readable (" +
+          ((e && e.code) || "error") + ") - nothing to clean up");
         return [];
       });
     })).then(function (groups) {
       var out = [];
       groups.forEach(function (g) { out = out.concat(g); });
       return out;
+    }, function (e) {
+      console.debug("[cloudsync] legacy cleanup skipped (" + ((e && e.code) || "error") + ")");
+      return [];
     });
   }
 
@@ -1363,9 +1372,11 @@
               ops = ops.concat(built.ops);
               if (built.mirror) mirrorPatches[cname] = built.mirror;
             });
-            // legacy round-3 wrapper cleanup (admin only)
-            return legacyCleanupOps(idn).then(function (legacyOps) {
-              ops = ops.concat(legacyOps);
+            // legacy round-3 wrapper cleanup (admin only). Deliberately kept OUT of
+            // `ops`: a wrapper doc the rules no longer cover can never be
+            // cleaned up, and its absence must not turn a fully successful
+            // upload into "Upload failed".
+            return legacyCleanupOps(idn).catch(function () { return []; }).then(function () {
               // state clock: managers/admins write the full state doc; members
               // only bump the clock (updatedAt) so other devices pull the change
               if (sharedWrite && (ops.length || wroteWhole)) {
