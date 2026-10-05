@@ -39,6 +39,7 @@
     // Sections are read-only for a manager: they can see how work is grouped
     // and pick people from them, but only the admin restructures the org.
     var isAdmin = PMS.auth ? PMS.auth.isAdmin() : true;
+    ensureDirectory();
     if (canWrite) {
       var actions = h("div.actions");
       if (isAdmin) actions.appendChild(h("button.btn", { text: "+ " + t("people.addDepartment"), on: { click: function () { PMS.editors.openDepartmentEditor(null, function () { activeSection = "depts"; render(container); }); } } }));
@@ -234,9 +235,28 @@
     return card;
   }
 
+  // Read the account through the merged view (local records + the cloud
+  // directory), so a colleague who signed in on another device is not reported as
+  // having no login account just because this browser never adopted their record.
   function personAccount(person) {
-    if (!person || !PMS.auth || !PMS.auth.userByPersonId) return null;
-    return PMS.auth.userByPersonId(person.id) || null;
+    if (!person || !PMS.auth || !PMS.auth.accountForPerson) return null;
+    return PMS.auth.accountForPerson(person.id) || null;
+  }
+
+  // The People screen asks "who can sign in", which is a question about Firebase
+  // Auth, not about this browser. On a device that has never opened Settings ->
+  // Accounts the directory has never been fetched, so the answer would be
+  // "nobody but me". Fetch it once when an admin lands here, then repaint.
+  var dirAsked = false;
+  function ensureDirectory() {
+    if (dirAsked) return;
+    if (!PMS.cloudsync || !PMS.cloudsync.cloudAccounts || !PMS.cloudsync.isConfigured()) return;
+    if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return;
+    dirAsked = true;
+    var root = document.getElementById("view-root");
+    PMS.cloudsync.cloudAccounts(false).then(function () {
+      if (PMS.router && PMS.router.current === "/people" && root) render(root);
+    })["catch"](function () { dirAsked = false; });
   }
 
   function resetPersonPassword(person, acc) {

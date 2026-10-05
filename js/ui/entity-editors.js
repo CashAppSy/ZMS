@@ -684,10 +684,15 @@
     createForPerson: createPersonAccount,
     setActiveForPerson: function (person) {
       if (!person || !PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return;
-      var acc = PMS.auth.userByPersonId(person.id);
+      // The merged view, so archiving somebody whose account lives only in the
+      // cloud directory still reaches their login. updateUser needs a LOCAL
+      // record id though - a cloud-only row carries a synthetic "cloud:<uid>"
+      // id, and handing that to a local update would silently do nothing.
+      var acc = (PMS.auth.accountForPerson && PMS.auth.accountForPerson(person.id))
+        || PMS.auth.userByPersonId(person.id);
       if (!acc) return;
       var active = person.status !== "inactive";
-      PMS.auth.updateUser(acc.id, { active: active });
+      if (!acc.cloudOnly) PMS.auth.updateUser(acc.id, { active: active });
       if (acc.cloudUid && PMS.cloudsync && PMS.cloudsync.setCloudActive) {
         PMS.cloudsync.setCloudActive(acc.cloudUid, active).catch(function () {});
       }

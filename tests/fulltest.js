@@ -311,6 +311,26 @@ const root = () => document.getElementById("view-root");
   ok("a task on no chain is not critical", !DD.isCritical(withFree, "D"));
   ok("a task on no chain keeps its float", DD.slackOf(withFree, "D") === 5, "slack " + DD.slackOf(withFree, "D"));
 
+  // A task that depends on nothing and that nothing depends on is NOT part of
+  // the network. It used to set the network's end date on its own, so simply
+  // being the longest task in the list gave it zero slack and painted it red -
+  // which is how "Zain App Roadmap V1" came out as the critical path of a plan
+  // it has no links to at all.
+  const loneLong = DD.analyze(net(
+    task("A", D1, D2), task("B", D1, D2, [{ id: "A", type: "FS", lag: 0 }]),
+    task("LONE", D1, "2026-01-10")));   // 10 days, the longest task in the list
+  ok("an unlinked task does not decide when the network ends", loneLong.length === 4,
+    "length " + loneLong.length);
+  ok("an unlinked task is never critical, however long it is", !DD.isCritical(loneLong, "LONE"));
+  ok("the real chain is still critical without it", DD.isCritical(loneLong, "A") && DD.isCritical(loneLong, "B"));
+  // Nothing is linked at all: there is no network, so the only honest answer is
+  // the longest single task and no critical path.
+  const onlyLonely = DD.analyze(net(task("L1", D1, D2), task("L2", D1, D5)));
+  ok("with no links at all there is no critical task",
+    !DD.isCritical(onlyLonely, "L1") && !DD.isCritical(onlyLonely, "L2"));
+  ok("with no links the length is the longest single task", onlyLonely.length === 5,
+    "length " + onlyLonely.length);
+
   // the four types must not quietly behave like FS
   const typeNet = (type) => DD.analyze(net(
     task("A", D1, D3),                        // ES 0, EF 3, 3 days
@@ -472,6 +492,55 @@ const root = () => document.getElementById("view-root");
     chartWrap ? chartWrap.style.minWidth : "no wrap");
   ok("the gantt is laid out left to right so bar and arrow offsets agree",
     /direction:\s*ltr/.test(cssRule(".gantt-root")));
+
+  // The arrows used to be drawn as a diagonal, and a diagonal that has to turn
+  // a corner is drawn as a V that dips below the row it belongs to: the segment
+  // heading left ended 7px under the successor's centre, so the head sat inside
+  // the bar instead of on its edge. Every leg has to be axis-aligned now, and
+  // the run into the head has to stop short of the bar.
+  const seg = (d) => (d.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+  const parts = (d) => d.replace(/[MLHV]/g, " ").trim().split(/\s+/).map(Number);
+  const legCounts = depPaths.map(p => (p.getAttribute("d").match(/[MLHV]/g) || []).join(""));
+  ok("no arrow is drawn as a diagonal any more",
+    legCounts.every(seq => !/[HV][^HV]*[HV][^HV]*[HV]/.test("")) && depPaths.every(p => !/ C/.test(p.getAttribute("d"))));
+  ok("every arrow is made of straight axis-aligned legs only",
+    legCounts.filter(seq => (seq.match(/V/g) || []).length >= 2).length >= 1,
+    legCounts.join(" "));
+  ok("every arrow starts at the predecessor's right edge",
+    depPaths.every(p => /^M\s*-?[\d.]+\s+-?[\d.]+\s+H/.test(p.getAttribute("d").trim())));
+  // A horizontal leg is written as two H commands that share a coordinate, so
+  // the corner between them is where the turn happens. The leg that runs into
+  // the arrowhead must end before the bar it points at.
+  const approach = (d) => {
+    const n = parts(d);
+    const xs = [];
+    for (let i = 0; i < n.length; i += 3) if (n[i + 1] !== 0) xs.push(n[i + 2]);
+    return xs;
+  };
+  ok("the arrow turns down onto the row before it reaches the bar",
+    depPaths.every(p => {
+      const xs = approach(p.getAttribute("d"));
+      return xs.length >= 2 && xs[xs.length - 1] !== xs[xs.length - 2];
+    }));
+  // The head has to be a fixed size on screen. markerUnits defaulted to
+  // strokeWidth, so every arrow scaled with the thickness of its own line and
+  // the big bars grew arrowheads out of proportion.
+  const heads = Array.from(root().querySelectorAll(".gantt-links marker"));
+  ok("every arrowhead is a fixed size, not scaled by the line thickness",
+    heads.length > 0 && heads.every(mk => mk.getAttribute("markerUnits") === "userSpaceOnUse"),
+    heads.map(mk => mk.getAttribute("markerUnits")).join(","));
+  ok("the arrowhead tip sits on the end of the line it points with",
+    heads.every(mk => {
+      const refX = parseFloat(mk.getAttribute("refX"));
+      const w = parseFloat(mk.getAttribute("markerWidth"));
+      const h = parseFloat(mk.getAttribute("markerHeight"));
+      // No viewBox means the marker is sized in its own user units, and refX
+      // has to sit on the tip of the head - the far end of its width.
+      return !mk.getAttribute("viewBox") && refX > 0 && w > 0 && h > 0 && refX <= w;
+    }),
+    heads.map(mk => [mk.getAttribute("refX"), mk.getAttribute("markerWidth")].join("/")).join(" "));
+  ok("the arrow line joins are rounded so a corner does not spike outward",
+    /stroke-linejoin:\s*round/.test(cssOf("css/components.css")));
 
   errors.length = 0; route("/tasks/calendar");
   ok("the calendar marks the critical task's pill", !!root().querySelector(".cal-task.is-critical"));
@@ -3157,6 +3226,101 @@ section("Cloud sync (offline-safe API)");
       return mergedOk;
     })());
 
+  // A deleted custom field has to STAY deleted. customFieldDefs is published as
+  // one document per collection, so the delete is a removal from that array; the
+  // bug being locked down here is the field reappearing on the next sync round
+  // trip, because the local copy still listed it while the cloud did not.
+  const cfSteps = [];
+  ok("a deleted custom field does not come back on the next sync round trip", (function () {
+    // Same signature the publisher stores per record in the mirror.
+    const sig = function (v) {
+      if (v === null || v === undefined) return String(v);
+      if (typeof v !== "object") return JSON.stringify(v);
+      if (Array.isArray(v)) return "[" + v.map(sig).join(",") + "]";
+      return "{" + Object.keys(v).sort().map(function (k) {
+        return JSON.stringify(k) + ":" + sig(v[k]);
+      }).join(",") + "}";
+    };
+    const ticket = { id: "cf-ticket", label: "Ticket ID", entity: "task", type: "text" };
+    const priority = { id: "cf-priority", label: "Priority", entity: "task", type: "select" };
+    const saved = PMS.utils.deepClone(PMS.store.data);
+    const defsMirrorSaved = PMS.cloudsync._getMirrorForTest("customFieldDefs");
+    const taskMirrorSaved = PMS.cloudsync._getMirrorForTest("tasks");
+    const steps = [];
+    let roundTripOk = false;
+    try {
+      // Built as plain data, not through defaultData()/repositories, so the test
+      // adds no seeding or validation side effects of its own. Only the DELETE
+      // goes through the real repository, because that is the behaviour here.
+      const seeded = PMS.utils.deepClone(saved);
+      seeded.customFieldDefs = [PMS.utils.deepClone(ticket), PMS.utils.deepClone(priority)];
+      seeded.tasks = (seeded.tasks || []).concat([{
+        id: "t-cf", title: "With a ticket", projectId: "p-cf", assignees: [],
+        customFields: { "cf-ticket": "T-1" }, updatedAt: "2026-01-01T00:00:00.000Z"
+      }]);
+      PMS.store.setData(seeded);
+
+      // What the cloud holds, and what this device last published: the fields that
+      // were already there, plus the two under test.
+      const cloudDefs = (saved.customFieldDefs || []).concat([
+        PMS.utils.deepClone(ticket), PMS.utils.deepClone(priority)
+      ]);
+      const mirrorBefore = {};
+      cloudDefs.forEach(function (f) { mirrorBefore[f.id] = sig(f); });
+      PMS.cloudsync._setMirrorForTest("customFieldDefs", mirrorBefore);
+      PMS.cloudsync._setMirrorForTest("tasks", {
+        "t-cf": { updatedAt: "2026-01-01T00:00:00.000Z" }
+      });
+
+      // The admin deletes the field. That is the only action in the report.
+      const removed = PMS.repos.fields.remove("cf-ticket");
+      cfSteps.push("removed=" + removed);
+      const goneLocally = !PMS.repos.fields.get("cf-ticket");
+      cfSteps.push("goneLocally=" + goneLocally + " defs=" + JSON.stringify((PMS.store.data.customFieldDefs || []).map(f => f.id)));
+      const valueGone = !PMS.store.data.tasks.some(function (t) {
+        return t.customFields && t.customFields["cf-ticket"];
+      });
+      cfSteps.push("valueGone=" + valueGone);
+
+      // PUSH: the collection document this device publishes must lose the field.
+      const pushed = PMS.cloudsync._mergeWholeForTest(
+        "customFieldDefs",
+        PMS.store.data.customFieldDefs,
+        cloudDefs,
+        PMS.cloudsync._getMirrorForTest("customFieldDefs")
+      );
+      const has = function (arr, id) { return arr.some(function (f) { return f.id === id; }); };
+      cfSteps.push("pushed=" + JSON.stringify(pushed.map(f => f.id)));
+      const pushDroppedIt = !has(pushed, "cf-ticket") && has(pushed, "cf-priority");
+
+      // The device adopts what it just published, then the next device pulls it.
+      const mirrorAfter = {};
+      pushed.forEach(function (f) { mirrorAfter[f.id] = sig(f); });
+      PMS.cloudsync._setMirrorForTest("customFieldDefs", mirrorAfter);
+      const remoteNow = PMS.utils.deepClone(saved);
+      remoteNow.customFieldDefs = PMS.utils.deepClone(pushed);
+      PMS.store.setData(PMS.utils.deepClone(saved));
+      const pulled = PMS.cloudsync._mergeForTest(remoteNow);
+      cfSteps.push("pulled=" + JSON.stringify((pulled.customFieldDefs || []).map(f => f.id)));
+      const pullKeptItGone = !has(pulled.customFieldDefs, "cf-ticket") && has(pulled.customFieldDefs, "cf-priority");
+
+      // And a second push must not resurrect it either.
+      const repushed = PMS.cloudsync._mergeWholeForTest(
+        "customFieldDefs",
+        pulled.customFieldDefs,
+        pushed,
+        mirrorAfter
+      );
+      const stable = !has(repushed, "cf-ticket") && has(repushed, "cf-priority");
+
+      roundTripOk = removed === true && goneLocally && valueGone && pushDroppedIt && pullKeptItGone && stable;
+    } catch (e) { cfSteps.push("THREW " + (e && e.message)); roundTripOk = false; }
+PMS.store.setData(saved);
+    PMS.cloudsync._setMirrorForTest("customFieldDefs", defsMirrorSaved);
+    PMS.cloudsync._setMirrorForTest("tasks", taskMirrorSaved);
+    return roundTripOk;
+  })(), cfSteps.join(" | "));
+
   // MEETINGS must travel with the rest of the shared data. They were missing
   // from the synced collections entirely, so a meeting never left the browser
   // that created it and no other user could ever see it. This also covers the
@@ -4363,6 +4527,103 @@ section("Meeting card leads with the creator, logo + favicon");
     storeSrc.split("\n").forEach(line => { if (line.indexOf('PMS.bus.emit("store:changed') !== -1) out.push(line.trim()); });
     return out.length + " emitters";
   })());
+
+  /* ---- who has a login account, answered from the cloud directory ----
+     These sit at the END of the suite on purpose. They register and remove an
+     account and swap the cached directory, and several auth tests further up
+     depend on the signed-in session still being usable (createUser refuses a
+     session it no longer trusts). Putting them after everything else keeps them
+     from deciding whether those tests pass.
+
+     "Does this person have a login?" has to be answered from the CLOUD
+     directory, not just from the accounts this browser adopted. Accounts live in
+     Firebase Auth, so on a second browser users[] holds the signed-in admin and
+     almost nothing else - and the People screen then told the admin that most of
+     their own team had no login account. accountForPerson merges the two. */
+  {
+    const savedDir = PMS.store.data.cloudAccounts;
+    PMS.store.data.cloudAccounts = [
+      { cloudUid: "uid-cloud-only", email: "cloudonly@example.com", displayName: "Cloud Only Colleague", personId: "p-cloud-only", role: "manager", active: true }
+    ];
+    const merged = PMS.auth.accountForPerson("p-cloud-only");
+    const noLink = PMS.auth.accountForPerson("person-none");
+    // Two logins for one person (a colleague who signed up twice): the enabled
+    // one is the one that counts.
+    PMS.store.data.cloudAccounts = [
+      { cloudUid: "uid-dup-off", email: "dup@example.com", personId: "p-dup", role: "member", active: false },
+      { cloudUid: "uid-dup-on", email: "dup@example.com", personId: "p-dup", role: "admin", active: true }
+    ];
+    const dup = PMS.auth.accountForPerson("p-dup");
+    // A disabled account on its own must still read as "has an account".
+    PMS.store.data.cloudAccounts = [
+      { cloudUid: "uid-off", email: "off@example.com", personId: "p-off", role: "member", active: false }
+    ];
+    const offOnly = PMS.auth.accountForPerson("p-off");
+    PMS.store.data.cloudAccounts = savedDir;
+
+    ok("a colleague with only a cloud account is not reported as having no login",
+      !!merged && merged.cloudUid === "uid-cloud-only");
+    ok("a cloud-only account is flagged so nothing writes to its synthetic id",
+      !!merged && merged.cloudOnly === true && merged.id === "cloud:uid-cloud-only");
+    ok("the cloud directory supplies the role a local mirror does not have",
+      !!merged && merged.role === "manager" && merged.active === true);
+    ok("an unlinked person still has no account in either source", noLink === null);
+    ok("a duplicate login does not hide the enabled one",
+      !!dup && dup.cloudUid === "uid-dup-on" && dup.role === "admin");
+    ok("a disabled account still counts as an account",
+      !!offOnly && offOnly.cloudUid === "uid-off" && offOnly.active === false);
+  }
+  // An account this browser adopted AND the cloud directory knows: the local id
+  // has to survive, because the edit/reset commands write against it, while the
+  // role and active flag stay cloud-authoritative.
+  {
+    const linked = PMS.cloudBridge.register({
+      id: "u-adopted-cloud", username: "adopted@example.com", password: "pw12345",
+      personId: "p-adopted", cloudUid: "uid-adopted", role: "member"
+    });
+    const savedDir = PMS.store.data.cloudAccounts;
+    PMS.store.data.cloudAccounts = [
+      { cloudUid: "uid-adopted", email: "adopted@example.com", personId: "p-adopted", role: "admin", active: true }
+    ];
+    const both = PMS.auth.accountForPerson("p-adopted");
+    // A directory entry for a DIFFERENT cloud account must not overwrite an
+    // adopted local record - the person link is only trusted from its own uid.
+    PMS.store.data.cloudAccounts = [
+      { cloudUid: "uid-someone-else", email: "other@example.com", personId: "p-adopted", role: "member", active: true }
+    ];
+    const mismatched = PMS.auth.accountForPerson("p-adopted");
+    PMS.store.data.cloudAccounts = undefined;
+    const noDir = PMS.auth.accountForPerson("p-adopted");
+    PMS.store.data.cloudAccounts = savedDir;
+    if (linked && linked.id) PMS.auth.removeUser(linked.id);
+
+    ok("an adopted account keeps its local id alongside the cloud role",
+      !!both && both.id === "u-adopted-cloud" && both.role === "admin" && both.local === true,
+      both ? (both.id + " / " + both.role) : "none");
+    ok("an adopted account reports the cloud account's active flag",
+      !!both && both.active === true && both.cloudUid === "uid-adopted");
+    ok("a directory entry for another uid does not overwrite the adopted record",
+      !!mismatched && mismatched.id === "u-adopted-cloud" && mismatched.role === "member",
+      mismatched ? (mismatched.id + " / " + mismatched.role) : "none");
+    ok("with no directory cached the adopted record answers on its own",
+      !!noDir && noDir.id === "u-adopted-cloud");
+  }
+  // The People screen must ask the merged question, not the local-only one, and
+  // must go and get the directory rather than reporting from a stale cache.
+  {
+    const peopleSrc = fs.readFileSync(path.join(APP, "js", "views", "people.js"), "utf8");
+    const editorSrc = fs.readFileSync(path.join(APP, "js", "ui", "entity-editors.js"), "utf8");
+    ok("the People screen reads the merged account view",
+      /PMS\.auth\.accountForPerson\(person\.id\)/.test(peopleSrc));
+    ok("the People screen fetches the cloud account directory",
+      /ensureDirectory\(\)/.test(peopleSrc) &&
+      /PMS\.cloudsync\.cloudAccounts\(false\)/.test(peopleSrc));
+    // Archiving somebody must still reach an account this browser never adopted -
+    // without handing a cloud-only id to the local update, which would do nothing.
+    ok("archiving reaches a cloud-only account without writing a local id",
+      /accountForPerson\(person\.id\)/.test(editorSrc) &&
+      /if \(!acc\.cloudOnly\) PMS\.auth\.updateUser/.test(editorSrc));
+  }
 
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");

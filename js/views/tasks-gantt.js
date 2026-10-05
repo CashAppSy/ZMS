@@ -149,9 +149,16 @@
         broken: "var(--danger)"
       };
       var markers = Object.keys(MARKER_FILL).map(function (k) {
+        // markerUnits defaults to strokeWidth, which scales the head with the
+        // line: a critical arrow (stroke-width 3) grew a third bigger head than
+        // every other arrow of the same kind. userSpaceOnUse keeps one size for
+        // all of them, so the heads read as one set.
         return h("marker", {
-          attrs: { id: "arrowhead-" + k, markerWidth: 10, markerHeight: 7, refX: 9, refY: 3.5, orient: "auto" }
-        }, [h("polygon", { attrs: { points: "0 0, 10 3.5, 0 7", fill: MARKER_FILL[k] } })]);
+          attrs: {
+            id: "arrowhead-" + k, markerUnits: "userSpaceOnUse",
+            markerWidth: 9, markerHeight: 7, refX: 8.5, refY: 3.5, orient: "auto"
+          }
+        }, [h("polygon", { attrs: { points: "0 0, 9 3.5, 0 7", fill: MARKER_FILL[k] } })]);
       });
       linksSvg.appendChild(h("defs", {}, markers));
     } catch (e) { console.error("[gantt] svg defs", e); }
@@ -346,22 +353,33 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
         (edge.dep.lag ? " " + (edge.dep.lag > 0 ? "+" : "") + edge.dep.lag + "d" : "") + ")" +
         (broken ? " — " + t("deps.broken") : "");
 
-      // Route around the bars when the successor starts before the predecessor
-      // ends, the way every gantt tool does: a curve straight through the two
-      // bars would hide them.
-      var d;
-      if (x2 < x1 + 16) {
-        // The successor starts before the predecessor ends, so a straight run
-        // would go backwards through both bars. Route it out to the side, down
-        // and back in from the right, so the head still points into the bar: the
-        // last segment has to travel towards x2, not away from it, or the
-        // arrowhead lands short of the target and faces the wrong way.
-        var dip = 14;
-        d = "M " + x1 + " " + y1 + " h " + dip + " V " + y2 + " H " + (x2 + dip) +
-          " a " + dip + " " + (dip / 2) + " 0 0 1 " + (-dip) + " " + (dip / 2);
-      } else {
-        d = "M " + x1 + " " + y1 + " H " + (x1 + 8) + " C " + (x1 + 18) + " " + y1 + ", " + (x2 - 18) + " " + y2 + ", " + (x2 - 8) + " " + y2 + " H " + x2;
-      }
+      // Route the link so it always ARRIVES perpendicular to the edge it names,
+      // and so the long horizontal run happens in the GAP between rows rather
+      // than straight across a bar.
+      //
+      // Both ends of every type are horizontal edges, so the arrow has to leave
+      // and enter horizontally for the head to point into them. The previous
+      // router drew one long bezier from row to row and, when the successor
+      // began before the predecessor ended, ended with an arc travelling DOWN
+      // AND LEFT - so the head landed below the bar, pointing away from it.
+      //
+      //   leave the predecessor -> drop into the gap beside the target row ->
+      //   travel along the gap -> drop onto the row -> enter the bar
+      //
+      // When the successor starts before the predecessor finishes, `approach` is
+      // behind the source, so the run along the gap doubles back and the head
+      // still enters travelling forwards - the overlap is shown, not papered
+      // over.
+      var STUB = 10;
+      var intoStart = edge.type === "FS" || edge.type === "SS";
+      var gap = y2 > y1 ? y2 - ROW_H / 2 : y2 + ROW_H / 2;
+      var approach = intoStart ? x2 - STUB : x2 + STUB;
+      var d = "M " + x1 + " " + y1 +
+        " H " + (x1 + STUB) +
+        " V " + gap +
+        " H " + approach +
+        " V " + y2 +
+        " H " + x2;
       // Every arrow is given its own markerhead by attribute. The attribute is
       // spelled "marker-end": written as markerEnd it is dropped as an unknown
       // property, which is why the arrows used to arrive headless.
