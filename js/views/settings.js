@@ -315,6 +315,10 @@
       title: isEdit ? t("common.edit") + " " + t("settings.customFields") : t("settings.addField"),
       size: "sm",
       content: function () {
+        // ADD passes no field at all, so every value read here has to tolerate a
+        // null field. `options` did not, which meant the Add Field dialog threw
+        // "Cannot read properties of null (reading 'options')" the moment it
+        // opened - the field could never be added at all.
         return PMS.forms.build([
           { key: "labelEn", label: t("settings.fieldLabel") + " (EN)", type: "text", required: true },
           { key: "labelAr", label: t("settings.fieldLabel") + " (AR)", type: "text" },
@@ -323,10 +327,10 @@
           { key: "options", label: "Options (comma separated)", type: "text", placeholder: "opt1, opt2, opt3" }
         ], {
           labelEn: field ? PMS.i18n.trilingual(field.label)(field.label) : "",
-          labelAr: field && field.label.ar ? field.label.ar : "",
+          labelAr: field && field.label && field.label.ar ? field.label.ar : "",
           entity: field ? field.entity : "task",
           type: field ? field.type : "text",
-          options: (field.options || []).join(", ")
+          options: field && field.options ? field.options.join(", ") : ""
         });
       },
       footer: [

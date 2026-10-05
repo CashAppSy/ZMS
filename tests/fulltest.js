@@ -2684,6 +2684,71 @@ const root = () => document.getElementById("view-root");
   ok("custom field added", PMS.repos.fields.all().length === fieldsLen + 1);
   PMS.repos.fields.forEntity("task");
   ok("custom field forEntity", PMS.repos.fields.forEntity("task").length >= 1);
+
+  // ---- adding one through the dialog ----
+  // ADD opens the editor with no field to edit, and one of its default values
+  // read `field.options` with no null check. The dialog therefore threw
+  // "Cannot read properties of null (reading 'options')" the instant it opened,
+  // so a custom field could not be added at all - while EDIT, which passes a
+  // field, worked fine and hid the difference.
+  ok("the Add Field dialog opens with nothing to edit", (function () {
+    route("/settings");
+    const root = document.getElementById("view-root");
+    const tabs = Array.from(root.querySelectorAll(".settings-nav .nav-item"));
+    const fieldsTab = tabs.find(function (b) { return b.textContent === PMS.i18n.t("settings.fields"); });
+    if (!fieldsTab) return false;
+    fieldsTab.click();
+    const addBtn = Array.from(document.querySelectorAll("#view-root button"))
+      .find(function (b) { return b.textContent.indexOf(PMS.i18n.t("settings.addField")) !== -1; });
+    if (!addBtn) return false;
+    addBtn.click();
+    // No field exists yet, so the dialog has to read its defaults from nothing.
+    return PMS.modal.isOpen === true && !!PMS.modal.body.querySelector("form");
+  })());
+  ok("a custom field can be added through the dialog", (function () {
+    const form = PMS.modal.body.querySelector("form");
+    if (!form) return false;
+    const before = PMS.repos.fields.all().length;
+    const labelInput = form.querySelector('.field[data-key="labelEn"] input');
+    const optsInput = form.querySelector('.field[data-key="options"] input');
+    if (labelInput) labelInput.value = "Added From The Dialog";
+    if (optsInput) optsInput.value = "alpha, beta";
+    const btns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
+    btns[btns.length - 1].click();                      // Save
+    const made = PMS.repos.fields.all();
+    const found = made.find(function (f) {
+      return f.label && f.label.en === "Added From The Dialog";
+    });
+    const after = made.length;
+    if (found) PMS.repos.fields.remove(found.id);     // do not leak into the suite
+    return after === before + 1 && !!found &&
+      found.entity === "task" && found.type === "text" &&
+      found.options.join(",") === "alpha,beta";
+  })());
+  ok("the Edit dialog still fills the form from the field it was given", (function () {
+    const existing = PMS.repos.fields.add({
+      entity: "project", label: { en: "Edit Me", ar: "" }, type: "select", options: ["red", "green"], order: 99
+    });
+    route("/settings");
+    const root = document.getElementById("view-root");
+    const tabs = Array.from(root.querySelectorAll(".settings-nav .nav-item"));
+    const fieldsTab = tabs.find(function (b) { return b.textContent === PMS.i18n.t("settings.fields"); });
+    if (!fieldsTab) return false;
+    fieldsTab.click();
+    const rows = Array.from(document.querySelectorAll("#view-root .setting-row"));
+    const row = rows.find(function (r) {
+      return r.textContent.indexOf("Edit Me") !== -1;
+    });
+    if (!row) return false;
+    row.querySelector("button").click();               // the pencil
+    const form = PMS.modal.body.querySelector("form");
+    if (!form) return false;
+    const optsInput = form.querySelector('.field[data-key="options"] input');
+    const entitySel = form.querySelector('.field[data-key="entity"] select');
+    PMS.modal.close();
+    PMS.repos.fields.remove(existing.id);
+    return !!optsInput && !!entitySel && optsInput.value === "red, green" && entitySel.value === "project";
+  })());
   PMS.repos.settings.update({ theme: "dark" });
   ok("settings.update", PMS.store.data.settings.theme === "dark");
   PMS.repos.settings.update({ theme: "light" });
