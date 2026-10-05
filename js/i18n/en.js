@@ -491,7 +491,19 @@
         denied: "The Firestore rules refused a write",
         deniedBody: "These records were not uploaded, so they exist only on this device and other users cannot see them. This happens when the published rules do not cover the documents the app writes — re-publish the current firestore.rules and try again.",
         skipped: "These records were not uploaded: this account has no write right for them",
-        skippedBody: "The records listed below stayed on this device because your role cannot write them. An admin or the project manager can upload them."
+        skippedBody: "The records listed below stayed on this device because your role cannot write them. An admin or the project manager can upload them.",
+        unreadable: "Part of the shared data cannot be read",
+        unreadableBody: "The collections listed below could not be downloaded, so what other people do in them will not appear here. Everything else still syncs."
+      },
+      diagnose: "Diagnose sharing",
+      diagnoseRunning: "Checking cloud access…",
+      diagnoseTitle: "Cloud access report",
+      diag: {
+        signedIn: "Not signed in to the cloud on this device",
+        profileMissing: "This account has no cloud profile — every read and write is refused",
+        profileOk: "Cloud profile found",
+        profileRead: "The cloud profile could not be read",
+        error: "The check could not finish"
       },
       pullConfirm: "Download shared data",
       pullReplace: "Replace local data",

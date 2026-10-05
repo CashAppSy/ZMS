@@ -1486,31 +1486,44 @@
         if (!remoteUpdated) return null;
         if (!unadopted && !localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
+      // One refused collection must not cancel the others. Promise.all used to
+      // reject on the first denial, which threw away every OTHER collection as
+      // well: the shared dataset then simply stopped updating, which reads as
+      // "the other users' records disappeared" with nothing on screen to say why.
       return Promise.all(COLLECTIONS.map(function (cname) {
-        if (isRecordCol(cname)) {
-          // per-record collection: read every doc. A legacy whole-doc
-          // zms_<c>/data (round-3) is re-expanded into its items so existing
-          // clouds stay readable until the admin's push migrates them.
-          return recordCol(cname).get().then(function (qs) {
-            var items = [];
-            qs.forEach(function (ds) {
-              if (!ds.exists) return;
-              var dd = ds.data() || {};
-              if (ds.id === "data" && Array.isArray(dd.items)) {
-                dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
-              } else if (ds.id === "data") {
-                // empty legacy wrapper: nothing to expand
-              } else {
-                items.push(dd);
-              }
-            });
-            return items;
+        var read = isRecordCol(cname) ? recordCol(cname).get().then(function (qs) {
+          var items = [];
+          qs.forEach(function (ds) {
+            if (!ds.exists) return;
+            var dd = ds.data() || {};
+            if (ds.id === "data" && Array.isArray(dd.items)) {
+              dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
+            } else if (ds.id === "data") {
+              // empty legacy wrapper: nothing to expand
+            } else {
+              items.push(dd);
+            }
           });
-        }
-        return colRef(cname).get().then(function (s) {
+          return items;
+        }) : colRef(cname).get().then(function (s) {
           return (s.exists && s.data() && Array.isArray(s.data().items)) ? s.data().items : [];
         });
+        return read.then(
+          function (items) { return { cname: cname, items: items || [] }; },
+          function (e) { return { cname: cname, items: [], error: e }; }
+        );
       })).then(function (snaps) {
+        var unreadable = snaps.filter(function (s) { return s.error; });
+        if (unreadable.length) {
+          unreadable.forEach(function (s) {
+            console.warn("[cloudsync] cannot read " + s.cname + ":",
+              s.error && s.error.message ? s.error.message : s.error);
+            noteDenied(s.error, s.cname + " (read)");
+          });
+          blockSync("unreadable", unreadable.map(function (s) { return s.cname; }).join(", "));
+        } else {
+          clearBlocked("unreadable");
+        }
         var obj = {
           schemaVersion: PMS.schema.VERSION,
           departments: [], people: [], projects: [], tasks: [], meetings: [],
@@ -1518,9 +1531,7 @@
           customFieldDefs: [], savedFilters: [],
           meta: { updatedAt: remoteUpdated }
         };
-        snaps.forEach(function (items, i) {
-          obj[COLLECTIONS[i]] = items || [];
-        });
+        snaps.forEach(function (s) { obj[s.cname] = s.items || []; });
         return obj;
       });
     }).then(function (obj) {
@@ -1912,11 +1923,104 @@
     });
   }
 
+  // A report a person can act on, not a console log they have to know to open.
+  // Every answer here is a fact the Firestore rules decide, so this is what
+  // separates "the rules do not cover this" from "this account may not" from
+  // "this device is not signed in" - three problems that look identical from
+  // the outside because they all end as "my work is not showing up".
+  // Reads only: it never writes, so running it is always safe.
+  function diagnose() {
+    var report = {
+      at: now(),
+      configured: isConfigured(),
+      enabled: !!enabled,
+      signedIn: false,
+      email: null,
+      cloudUid: null,
+      profile: null,
+      checks: []
+    };
+    return waitForSignedIn().then(function (ok) {
+      report.signedIn = !!ok;
+      if (!ok) {
+        report.checks.push({ name: "cloud.diag.signedIn", ok: false });
+        return report;
+      }
+      try {
+        var app = window.firebase.apps.find(function (a) { return a.name === APP_NAME; });
+        var cu = app ? window.firebase.auth(app).currentUser : null;
+        report.email = cu && cu.email;
+        report.cloudUid = cu && cu.uid;
+      } catch (e) { /* no firebase globals: the signedIn check already said no */ }
+      return ensureReady().then(function () {
+        var uid = report.cloudUid;
+        // The single most important fact: is there a cloud profile at all? Every
+        // read and write rule in the set is gated on it (isTeamMember /
+        // isActiveUser), so a missing or inactive profile denies EVERYTHING
+        // while the app still looks signed in.
+        return cloudUserRef(uid).get().then(function (s) {
+          if (!s.exists) {
+            report.profile = { exists: false };
+            report.checks.push({ name: "cloud.diag.profileMissing", ok: false, detail: uid });
+            return null;
+          }
+          var p = s.data() || {};
+          report.profile = {
+            exists: true,
+            role: p.role || null,
+            active: p.active === undefined ? "(unset)" : p.active,
+            personId: p.personId || null
+          };
+          report.checks.push({ name: "cloud.diag.profileOk", ok: true, detail: (p.role || "?") + (p.personId ? " / " + p.personId : "") });
+          return null;
+        }, function (e) {
+          report.checks.push({ name: "cloud.diag.profileRead", ok: false, detail: errText(e) });
+          return null;
+        });
+      }).then(function () {
+        var targets = [
+          ["zms_meta/state", function () { return stateRef(); }],
+          ["zms_tasks", function () { return recordCol("tasks"); }],
+          ["zms_projects", function () { return recordCol("projects"); }],
+          ["zms_meetings", function () { return recordCol("meetings"); }],
+          ["zms_activities", function () { return recordCol("activities"); }],
+          ["zms_people/data", function () { return colRef("people"); }]
+        ];
+        return targets.reduce(function (chain, target) {
+          return chain.then(function () {
+            return target[1]().get().then(function (qs) {
+              var n = 0;
+              if (typeof qs.forEach === "function") qs.forEach(function () { n++; });
+              else if (qs.exists) n = 1;
+              report.checks.push({ name: target[0], ok: true, detail: n + " doc(s)" });
+            }, function (e) {
+              report.checks.push({ name: target[0], ok: false, detail: errText(e) });
+            });
+          });
+        }, Promise.resolve());
+      }).then(function () { return report; }, function (e) {
+        report.checks.push({ name: "cloud.diag.error", ok: false, detail: errText(e) });
+        return report;
+      });
+    }, function (e) {
+      report.checks.push({ name: "cloud.diag.error", ok: false, detail: errText(e) });
+      return report;
+    });
+  }
+
+  function errText(e) {
+    if (!e) return "unknown";
+    var code = e.code || "";
+    var msg = e.message || String(e);
+    return (code ? code + ": " : "") + msg;
+  }
+
   PMS.cloudsync = {
     enable: enable,
     disable: disable,
     boot: boot,
     push: push,
+    diagnose: diagnose,
     dataReplaced: dataReplaced,
     pull: pull,
     accountEvents: accountEvents,

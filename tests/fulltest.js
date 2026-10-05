@@ -4874,6 +4874,44 @@ section("Meeting card leads with the creator, logo + favicon");
     return readHandled && deleteSettled;
   })());
 
+  // A pull reads every collection with Promise.all. One refused collection used
+  // to reject the whole thing, so a single denied collection left the device
+  // showing no shared data at all - which reads as "every other user's records
+  // and activity disappeared", with nothing on screen to explain it.
+  ok("one refused collection no longer cancels the whole download", (function () {
+    const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    const settled = /function \(e\) \{ return \{ cname: cname, items: \[\], error: e \}; \}/.test(src);
+    const reported = /blockSync\("unreadable"/.test(src);
+    const cleared = /clearBlocked\("unreadable"\)/.test(src);
+    // the successful collections are still applied, by name rather than index
+    const appliedByName = /snaps\.forEach\(function \(s\) \{ obj\[s\.cname\] = s\.items \|\| \[\]; \}\)/.test(src);
+    ok("  (trace: settled=" + settled + " reported=" + reported + " cleared=" + cleared +
+       " appliedByName=" + appliedByName + ")", true);
+    return settled && reported && cleared && appliedByName;
+  })());
+
+  // "Upload failed" names none of the three reasons that need three different
+  // fixes, so there has to be a read-only check that prints which one it is.
+  ok("the cloud settings card can print why sharing is blocked", (function () {
+    const syncSrc = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    const exposed = /diagnose: diagnose/.test(syncSrc);
+    // reads only - a diagnostic that wrote would create the very records the
+    // rules may refuse, and would look like a real upload
+    const fn = syncSrc.match(/function diagnose\(\) \{[\s\S]*?\n  \}/);
+    const noWrites = fn ? !/recordRef\([^)]*\)\.(set|update|delete)\(/.test(fn[0]) : false;
+    // the cloud profile gates every rule in the set, so it must be checked
+    const checksProfile = /cloudUserRef\(uid\)\.get\(\)/.test(syncSrc);
+
+    const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    const hasButton = /cloud\.diagnose/.test(settingsSrc) && /PMS\.cloudsync\.diagnose\(\)/.test(settingsSrc);
+
+    const keys = ["cloud.diagnose", "cloud.diagnoseTitle", "cloud.diag.profileMissing", "cloud.diag.profileOk"];
+    const missing = keys.filter(k => !PMS.i18n.t(k));
+    ok("  (trace: exposed=" + exposed + " noWrites=" + noWrites + " checksProfile=" + checksProfile +
+       " button=" + hasButton + " missingKeys=" + (missing.join(",") || "none") + ")", true);
+    return exposed && noWrites && checksProfile && hasButton && missing.length === 0;
+  })());
+
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");
   console.log(process.exitCode ? "FULL TEST FAILED" : "FULL TEST PASSED");

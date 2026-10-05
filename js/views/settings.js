@@ -453,6 +453,40 @@
       });
     } } }));
     actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pullNow"), on: { click: function () { PMS.auth.confirmSensitive(function () { pullModal(); }); } } }));
+
+    // "Upload failed" on its own says nothing about WHICH part of the cloud
+    // refused this device, and the three possible reasons (rules, account role,
+    // not signed in) need three different fixes. This prints the answer on
+    // screen. Read-only: it never writes anything.
+    var diagBox = null;
+    function showDiag(node) {
+      if (diagBox) diagBox.remove();
+      diagBox = node;
+      b.insertBefore(node, actions.nextSibling);
+    }
+    actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.diagnose"), on: { click: function () {
+      if (!PMS.cloudsync.diagnose) return;
+      showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, [
+        h("div.u-muted", { text: t("cloud.diagnoseRunning") })
+      ]));
+      PMS.cloudsync.diagnose().then(function (rep) {
+        var kids = [h("div.u-bold", { text: t("cloud.diagnoseTitle") })];
+        if (rep.email) kids.push(h("div.u-muted", { style: { wordBreak: "break-word" }, text: rep.email }));
+        rep.checks.forEach(function (c) {
+          var known = t(c.name);
+          var label = (known === c.name ? c.name : known) + (c.detail ? " — " + c.detail : "");
+          kids.push(h("div", { style: { marginBlockStart: "4px" } }, [
+            h("span", { style: { color: c.ok ? "var(--success)" : "var(--danger)", fontWeight: "700" }, text: c.ok ? "✓" : "✗" }),
+            h("span", { text: " " + label })
+          ]));
+        });
+        showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, kids));
+      }, function (e) {
+        showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, [
+          h("div", { style: { color: "var(--danger)" }, text: (e && e.message) || String(e) })
+        ]));
+      });
+    } } }));
     b.appendChild(actions);
 
     b.appendChild(h("div.section-title", [txt(t("cloud.helpTitle"))]));
