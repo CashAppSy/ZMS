@@ -138,8 +138,30 @@
       config: c,
       realtime: enabled,
       lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null),
-      denied: lastDenied
+      denied: lastDenied,
+      blocked: lastBlocked
     };
+  }
+
+  // Why the shared cloud is not moving, in the order a person can act on it.
+  // Every one of these used to be a silent no-op, which is indistinguishable
+  // from "the app is broken" to whoever is waiting for their work to appear on
+  // another device.
+  //   noCloudAccount - this sign-in is not linked to a cloud account, so no
+  //                    upload or download can happen at all
+  //   notSignedIn    - nobody is signed in to the cloud on this device
+  //   denied         - the published rules refused specific documents
+  //   skipped        - this role may not write those records
+  var lastBlocked = [];
+  function blockSync(reason, detail) {
+    var entry = { reason: reason, detail: detail || null, at: now() };
+    for (var i = 0; i < lastBlocked.length; i++) {
+      if (lastBlocked[i].reason === reason) { lastBlocked[i] = entry; return; }
+    }
+    lastBlocked.push(entry);
+  }
+  function clearBlocked(reason) {
+    lastBlocked = lastBlocked.filter(function (b) { return b.reason !== reason; });
   }
 
   // A write the rules refused. Kept apart from a generic error because it means
@@ -157,6 +179,7 @@
     var denied = /permission-denied|Missing or insufficient permissions/i.test(code + " " + msg);
     if (!denied) return false;
     lastDenied = { at: now(), path: where || null, message: msg };
+    blockSync("denied", where);
     return true;
   }
 
@@ -1250,7 +1273,14 @@
         var local = PMS.store.data && PMS.store.data[cname];
         if (Array.isArray(local)) local.forEach(function (it) { if (it && it.id) localIds[it.id] = true; });
         var mirrored = items.every(function (it) { return it && it.id && localIds[it.id]; });
-        return mirrored ? [colRef(cname).delete()] : [];
+        return mirrored ? [writeOp(cname + "/data (legacy cleanup)", colRef(cname).delete())] : [];
+      }, function (e) {
+        // A ruleset that will not even let us read the legacy wrapper is very
+        // often the very ruleset we are trying to upload past. Letting that
+        // rejection propagate aborted the whole push before a single task write
+        // ran, so the task stayed on this device with no error anywhere.
+        noteDenied(e, cname + "/data (legacy cleanup)");
+        return [];
       });
     })).then(function (groups) {
       var out = [];
@@ -1269,10 +1299,19 @@
     lastPushAt = Date.now();
     PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
     return waitForSignedIn().then(function (ok) {
-      if (!ok) return false;
+      if (!ok) { blockSync("notSignedIn", "zms (every collection)"); return false; }
+      clearBlocked("notSignedIn");
       return ensureReady().then(function () {
         var idn = identity();
-        if (!idn.cloudUid) return false;
+        if (!idn.cloudUid) {
+          // Not an error, but it does mean NOTHING can leave this device, and
+          // until now it said nothing at all - a task created here simply never
+          // reached anyone else, with no clue on screen. An account that has
+          // never been linked to a cloud sign-in has no cloudUid, so this is the
+          // normal state for a purely local account.
+          blockSync("noCloudAccount", "zms (every collection)");
+          return false;
+        }
         var t = now();
         return canWriteShared().then(function (sharedWrite) {
           var ops = [];
@@ -1384,6 +1423,16 @@
                 if (Object.keys(skippedByCol).length) {
                   console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
                   PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
+                  Object.keys(skippedByCol).forEach(function (c) {
+                    blockSync("skipped", c + " (" + skippedByCol[c].length + ")");
+                  });
+                }
+                // Everything landed: nothing is holding the sync up any more.
+                if (!denied.length && !failed.length) {
+                  lastDenied = null;
+                  clearBlocked("denied");
+                  clearBlocked("noCloudAccount");
+                  clearBlocked("notSignedIn");
                 }
                 if (denied.length) PMS.bus.emit("cloud:denied", { paths: denied });
                 PMS.bus.emit("cloud:state", { pushed: true, denied: denied.length ? denied : null });

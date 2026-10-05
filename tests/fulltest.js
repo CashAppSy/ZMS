@@ -4826,6 +4826,54 @@ section("Meeting card leads with the creator, logo + favicon");
     return !!hasKeys && readsStatus && showsPath;
   })());
 
+  // Every way the sync can stand still used to be silent, and each one looks
+  // exactly like "the app lost my task" to the person waiting for it to appear
+  // on another device. Each needs its own named, translated warning.
+  ok("every silent sync blocker is named and translated", (function () {
+    const reasons = ["noCloudAccount", "notSignedIn", "denied", "skipped", "unknown"];
+    const missing = reasons.filter(r =>
+      !PMS.i18n.t("cloud.blocked." + r) || !PMS.i18n.t("cloud.blocked." + r + "Body"));
+    ok("  (trace: missing keys = " + (missing.join(",") || "none") + ")", missing.length === 0);
+
+    const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    const drawsBlockers = /st\.blocked/.test(settingsSrc) && /blockers\.length/.test(settingsSrc);
+
+    const syncSrc = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    // A local account has no cloudUid, so push() returned false with no trace at
+    // all. That bail must record why, or it stays the most silent failure of all.
+    const cloudUidBailExplains = /if \(!idn\.cloudUid\) \{[\s\S]{0,400}?blockSync\("noCloudAccount"/.test(syncSrc);
+    const notSignedInExplains = /if \(!ok\) \{ blockSync\("notSignedIn"/.test(syncSrc);
+    const skipExplains = /blockSync\("skipped"/.test(syncSrc);
+    ok("  (trace: draws=" + drawsBlockers + " cloudUidBail=" + cloudUidBailExplains +
+       " notSignedIn=" + notSignedInExplains + " skip=" + skipExplains + ")", true);
+    return missing.length === 0 && drawsBlockers && cloudUidBailExplains &&
+           notSignedInExplains && skipExplains;
+  })());
+
+  // A blocker that is gone must not keep warning.
+  ok("a blocker is cleared once the sync gets through", (function () {
+    const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    return /clearBlocked\("denied"\)/.test(src) && /clearBlocked\("noCloudAccount"\)/.test(src) &&
+           /clearBlocked\("notSignedIn"\)/.test(src);
+  })());
+
+  // The legacy round-3 wrapper cleanup runs inside push(). If its read is
+  // refused the rejection used to propagate out and abort the push before any
+  // task write ran - the task then stayed on this device with no error anywhere,
+  // which is exactly the reported symptom.
+  ok("a refused legacy-wrapper read can no longer abort the push", (function () {
+    const src = fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    const fn = src.match(/function legacyCleanupOps\(idn\) \{[\s\S]*?\n  \}/);
+    if (!fn) return false;
+    const body = fn[0];
+    // The read carries a rejection handler ...
+    const readHandled = /\}, function \(e\) \{[\s\S]*?noteDenied\(e, cname \+ "\/data \(legacy cleanup\)"\)/.test(body);
+    // ... and the delete is a settled op like every other write in the push.
+    const deleteSettled = /writeOp\(cname \+ "\/data \(legacy cleanup\)", colRef\(cname\)\.delete\(\)\)/.test(body);
+    ok("  (trace: readHandled=" + readHandled + " deleteSettled=" + deleteSettled + ")", true);
+    return readHandled && deleteSettled;
+  })());
+
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");
   console.log(process.exitCode ? "FULL TEST FAILED" : "FULL TEST PASSED");

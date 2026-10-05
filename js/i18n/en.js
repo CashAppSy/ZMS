@@ -481,6 +481,18 @@
       mergeDone: "Cloud data downloaded (merged with local)",
       writeDenied: "The Firestore rules refused a write",
       writeDeniedBody: "These records were not uploaded, so they exist only on this device and other users cannot see them. This happens when the published rules do not cover the documents the app writes — re-publish the current firestore.rules and try again.",
+      blocked: {
+        unknown: "Sharing is blocked",
+        unknownBody: "Something is stopping this device from sharing data. The details below say which part.",
+        noCloudAccount: "This account is not linked to cloud sharing",
+        noCloudAccountBody: "This sign-in was never linked to a cloud account, so nothing can be uploaded or downloaded — records created here stay on this device only. Sign in with a cloud account (or have an admin link this one), then try again.",
+        notSignedIn: "Not signed in to the cloud on this device",
+        notSignedInBody: "Nothing can sync until you sign in to the cloud on this device. Your data is safe locally and will sync once you are signed in.",
+        denied: "The Firestore rules refused a write",
+        deniedBody: "These records were not uploaded, so they exist only on this device and other users cannot see them. This happens when the published rules do not cover the documents the app writes — re-publish the current firestore.rules and try again.",
+        skipped: "These records were not uploaded: this account has no write right for them",
+        skippedBody: "The records listed below stayed on this device because your role cannot write them. An admin or the project manager can upload them."
+      },
       pullConfirm: "Download shared data",
       pullReplace: "Replace local data",
       pullMerge: "Merge with local data",

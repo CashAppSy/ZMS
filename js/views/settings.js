@@ -397,23 +397,30 @@
     ]);
     row.appendChild(blk);
 
-    // A write the Firestore rules refused. This has to be on screen, not only in
-    // the console: the records it covers never leave this device, so to everyone
-    // else they simply do not exist - which reads as data loss, not as a
-    // deployment problem.
-    if (st.denied && st.denied.path) {
-      var warn = h("div", {
-        style: {
-          marginBlockStart: "10px", padding: "8px 10px",
-          borderInlineStart: "4px solid var(--danger)",
-          background: "var(--danger-soft)", borderRadius: "6px"
-        }
-      }, [
-        h("div.u-bold", { text: t("cloud.writeDenied") }),
-        h("div", { text: t("cloud.writeDeniedBody") }),
-        h("div.u-muted", { style: { marginBlockStart: "4px", wordBreak: "break-word" }, text: st.denied.path })
-      ]);
-      row.appendChild(warn);
+    // Why the shared cloud is not moving. This has to be on screen, not only in the
+    // console: whatever it covers never reaches the other users, so to them it
+    // reads as data loss rather than as a sign-in or deployment problem.
+    var blockers = (st.blocked || []).slice();
+    if (st.denied && st.denied.path && !blockers.some(function (b) { return b.reason === "denied"; })) {
+      blockers.push({ reason: "denied", detail: st.denied.path });
+    }
+    if (blockers.length) {
+      blockers.forEach(function (b) {
+        var key = "cloud.blocked." + b.reason;
+        var title = t(key);
+        if (title === key) title = t("cloud.blocked.unknown");
+        row.appendChild(h("div", {
+          style: {
+            marginBlockStart: "10px", padding: "8px 10px",
+            borderInlineStart: "4px solid var(--danger)",
+            background: "var(--danger-soft)", borderRadius: "6px"
+          }
+        }, [
+          h("div.u-bold", { text: title }),
+          h("div", { text: t("cloud.blocked." + b.reason + "Body") }),
+          b.detail ? h("div.u-muted", { style: { marginBlockStart: "4px", wordBreak: "break-word" }, text: b.detail }) : null
+        ]));
+      });
     }
     var sw = h("label.switch");
     var inp = h("input", { type: "checkbox", checked: !!st.enabled, on: { change: function (e) {
