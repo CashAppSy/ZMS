@@ -26,10 +26,6 @@
    task can be scheduled late or dragged early without leaving the chain. Bar
    positions still come from the dates - this only decides which tasks are on
    the chain and how much slack each one has.
-
-   Only tasks that are actually LINKED are ever marked. A task with no
-   predecessors and no successors is not on a chain, so there is no path through
-   it that can be late - see the note on the marking itself below.
    ========================================================================== */
 (function (PMS) {
   "use strict";
@@ -250,21 +246,8 @@
       });
       ef[tid] = es[tid] + dur[tid];
     });
-    var end = 0, endLinked = 0, anyLinked = false;
-    order.forEach(function (tid) {
-      if (ef[tid] > end) end = ef[tid];
-      // The end the chains are measured against is the end of the NETWORK. An
-      // unlinked task is not on a chain, so it has no say in when the program
-      // ends: letting it set that date handed every real chain a fortnight of
-      // free float and left the actual critical path unmarked, because the
-      // longest loose task in the dataset had pushed the deadline past it. With
-      // nothing linked at all there is no network to measure, so the longest
-      // single task still sets the reported length.
-      if (!preds[tid].length && !succs[tid].length) return;
-      anyLinked = true;
-      if (ef[tid] > endLinked) endLinked = ef[tid];
-    });
-    if (anyLinked) end = endLinked;
+    var end = 0;
+    order.forEach(function (tid) { if (ef[tid] > end) end = ef[tid]; });
     result.length = end;
 
     // backward: successors are already resolved because we walk in reverse order
@@ -291,18 +274,6 @@
 
     order.forEach(function (tid) {
       slack[tid] = Math.max(0, ls[tid] - es[tid]);
-      // A task with no links is not on a chain at all, so it cannot be ON the
-      // critical path - there is no path through it to be late on. Leaving it
-      // out is not a detail: the backward pass pins every successor-less task
-      // to the end of the program, and the forward pass starts every
-      // predecessor-less task at zero, so an UNLINKED task's float works out to
-      // exactly "how much longer the program is than this task is". The single
-      // longest loose task in the dataset therefore always measured zero float
-      // and was badged critical while the real chains sat beside it with slack.
-      // Its length still counts towards the program end - that part is right -
-      // but it is not marked, because "a delay here moves the end" is a claim
-      // about a chain and this task is not on one.
-      if (!preds[tid].length && !succs[tid].length) return;
       if (slack[tid] <= EPS) critical[tid] = true;
     });
     return result;

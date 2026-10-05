@@ -695,49 +695,6 @@
     return users().find(function (u) { return u.personId === personId; }) || null;
   }
 
-  // READ-ONLY "does this person have a login?" across every device.
-  //
-  // userByPersonId above can only answer for the accounts THIS browser adopted,
-  // because that is all the local users[] array ever holds. Accounts live in
-  // Firebase Auth, so on a second browser the array holds the signed-in admin and
-  // almost nothing else - and the People screen then told the admin that most of
-  // their own team had no login account. The cloud directory (zms_auth_users,
-  // fetched by PMS.cloudsync.cloudAccounts) is the authority, so it is consulted
-  // too and a colleague's account is recognised even when this device has never
-  // seen their record.
-  //
-  // A cloud-only account is returned with a synthetic "cloud:<uid>" id and
-  // cloudOnly set, so a caller that is about to WRITE knows it has no local
-  // record to write to. Mutating paths keep using userByPersonId.
-  function accountForPerson(personId) {
-    if (!personId) return null;
-    var local = userByPersonId(personId);
-    var dir = (PMS.store && PMS.store.data && PMS.store.data.cloudAccounts) || [];
-    var mine = dir.filter(function (x) { return x && x.personId === personId; });
-    if (!mine.length) return local;
-    // Somebody can hold more than one login (a colleague who signed up twice).
-    // Prefer one that is actually enabled, so a disabled duplicate does not make
-    // the person read as having no account at all.
-    var c = mine.filter(function (x) { return x.active !== false; })[0] || mine[0];
-    if (!local) {
-      return {
-        id: "cloud:" + c.cloudUid, cloudUid: c.cloudUid, username: c.email,
-        name: c.displayName || c.email, email: c.email, personId: c.personId,
-        role: c.role, active: c.active, lastLoginAt: null, cloudOnly: true
-      };
-    }
-    if (local.cloudUid && local.cloudUid === c.cloudUid) {
-      // Same account, two records: keep the local id the edit/reset commands
-      // need, and let the cloud own the fields it is authoritative for.
-      return {
-        id: local.id, cloudUid: local.cloudUid, username: local.username,
-        name: local.name, email: c.email, personId: c.personId || local.personId,
-        role: c.role, active: c.active, lastLoginAt: local.lastLoginAt, local: true
-      };
-    }
-    return local;
-  }
-
   function adoptUser(opts) {
     // SECURITY: creating a session from an id alone was a bypass (reported as
     // ZMS-01). Adopting now requires { id, cloudUid } where the cloudUid has to
@@ -781,7 +738,6 @@ PMS.auth = {
     userById: userById,
     byUsername: byUsername,
     userByPersonId: userByPersonId,
-    accountForPerson: accountForPerson,
     hashPassword: hashPassword,
     normalizeUsername: normalizeUsername,
     role: role,

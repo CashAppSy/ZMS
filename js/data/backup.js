@@ -56,13 +56,11 @@
     try { window.localStorage.setItem(META_KEY, JSON.stringify(m || {})); } catch (e) {}
   }
 
-  // Excludes the cache itself and the cloud-only account lists, otherwise
-  // every snapshot would carry every earlier snapshot's data (and a restored
-  // snapshot would resurrect a stale account directory instead of the real one).
+  // Excludes the cache itself and the cloud-only account-event list, otherwise
+  // every snapshot would carry every earlier snapshot's data.
   function snapshotData() {
     var d = sanitizedData();
     delete d.accountEvents;
-    delete d.cloudAccounts;
     return d;
   }
 

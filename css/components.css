@@ -1055,7 +1055,6 @@ table.tbl {
 .gantt-label-col.is-critical .gantt-label-title { color: var(--danger); font-weight: 600; }
 
 /* Link arrows, one weight per type so the gantt reads without its legend. */
-.gantt-links path { stroke-linejoin: round; }
 .gantt-links path.dep-FS { stroke: var(--primary); stroke-width: 2; }
 .gantt-links path.dep-SS { stroke: var(--info); stroke-width: 2; stroke-dasharray: 5 3; }
 .gantt-links path.dep-FF { stroke: var(--warning); stroke-width: 2; stroke-dasharray: 8 3; }

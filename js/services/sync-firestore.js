@@ -90,7 +90,6 @@
   var firestore = null;
   var enabled = false;
   var applying = false;   // true while we apply a pulled dataset (no echo push)
-  var forceWhole = false; // the next push replaces the reference collections wholesale
   var debounce = null;
   var timer = null;
   var lastPulled = 0;
@@ -137,52 +136,8 @@
       projectId: c ? c.projectId : null,
       config: c,
       realtime: enabled,
-      lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null),
-      denied: lastDenied,
-      failed: lastFailed,
-      blocked: lastBlocked
+      lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null)
     };
-  }
-
-  // Why the shared cloud is not moving, in the order a person can act on it.
-  // Every one of these used to be a silent no-op, which is indistinguishable
-  // from "the app is broken" to whoever is waiting for their work to appear on
-  // another device.
-  //   noCloudAccount - this sign-in is not linked to a cloud account, so no
-  //                    upload or download can happen at all
-  //   notSignedIn    - nobody is signed in to the cloud on this device
-  //   denied         - the published rules refused specific documents
-  //   skipped        - this role may not write those records
-  var lastBlocked = [];
-  function blockSync(reason, detail) {
-    var entry = { reason: reason, detail: detail || null, at: now() };
-    for (var i = 0; i < lastBlocked.length; i++) {
-      if (lastBlocked[i].reason === reason) { lastBlocked[i] = entry; return; }
-    }
-    lastBlocked.push(entry);
-  }
-  function clearBlocked(reason) {
-    lastBlocked = lastBlocked.filter(function (b) { return b.reason !== reason; });
-  }
-
-  // A write the rules refused. Kept apart from a generic error because it means
-  // something only a deployment can fix: the Firestore rules in the project do
-  // not cover the path being written. The usual cause is a ruleset left behind
-  // by an earlier storage layout - the app writes projects/tasks/meetings as one
-  // document PER RECORD, so a ruleset that only knows the old whole-document
-  // paths (zms_tasks/data and friends) matches nothing at all and every task
-  // write is denied by default. That looks exactly like "my task vanished" from
-  // the other devices, with nothing on screen to say why.
-  var lastDenied = null;
-  var lastFailed = [];
-  function noteDenied(err, where) {
-    var code = (err && err.code) || "";
-    var msg = (err && err.message) || String(err);
-    var denied = /permission-denied|Missing or insufficient permissions/i.test(code + " " + msg);
-    if (!denied) return false;
-    lastDenied = { at: now(), path: where || null, message: msg };
-    blockSync("denied", where);
-    return true;
   }
 
   function isConfigured() { return !!config(); }
@@ -329,71 +284,6 @@
     }).catch(function (e) {
       console.warn("[cloudsync] account events unavailable:", e);
       return (PMS.store.data && PMS.store.data.accountEvents) || [];
-    });
-  }
-
-  /* ---------------- cloud account directory: read side ----------------
-     Accounts live in Firebase Auth, so a fresh browser has exactly ONE local
-     record: the account it signed in with. Settings -> Accounts & access used
-     to render PMS.auth.users() alone, which is why an admin opening the app on
-     another browser saw only their own login and concluded the team was gone.
-
-     The rules ALREADY let an admin read every zms_auth_users/<uid> document
-     ("allow read: if request.auth.uid == uid || isAdmin(...)"), so the
-     directory needs no rules deployment - only a client-side read that is
-     admin-gated exactly like accountEvents(). Each document carries
-     {email, role, displayName, personId, active, createdAt}; nothing secret is
-     in it (passwords never leave Firebase Auth).
-     -------------------------------------------------------------------- */
-  var cloudAccountsFetchedFor = null;
-
-  function cacheCloudAccounts(rows) {
-    if (!PMS.store || !PMS.store.data) return;
-    PMS.store.data.cloudAccounts = rows || [];
-    // flush() does NOT emit "store:changed", so a directory read can never be
-    // mistaken for an account edit and echo itself back to the cloud.
-    if (PMS.store.flush) { try { PMS.store.flush(); } catch (e) {} }
-  }
-
-  function normalizeCloudAccount(uid, d) {
-    d = d || {};
-    return {
-      cloudUid: uid,
-      email: d.email || "",
-      role: d.role === "admin" || d.role === "manager" ? d.role : "member",
-      displayName: d.displayName || "",
-      personId: d.personId || null,
-      active: d.active !== false,
-      createdAt: d.createdAt || ""
-    };
-  }
-
-  // Resolves with the sanitized directory. Admin-only by design: the rules deny
-  // these documents to non-admins, and a non-admin simply gets the local cache
-  // rather than a failed read. Never rejects.
-  function cloudAccounts(force) {
-    var cached = (PMS.store && PMS.store.data && PMS.store.data.cloudAccounts) || [];
-    if (!enabled || !isAdminReader()) return Promise.resolve(cached);
-    // keyed by uid: signing out and back in as a different admin in the same tab
-    // must not serve the previous admin's cached directory
-    var me = PMS.auth.currentUser() || {};
-    var uid = me.cloudUid || me.id || "";
-    if (cloudAccountsFetchedFor === uid && !force) return Promise.resolve(cached);
-    return waitForSignedIn().then(function (ok) {
-      if (!ok) return cached;
-      return ensureReady();
-    }).then(function () {
-      return firestore.collection("zms_auth_users").get();
-    }).then(function (qs) {
-      var rows = [];
-      qs.forEach(function (ds) { if (ds.exists) rows.push(normalizeCloudAccount(ds.id, ds.data())); });
-      rows.sort(function (a, b) { return String(a.email || "").localeCompare(String(b.email || "")); });
-      cloudAccountsFetchedFor = uid;
-      cacheCloudAccounts(rows);
-      return rows;
-    }).catch(function (e) {
-      console.warn("[cloudsync] cloud account directory unavailable:", e);
-      return cached;
     });
   }
 
@@ -881,147 +771,6 @@
     saveMirror(m);
   }
 
-  /* ---- whole-dataset reference collections: change-aware publishing ----
-     departments / people / customFieldDefs / savedFilters and the status lists
-     live as ONE document per collection, so a single write replaces every
-     record in it. Publishing that document verbatim made each device the
-     authority on the whole collection: a browser whose local copy was one edit
-     behind overwrote everyone else's people and custom fields, and a delete
-     "came back" the moment the next stale device saved. That is what made an
-     added person vanish and a deleted field reappear.
-
-     They are merged instead, against the baseline this device last pulled, and
-     written inside a transaction so two devices editing different records cannot
-     lose each other's work. The baseline is a content signature per record, so
-     "changed here", "changed there" and "deleted here" are all distinguishable.
-     -------------------------------------------------------------------- */
-  var ADOPT_KEY = "pms-cloud-adopted";
-
-  // Deterministic string for a record, independent of key order, so two copies
-  // of the same record always produce the same signature.
-  function canonical(v) {
-    if (v === null || v === undefined) return String(v);
-    if (typeof v !== "object") return JSON.stringify(v);
-    if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
-    return "{" + Object.keys(v).sort().map(function (k) {
-      return JSON.stringify(k) + ":" + canonical(v[k]);
-    }).join(",") + "}";
-  }
-
-  function wholeSig(rec) { return rec ? canonical(rec) : null; }
-
-  // Has this device ever adopted the shared dataset? A brand-new browser has
-  // not, and its local store is a fresh seed - never an edit worth publishing.
-  // The marker records WHICH cloud was adopted, so pointing the app at another
-  // Firebase project starts over instead of trusting a marker from the old one.
-  function adoptedClock() {
-    try {
-      var raw = window.localStorage.getItem(ADOPT_KEY) || "";
-      if (!raw) return null;
-      var at = raw.indexOf("|");
-      var proj = at === -1 ? "" : raw.slice(0, at);
-      var clock = at === -1 ? "" : raw.slice(at + 1);
-      var c = config() || {};
-      if (proj !== (c.projectId || "")) return null; // a different cloud
-      return clock || null;
-    } catch (e) { return null; }
-  }
-  function markAdopted(v) {
-    try {
-      if (!v) { window.localStorage.removeItem(ADOPT_KEY); return; }
-      var c = config() || {};
-      window.localStorage.setItem(ADOPT_KEY, (c.projectId || "") + "|" + v);
-    } catch (e) {}
-  }
-
-  /* Merge one reference collection. Pure, so it is testable without a network.
-       - only remote has it      -> keep it (someone else added it)
-       - only local has it, id was in the baseline -> we deleted it, drop it
-       - only local has it, id was never in the baseline -> ours is new, keep it
-       - both have it, only ours differs from the baseline -> our edit wins
-       - both have it, only theirs differs -> their edit wins
-       - both changed -> the newer updatedAt wins
-       - neither changed -> the cloud's copy is kept */
-  function mergeWholeCol(cname, local, remote, baseline) {
-    var base = baseline || {};
-    var index = function (arr) {
-      var map = {}, order = [], loose = [];
-      (arr || []).forEach(function (r) {
-        // A record with no id cannot be matched or merged. Repositories always
-        // assign one, so this is broken data in practice - but dropping it
-        // silently is still data loss, so it is carried through untouched.
-        if (!r || !r.id) { if (r) loose.push(r); return; }
-        map[r.id] = r;
-        if (order.indexOf(r.id) === -1) order.push(r.id);
-      });
-      return { map: map, order: order, loose: loose };
-    };
-    var L = index(local), R = index(remote);
-    var out = [], seen = {}, seenSig = {};
-    var keep = function (rec) { out.push(rec); seenSig[wholeSig(rec)] = true; };
-    // Remote order first: it is the order the cloud settled on, and it keeps
-    // additions at the end instead of reshuffling everyone's list.
-    R.order.forEach(function (id) {
-      seen[id] = true;
-      var r = R.map[id], l = L.map[id];
-      if (!l) {
-        // Only the cloud has it. If this device published it before and it is
-        // gone from the local copy, WE deleted it and that delete has to travel
-        // - this is the deleted custom field. If this device never had it, the
-        // record is somebody else's addition and must be kept.
-        if (!base[id]) keep(r);
-        return;
-      }
-      if (!base[id]) { keep(l); return; } // never published from here
-      var lChanged = wholeSig(l) !== base[id], rChanged = wholeSig(r) !== base[id];
-      if (lChanged && !rChanged) { keep(l); return; }
-      if (!lChanged && rChanged) { keep(r); return; }
-      if (lChanged && rChanged) { keep(isNewer(l.updatedAt, r.updatedAt) ? l : r); return; }
-      keep(r);
-    });
-    L.order.forEach(function (id) {
-      if (seen[id]) return;
-      if (R.map[id]) return;
-      if (base[id]) return;  // we had it, it is gone locally: we deleted it
-      keep(L.map[id]);        // never published: an addition of ours
-    });
-    // Unmatchable records last, ours first, skipping exact duplicates.
-    L.loose.concat(R.loose).forEach(function (rec) {
-      var s = wholeSig(rec);
-      if (seenSig[s]) return;
-      seenSig[s] = true;
-      out.push(rec);
-    });
-    return out;
-  }
-
-  // Read-modify-write the shared document inside a transaction. The transaction
-  // retries if another device writes concurrently, so a merge can never be
-  // computed from a copy that has already gone stale.
-  // `replace` is for a deliberate wholesale replacement (load demo data, restore
-  // a backup, replace import, erase all data): there the local dataset IS the
-  // intended truth, so records the cloud still holds and the local copy does not
-  // have to go. It is never used for an ordinary edit.
-  function pushWholeCol(cname, d, t, replace) {
-    var local = Array.isArray(d[cname]) ? PMS.utils.deepClone(d[cname]) : [];
-    var baseline = mirrorFor(cname);
-    var ref = colRef(cname);
-    return firestore.runTransaction(function (tx) {
-      return tx.get(ref).then(function (snap) {
-        var existed = snap.exists;
-        var body = existed ? (snap.data() || {}) : {};
-        var remote = Array.isArray(body.items) ? body.items : [];
-        var merged = replace ? local : mergeWholeCol(cname, local, remote, baseline);
-        var unchanged = existed && wholeSig(remote) === wholeSig(merged);
-        // Nothing of ours to publish and nothing new to adopt: leave the
-        // document (and its clock) completely alone.
-        if (unchanged) return { items: merged, changed: false };
-        tx.set(ref, { items: merged, updatedAt: t });
-        return { items: merged, changed: true };
-      });
-    });
-  }
-
   // A whole-dataset replacement (load demo data, restore a backup, replace
   // import, erase all data) swaps the store wholesale without going through
   // repositories.update(), so the mirror still describes the PREVIOUS dataset.
@@ -1035,17 +784,7 @@
     lastPulled = 0;
     lastPushAt = 0;
     if (!enabled || applying) return Promise.resolve(false);
-    // The caller replaced the whole dataset on purpose, so this push is
-    // authoritative for the reference collections too - it is the one case where
-    // records the cloud still holds must NOT be preserved.
-    forceWhole = true;
-    return push().then(function (r) {
-      forceWhole = false;
-      return r;
-    }, function (e) {
-      forceWhole = false;
-      throw e;
-    });
+    return push();
   }
 
   // Per-record models (create/update per document) cover both the mutable
@@ -1108,28 +847,6 @@
     return null;
   }
 
-  // Tags a write with the document it targets and turns a rejection into a
-  // settled result, so one refused write cannot discard the bookkeeping for
-  // every other write in the same push. Before this, Promise.all rejected on
-  // the first denial and the mirror was never persisted - so a ruleset that
-  // denies one collection silently blocked the bookkeeping for all of them, and
-  // the app carried on as if it had uploaded.
-  function writeOp(label, promise, opts) {
-    return promise.then(
-      function () { return { ok: true, label: label }; },
-      function (e) {
-        // "already there" is a successful outcome for an append-only create:
-        // the record IS in the cloud, which is all the mirror records.
-        var code = e && e.code || "";
-        if (opts && opts.alreadyExistsOk &&
-            (code === "already-exists" || /already exists/i.test((e && e.message) || ""))) {
-          return { ok: true, label: label, alreadyExisted: true };
-        }
-        return { ok: false, label: label, error: e };
-      }
-    );
-  }
-
   // Builds every operation needed to push ONE record collection (projects or
   // tasks) from local state to the cloud, honoring the per-record rules:
   //  - admin: full set() for every changed record, delete for locally-deleted
@@ -1139,7 +856,6 @@
   // Returns { ops, mirror } where mirror maps record id -> new mirror entry
   // (or null to drop it) so the mirror is only persisted after the write set
   // succeeded.
-
   function buildRecordOps(cname, d, idn, t) {
     var ops = [];
     var mirrorUpdates = {};
@@ -1159,7 +875,7 @@
         var creator = (mirror[id] && mirror[id].createdByPersonId) || null;
         if (creator !== idn.personId) return;
       }
-      ops.push(writeOp(cname + "/" + id + " (delete)", recordRef(cname, id).delete()));
+      ops.push(recordRef(cname, id).delete());
       mirrorUpdates[id] = null;
     });
 
@@ -1209,7 +925,7 @@
         // can only ASSIGNEE-update cannot be created by them (rules: member
         // has no create right), so skip — it will arrive via a manager/admin.
         if (statusOnly) return;
-        ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
+        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
         return;
       }
@@ -1225,11 +941,11 @@
         ["status", "progress", "activity"].forEach(function (k) {
           if (!statusFieldEquals(k, rec, snap)) payload[k] = rec[k];
         });
-        ops.push(writeOp(cname + "/" + rec.id + " (status)", recordRef(cname, rec.id).update(payload)));
+        ops.push(recordRef(cname, rec.id).update(payload));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
       } else {
         if (snap.updatedAt === rec.updatedAt) return;
-        ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
+        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
       }
     });
@@ -1255,24 +971,14 @@
     Object.keys(mirror).forEach(function (id) {
       if (have[id]) return;
       if (!idn.isAdmin) return;
-      ops.push(writeOp(cname + "/" + id + " (delete)", recordRef(cname, id).delete()));
+      ops.push(recordRef(cname, id).delete());
       mirrorUpdates[id] = null;
     });
 
     local.forEach(function (rec) {
       if (!rec || !rec.id) return;
       if (mirror[rec.id]) return;
-      // create(), not set(). The activity log is append-only in the rules
-      // (allow update: if false), so a set() on an entry the cloud ALREADY holds
-      // is an update and is refused. The mirror is only ever filled by a pull
-      // that actually applied data, so a device whose mirror was lost (cleared
-      // storage, fresh browser, a pull that short-circuited) holds entries that
-      // are already in the cloud and would re-send every one of them - each one
-      // refused, which is what turned an admin's push into a permanent
-      // "Upload failed". create() makes "already there" an explicit,
-      // distinguishable answer instead of a rules refusal.
-      ops.push(writeOp(cname + "/" + rec.id + " (write)",
-        recordRef(cname, rec.id).create(PMS.utils.deepClone(rec)), { alreadyExistsOk: true }));
+      ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
       mirrorUpdates[rec.id] = true;
     });
 
@@ -1285,13 +991,6 @@
   // once every item it holds is present locally (so nothing is lost), leaving
   // per-record documents as the only source of truth.
   function legacyCleanupOps(idn) {
-    // The round-4 ruleset deliberately has NO rule for zms_<c>/data: those
-    // wrapper docs are gone by design, so reading one is REFUSED. This runs on
-    // every admin push, so treating that refusal as a failure made every push
-    // report "Upload failed" - and before it was caught, it aborted the push
-    // before a single task or activity was written. A wrapper doc that the
-    // rules no longer mention cannot exist, so there is nothing here to clean
-    // up: this is best-effort housekeeping and must never colour the result.
     if (!idn.isAdmin) return Promise.resolve([]);
     return Promise.all(RECORD_COLS.map(function (cname) {
       return colRef(cname).get().then(function (s) {
@@ -1301,215 +1000,99 @@
         var local = PMS.store.data && PMS.store.data[cname];
         if (Array.isArray(local)) local.forEach(function (it) { if (it && it.id) localIds[it.id] = true; });
         var mirrored = items.every(function (it) { return it && it.id && localIds[it.id]; });
-        return mirrored ? [writeOp(cname + "/data (legacy cleanup)", colRef(cname).delete())] : [];
-      }, function (e) {
-        // Expected on the current ruleset: the wrapper doc is not readable
-        // because no rule covers it. Not an error, and not the account's fault.
-        console.debug("[cloudsync] legacy wrapper " + cname + "/data not present or not readable (" +
-          ((e && e.code) || "error") + ") - nothing to clean up");
-        return [];
+        return mirrored ? [colRef(cname).delete()] : [];
       });
     })).then(function (groups) {
       var out = [];
       groups.forEach(function (g) { out = out.concat(g); });
       return out;
-    }, function (e) {
-      console.debug("[cloudsync] legacy cleanup skipped (" + ((e && e.code) || "error") + ")");
-      return [];
     });
   }
 
-/* ---------------- push (local -> cloud) ---------------- */
+  /* ---------------- push (local -> cloud) ---------------- */
   function push() {
-    // "A download is still being applied" is a normal, momentary state, not a
-    // failed upload - say so, because push() returns false here and the caller
-    // used to render that as "Upload failed" with an empty error list.
-    if (applying) {
-      console.info("[cloudsync] push skipped: a cloud download is still being applied");
-      blockSync("busyApplying", "zms (every collection)");
-      return Promise.resolve(false);
-    }
-    if (!enabled) {
-      console.info("[cloudsync] push skipped: cloud sharing is not enabled on this device");
-      blockSync("notEnabled", "zms (every collection)");
-      return Promise.resolve(false);
-    }
+    if (!enabled || applying) return Promise.resolve(false);
     var d = PMS.store.data;
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
-    if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) {
-      // An empty device is not a failed upload. Say so, instead of returning the
-      // same false that means "the rules refused your writes".
-      console.info("[cloudsync] push skipped: this device holds no records to share");
-      blockSync("emptyDevice", "zms (every collection)");
-      return Promise.resolve(false);
-    }
+    if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
     lastPushAt = Date.now();
     PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
     return waitForSignedIn().then(function (ok) {
-      if (!ok) { blockSync("notSignedIn", "zms (every collection)"); return false; }
-      clearBlocked("notSignedIn");
+      if (!ok) return false;
       return ensureReady().then(function () {
         var idn = identity();
-        if (!idn.cloudUid) {
-          // Not an error, but it does mean NOTHING can leave this device, and
-          // until now it said nothing at all - a task created here simply never
-          // reached anyone else, with no clue on screen. An account that has
-          // never been linked to a cloud sign-in has no cloudUid, so this is the
-          // normal state for a purely local account.
-          blockSync("noCloudAccount", "zms (every collection)");
-          return false;
-        }
+        if (!idn.cloudUid) return false;
         var t = now();
         return canWriteShared().then(function (sharedWrite) {
           var ops = [];
+          // whole-dataset reference collections: only manager/admin (+bootstrap)
+          if (sharedWrite) {
+            WHOLE_COLS.forEach(function (cname) {
+              if (Array.isArray(d[cname])) {
+                ops.push(colRef(cname).set({ items: PMS.utils.deepClone(d[cname]), updatedAt: t }));
+              }
+            });
+          }
+          // per-record collections (projects/tasks)
           var mirrorPatches = {};
           var skippedByCol = {};
-          var wroteWhole = false;
-
-          // Whole-dataset reference collections (departments, people,
-          // customFieldDefs, savedFilters, statuses, priorities): only
-          // manager/admin (+bootstrap). These are merged into the cloud inside a
-          // transaction instead of overwriting it. A verbatim write made each
-          // device the authority on the entire collection, so a browser one
-          // edit behind erased everyone else's people, and a deleted custom
-          // field reappeared as soon as the next stale device saved.
-          var wholeJob = sharedWrite
-            ? Promise.all(WHOLE_COLS.map(function (cname) {
-              if (!Array.isArray(d[cname])) return null;
-              return pushWholeCol(cname, d, t, forceWhole).then(function (res) {
-                if (!res || !res.changed) return;
-                wroteWhole = true;
-                // The baseline is now what the cloud holds, not what this
-                // device started from, so the next push sees no phantom diff.
-                var map = {};
-                (res.items || []).forEach(function (rec) {
-                  if (rec && rec.id) map[rec.id] = wholeSig(rec);
+          RECORD_COLS.forEach(function (cname) {
+            var built = buildRecordOps(cname, d, idn, t);
+            ops = ops.concat(built.ops);
+            if (built.mirror) mirrorPatches[cname] = built.mirror;
+            if (built.skipped && built.skipped.length) skippedByCol[cname] = built.skipped;
+          });
+          // append-only per-record collections (activity log)
+          APPEND_COLS.forEach(function (cname) {
+            var built = buildAppendOps(cname, d, idn, t);
+            ops = ops.concat(built.ops);
+            if (built.mirror) mirrorPatches[cname] = built.mirror;
+          });
+          // legacy round-3 wrapper cleanup (admin only)
+          return legacyCleanupOps(idn).then(function (legacyOps) {
+            ops = ops.concat(legacyOps);
+            // state clock: managers/admins write the full state doc; members
+            // only bump the clock (updatedAt) so other devices pull the change
+            if (sharedWrite) {
+              ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
+            } else if (ops.length) {
+              ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
+            }
+            if (!ops.length) return false;
+            return Promise.all(ops).then(function () {
+              // persist the mirror only after the writes succeeded
+              Object.keys(mirrorPatches).forEach(function (cname) {
+                var next = PMS.utils.deepClone(mirrorFor(cname));
+                Object.keys(mirrorPatches[cname]).forEach(function (id) {
+                  var v = mirrorPatches[cname][id];
+                  if (v === null) delete next[id];
+                  else next[id] = v;
                 });
-                mirrorPatches[cname] = map;
-              }).catch(function (e) {
-                // A refused reference collection must not take the per-record
-                // writes down with it. Those are separate documents with their
-                // own rules, and they are the ones carrying tasks between users.
-                noteDenied(e, "zms_" + cname + "/data");
-                console.error("[cloudsync] reference collection not written:", cname, e);
+                setMirrorFor(cname, next);
               });
-            }))
-            : Promise.resolve();
-
-          return wholeJob.then(function () {
-            // per-record collections (projects/tasks/meetings)
-            RECORD_COLS.forEach(function (cname) {
-              var built = buildRecordOps(cname, d, idn, t);
-              ops = ops.concat(built.ops);
-              if (built.mirror) mirrorPatches[cname] = built.mirror;
-              if (built.skipped && built.skipped.length) skippedByCol[cname] = built.skipped;
-            });
-            // append-only per-record collections (activity log)
-            APPEND_COLS.forEach(function (cname) {
-              var built = buildAppendOps(cname, d, idn, t);
-              ops = ops.concat(built.ops);
-              if (built.mirror) mirrorPatches[cname] = built.mirror;
-            });
-            // legacy round-3 wrapper cleanup (admin only). Deliberately kept OUT of
-            // `ops`: a wrapper doc the rules no longer cover can never be
-            // cleaned up, and its absence must not turn a fully successful
-            // upload into "Upload failed".
-            return legacyCleanupOps(idn).catch(function () { return []; }).then(function () {
-              // state clock: managers/admins write the full state doc; members
-              // only bump the clock (updatedAt) so other devices pull the change
-              if (sharedWrite && (ops.length || wroteWhole)) {
-                ops.push(writeOp("zms_meta/state", stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true })));
-              } else if (ops.length) {
-                ops.push(writeOp("zms_meta/state", stateRef().set({ updatedAt: t }, { merge: true })));
+              // align the in-memory clock with what we uploaded (and persist
+              // it) so the next poll/reboot does not re-import our own data
+              // back onto this device. flush() does not emit "store:changed",
+              // so this cannot loop.
+              var dd = PMS.store.data;
+              if (dd && dd.meta) {
+                dd.meta.updatedAt = t;
+                PMS.store.flush();
               }
-              // There was nothing to send. This is a SUCCESS - the device already matches
-              // the cloud - and it must not be reported as the same thing as a
-              // refused write, or the UI shows "Upload failed" for an upload
-              // that had nothing to do and nothing went wrong.
-              if (!ops.length && !wroteWhole) {
-                console.info("[cloudsync] push: nothing to upload (local already matches the cloud)");
-                PMS.bus.emit("cloud:state", { pushed: true, nothingToDo: true });
-                return true;
+              lastPushed = Date.now();
+              PMS.bus.emit("cloud:state", { pushed: true });
+              var summarized = {};
+              COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
+              console.info("[cloudsync] push ok", summarized);
+              // Never let a refused write pass as a clean push. These records
+              // are still only local, and the next pull will drop them as if a
+              // remote writer had deleted them, so surface the reason now.
+              if (Object.keys(skippedByCol).length) {
+                console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
+                PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
               }
-              return Promise.all(ops).then(function (results) {
-                // Settled, so a refused write is reported instead of cancelling
-                // the whole push. The mirror below is only patched for the
-                // collections whose writes actually landed.
-                var denied = [], failed = [];
-                (results || []).forEach(function (r) {
-                  if (!r || r.ok !== false) return;
-                  if (noteDenied(r.error, r.label)) denied.push(r.label);
-                  else failed.push(r.label);
-                });
-                // Keep WHY each one failed, not just that it did. "Upload failed"
-                // names only the Firestore rules, so a quota, an expired session
-                // or a value the rules cannot express all read identically.
-                lastFailed = results.filter(function (r) { return r && r.ok === false; })
-                  .map(function (r) {
-                    return {
-                      label: r.label,
-                      code: (r.error && r.error.code) || "",
-                      message: (r.error && r.error.message) || String(r.error)
-                    };
-                  });
-                if (!lastFailed.length) lastFailed = [];
-                if (denied.length) {
-                  console.error("[cloudsync] REFUSED by the Firestore rules - these documents were not written:", denied);
-                }
-                if (failed.length) {
-                  console.error("[cloudsync] write failed:", failed);
-                }
-                // persist the mirror only for the writes that landed
-                Object.keys(mirrorPatches).forEach(function (cname) {
-                  var next = PMS.utils.deepClone(mirrorFor(cname));
-                  Object.keys(mirrorPatches[cname]).forEach(function (id) {
-                    var v = mirrorPatches[cname][id];
-                    if (v === null) delete next[id];
-                    else next[id] = v;
-                  });
-                  setMirrorFor(cname, next);
-                });
-                // align the in-memory clock with what we uploaded (and persist
-                // it) so the next poll/reboot does not re-import our own data
-                // back onto this device. flush() does not emit "store:changed",
-                // so this cannot loop.
-                var dd = PMS.store.data;
-                if (dd && dd.meta) {
-                  dd.meta.updatedAt = t;
-                  PMS.store.flush();
-                }
-                // This device has now published (or confirmed) its copy of the
-                // shared dataset, so a later boot may treat local as editable
-                // rather than as an unadopted seed.
-                markAdopted(t);
-                lastPushed = Date.now();
-                var summarized = {};
-                COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
-                console.info("[cloudsync] push ok", summarized);
-                // Never let a refused write pass as a clean push. These records
-                // are still only local, and the next pull will drop them as if a
-                // remote writer had deleted them, so surface the reason now.
-                if (Object.keys(skippedByCol).length) {
-                  console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
-                  PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
-                  Object.keys(skippedByCol).forEach(function (c) {
-                    blockSync("skipped", c + " (" + skippedByCol[c].length + ")");
-                  });
-                }
-                // Everything landed: nothing is holding the sync up any more.
-                if (!denied.length && !failed.length) {
-                  lastDenied = null;
-                  clearBlocked("denied");
-                  clearBlocked("noCloudAccount");
-                  clearBlocked("notSignedIn");
-                }
-                if (denied.length) PMS.bus.emit("cloud:denied", { paths: denied });
-                PMS.bus.emit("cloud:state", { pushed: true, denied: denied.length ? denied : null });
-                // A refused write is a failed upload even though other parts of
-                // the push landed, so the caller's promise must say so.
-                return denied.length === 0 && failed.length === 0;
-              });
+              return true;
             });
           });
         });
@@ -1540,60 +1123,39 @@
       var localData = PMS.store.data;
       var localUpdated = localData.meta && localData.meta.updatedAt;
       var localEmpty = USER_COLS.every(function (c) { return !Array.isArray(localData[c]) || localData[c].length === 0; });
-      // A device that has never adopted this cloud has nothing worth
-      // protecting locally: its store is a fresh seed (or a leftover from before
-      // it was ever connected). Judging that against the remote clock let a
-      // newly opened browser decide it was "ahead" - its seed is stamped now,
-      // the shared data was written days ago - so it published the seed over the
-      // cloud and deleted the people everyone else had added. Adopt first, and
-      // only then may this device publish.
-      var unadopted = !adoptedClock();
       if (mode !== "replace" && mode !== "merge") {
         // automatic pull: apply when the remote is newer, or whenever this
         // device has no real content yet (fresh browser) so it adopts the
         // shared dataset regardless of clocks. An empty local store must never
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
-        if (!unadopted && !localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
+        if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
       }
-      // One refused collection must not cancel the others. Promise.all used to
-      // reject on the first denial, which threw away every OTHER collection as
-      // well: the shared dataset then simply stopped updating, which reads as
-      // "the other users' records disappeared" with nothing on screen to say why.
       return Promise.all(COLLECTIONS.map(function (cname) {
-        var read = isRecordCol(cname) ? recordCol(cname).get().then(function (qs) {
-          var items = [];
-          qs.forEach(function (ds) {
-            if (!ds.exists) return;
-            var dd = ds.data() || {};
-            if (ds.id === "data" && Array.isArray(dd.items)) {
-              dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
-            } else if (ds.id === "data") {
-              // empty legacy wrapper: nothing to expand
-            } else {
-              items.push(dd);
-            }
+        if (isRecordCol(cname)) {
+          // per-record collection: read every doc. A legacy whole-doc
+          // zms_<c>/data (round-3) is re-expanded into its items so existing
+          // clouds stay readable until the admin's push migrates them.
+          return recordCol(cname).get().then(function (qs) {
+            var items = [];
+            qs.forEach(function (ds) {
+              if (!ds.exists) return;
+              var dd = ds.data() || {};
+              if (ds.id === "data" && Array.isArray(dd.items)) {
+                dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
+              } else if (ds.id === "data") {
+                // empty legacy wrapper: nothing to expand
+              } else {
+                items.push(dd);
+              }
+            });
+            return items;
           });
-          return items;
-        }) : colRef(cname).get().then(function (s) {
+        }
+        return colRef(cname).get().then(function (s) {
           return (s.exists && s.data() && Array.isArray(s.data().items)) ? s.data().items : [];
         });
-        return read.then(
-          function (items) { return { cname: cname, items: items || [] }; },
-          function (e) { return { cname: cname, items: [], error: e }; }
-        );
       })).then(function (snaps) {
-        var unreadable = snaps.filter(function (s) { return s.error; });
-        if (unreadable.length) {
-          unreadable.forEach(function (s) {
-            console.warn("[cloudsync] cannot read " + s.cname + ":",
-              s.error && s.error.message ? s.error.message : s.error);
-            noteDenied(s.error, s.cname + " (read)");
-          });
-          blockSync("unreadable", unreadable.map(function (s) { return s.cname; }).join(", "));
-        } else {
-          clearBlocked("unreadable");
-        }
         var obj = {
           schemaVersion: PMS.schema.VERSION,
           departments: [], people: [], projects: [], tasks: [], meetings: [],
@@ -1601,7 +1163,9 @@
           customFieldDefs: [], savedFilters: [],
           meta: { updatedAt: remoteUpdated }
         };
-        snaps.forEach(function (s) { obj[s.cname] = s.items || []; });
+        snaps.forEach(function (items, i) {
+          obj[COLLECTIONS[i]] = items || [];
+        });
         return obj;
       });
     }).then(function (obj) {
@@ -1619,43 +1183,29 @@
       // accounts + per-device preferences never come from the cloud
       obj.users = PMS.utils.deepClone((PMS.store.data && PMS.store.data.users) || []);
       obj.settings = PMS.utils.deepClone((PMS.store.data && PMS.store.data.settings) || PMS.schema.defaultData().settings);
-      // `applying` gates BOTH pull and push, so it must never be left stuck on: a
-      // throw anywhere below would make every later push() return false at its
-      // first line, forever, with nothing in the error list - an upload that can
-      // never run and never says why.
       applying = true;
-      try {
-        PMS.store.setData(obj);
-        // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
-        // cloud as its baseline; a local edit made before/after still differs).
-        // Projects/tasks track status fields; append-only collections (activity
-        // log) just track which entry ids the cloud already holds.
-        COLLECTIONS.forEach(function (cname) {
-          var map = {};
-          (rawRemote[cname] || []).forEach(function (rec) {
-            if (!rec || !rec.id) return;
-            // Reference collections are compared by content signature on push,
-            // so their baseline has to be the signature and not a bare `true`.
-            map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : wholeSig(rec);
-          });
-          setMirrorFor(cname, map);
+      PMS.store.setData(obj);
+      // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
+      // cloud as its baseline; a local edit made before/after still differs).
+      // Projects/tasks track status fields; append-only collections (activity
+      // log) just track which entry ids the cloud already holds.
+      COLLECTIONS.forEach(function (cname) {
+        var map = {};
+        (rawRemote[cname] || []).forEach(function (rec) {
+          if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : true;
         });
-        // accountEvents is a CLOUD-ONLY, admin-read cache: it is not part of
-        // COLLECTIONS, so it is neither pushed nor merged here. Keep whatever the
-        // local cache already holds instead of letting the wholesale replacement
-        // drop it (setData() replaces the store, and this key is not rebuilt
-        // from a pull). It is refreshed explicitly by accountEvents().
-        if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
-        // This device now holds the shared dataset. Until this is recorded, every
-        // later boot treats the local store as an unadopted seed and refuses to
-        // publish it over the cloud.
-        markAdopted(remoteUpdated || now());
-        lastPulled = Date.now();
-        PMS.bus.emit("cloud:state", { pulled: true });
-        return true;
-      } finally {
-        applying = false;
-      }
+        setMirrorFor(cname, map);
+      });
+      // accountEvents is a CLOUD-ONLY, admin-read cache: it is not part of
+      // COLLECTIONS, so it is neither pushed nor merged here. Keep whatever the
+      // local cache already holds instead of letting the wholesale replacement
+      // drop it (setData() replaces the store, and this key is not rebuilt
+      // from a pull). It is refreshed explicitly by accountEvents().
+      if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
+      applying = false;
+      lastPulled = Date.now();
+      PMS.bus.emit("cloud:state", { pulled: true });
+      return true;
     }).catch(function (e) {
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
@@ -1699,32 +1249,14 @@
     COLLECTIONS.forEach(function (cname) {
       var incoming = remoteObj[cname] || [];
       var existing = merged[cname] || [];
-      // Every synced collection carries a baseline of what this device has
+      // Per-record collections carry a mirror of every id this device has
       // actually published, so "not in the mirror" means "the cloud has never
       // seen this record". Such a record must never be judged by the
       // remote-clock heuristic below: that heuristic is meant to detect a
       // record a remote writer DELETED, and treating a never-uploaded local
       // record that way destroys work silently (a task a manager created in a
-      // pillar they do not manage was lost exactly this way). This covers the
-      // reference collections too now: a person added here and not yet pushed
-      // must not be dropped because another device happened to save first.
-      // The guard only ever KEEPS records - a remote delete still lands through
-      // the `incoming.some(...)` test - and the baseline is rebuilt from the raw
-      // remote snapshot on every successful pull, so a cleared mirror
-      // self-heals on the next sync instead of freezing deletions forever.
-      var recMirror = mirrorFor(cname);
-      // Reference collections are merged by the same baseline-aware routine the
-      // PUSH uses, not by the generic id+updatedAt rule below. Two reasons:
-      // a custom field definition carries no usable clock of its own, and "the
-      // cloud has this id and I do not" is precisely the shape of a record this
-      // device deleted. The generic rule could only read that as somebody else's
-      // addition and re-added it, so every custom field removed here came back
-      // from the cloud on the next pull - which is what a refresh then showed,
-      // long before the push that was meant to carry the delete had landed.
-      if (WHOLE_COLS.indexOf(cname) !== -1) {
-        merged[cname] = mergeWholeCol(cname, existing, incoming, recMirror);
-        return;
-      }
+      // pillar they do not manage was lost exactly this way).
+      var recMirror = RECORD_COLS.indexOf(cname) !== -1 ? mirrorFor(cname) : null;
       incoming.forEach(function (item) {
         var idx = -1;
         for (var i = 0; i < existing.length; i++) {
@@ -1838,16 +1370,6 @@
         if (d.hasData === false) return hasLocal ? push() : false;
         var remote = d.updatedAt;
         if (!remote) return hasLocal ? push() : false;
-        // This device has never adopted the shared dataset, so its local copy is
-        // a fresh seed, not an edit. Publishing it would delete every record
-        // another user has added - which is exactly what happened when the app
-        // was opened in a browser it had never run in before. Adopt the cloud
-        // instead; the pull marks this device adopted, and from then on ordinary
-        // local edits are published normally.
-        if (!adoptedClock()) {
-          console.info("[cloudsync] first run on this device: adopting the shared dataset instead of publishing the local seed");
-          return pull();
-        }
         var localAt = local.meta && local.meta.updatedAt;
         if (localAt && remote < localAt) return hasLocal ? push() : false;
         return false;
@@ -2000,108 +1522,14 @@
     });
   }
 
-  // A report a person can act on, not a console log they have to know to open.
-  // Every answer here is a fact the Firestore rules decide, so this is what
-  // separates "the rules do not cover this" from "this account may not" from
-  // "this device is not signed in" - three problems that look identical from
-  // the outside because they all end as "my work is not showing up".
-  // Reads only: it never writes, so running it is always safe.
-  function diagnose() {
-    var report = {
-      at: now(),
-      configured: isConfigured(),
-      enabled: !!enabled,
-      signedIn: false,
-      email: null,
-      cloudUid: null,
-      profile: null,
-      checks: []
-    };
-    return waitForSignedIn().then(function (ok) {
-      report.signedIn = !!ok;
-      if (!ok) {
-        report.checks.push({ name: "cloud.diag.signedIn", ok: false });
-        return report;
-      }
-      try {
-        var app = window.firebase.apps.find(function (a) { return a.name === APP_NAME; });
-        var cu = app ? window.firebase.auth(app).currentUser : null;
-        report.email = cu && cu.email;
-        report.cloudUid = cu && cu.uid;
-      } catch (e) { /* no firebase globals: the signedIn check already said no */ }
-      return ensureReady().then(function () {
-        var uid = report.cloudUid;
-        // The single most important fact: is there a cloud profile at all? Every
-        // read and write rule in the set is gated on it (isTeamMember /
-        // isActiveUser), so a missing or inactive profile denies EVERYTHING
-        // while the app still looks signed in.
-        return cloudUserRef(uid).get().then(function (s) {
-          if (!s.exists) {
-            report.profile = { exists: false };
-            report.checks.push({ name: "cloud.diag.profileMissing", ok: false, detail: uid });
-            return null;
-          }
-          var p = s.data() || {};
-          report.profile = {
-            exists: true,
-            role: p.role || null,
-            active: p.active === undefined ? "(unset)" : p.active,
-            personId: p.personId || null
-          };
-          report.checks.push({ name: "cloud.diag.profileOk", ok: true, detail: (p.role || "?") + (p.personId ? " / " + p.personId : "") });
-          return null;
-        }, function (e) {
-          report.checks.push({ name: "cloud.diag.profileRead", ok: false, detail: errText(e) });
-          return null;
-        });
-      }).then(function () {
-        var targets = [
-          ["zms_meta/state", function () { return stateRef(); }],
-          ["zms_tasks", function () { return recordCol("tasks"); }],
-          ["zms_projects", function () { return recordCol("projects"); }],
-          ["zms_meetings", function () { return recordCol("meetings"); }],
-          ["zms_activities", function () { return recordCol("activities"); }],
-          ["zms_people/data", function () { return colRef("people"); }]
-        ];
-        return targets.reduce(function (chain, target) {
-          return chain.then(function () {
-            return target[1]().get().then(function (qs) {
-              var n = 0;
-              if (typeof qs.forEach === "function") qs.forEach(function () { n++; });
-              else if (qs.exists) n = 1;
-              report.checks.push({ name: target[0], ok: true, detail: n + " doc(s)" });
-            }, function (e) {
-              report.checks.push({ name: target[0], ok: false, detail: errText(e) });
-            });
-          });
-        }, Promise.resolve());
-      }).then(function () { return report; }, function (e) {
-        report.checks.push({ name: "cloud.diag.error", ok: false, detail: errText(e) });
-        return report;
-      });
-    }, function (e) {
-      report.checks.push({ name: "cloud.diag.error", ok: false, detail: errText(e) });
-      return report;
-    });
-  }
-
-  function errText(e) {
-    if (!e) return "unknown";
-    var code = e.code || "";
-    var msg = e.message || String(e);
-    return (code ? code + ": " : "") + msg;
-  }
-
   PMS.cloudsync = {
     enable: enable,
     disable: disable,
     boot: boot,
     push: push,
-    diagnose: diagnose,
     dataReplaced: dataReplaced,
     pull: pull,
     accountEvents: accountEvents,
-    cloudAccounts: cloudAccounts,
     saveBackup: saveBackup,
     listBackups: listBackups,
     loadBackup: loadBackup,
@@ -2137,13 +1565,8 @@
   // window.PMS.cloudsync carries no internal bridge/test surface in the app.
   if (typeof window !== "undefined" && window.__ZMS_TEST__) {
     PMS.cloudsync._mergeForTest = mergeWithLocal;
-    PMS.cloudsync._mergeWholeForTest = mergeWholeCol;
-    PMS.cloudsync._adoptedClockForTest = adoptedClock;
-    PMS.cloudsync._markAdoptedForTest = markAdopted;
-PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
+    PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
     PMS.cloudsync._getMirrorForTest = mirrorFor;
     PMS.cloudsync._setMirrorForTest = setMirrorFor;
-    PMS.cloudsync._writeOpForTest = writeOp;
-    PMS.cloudsync._noteDeniedForTest = noteDenied;
   }
 })(window.PMS);

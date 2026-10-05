@@ -15,50 +15,6 @@
     return !!(PMS.cloudsync && PMS.cloudsync.isConfigured && PMS.cloudsync.isConfigured());
   }
 
-  /* The account list an admin sees. Accounts live in Firebase Auth, so the local
-     users[] array only ever holds the accounts this browser adopted - on a fresh
-     browser that is the signed-in admin and nothing else. The cloud directory
-     (zms_auth_users, admin-readable by the existing rules) is merged in by
-     cloudUid so the team shows on every device; a local record still wins for
-     the fields only it knows (lastLoginAt, the local id the edit/reset/delete
-     commands use), while role/active/personId stay cloud-authoritative. */
-  function accountRows() {
-    var local = PMS.auth.users() || [];
-    var dir = (PMS.store.data && PMS.store.data.cloudAccounts) || [];
-    var rows = local.map(function (u) {
-      var c = dir.filter(function (x) { return x.cloudUid && x.cloudUid === u.cloudUid; })[0];
-      if (!c) return u;
-      return {
-        id: u.id, cloudUid: u.cloudUid, username: u.username, name: u.name,
-        personId: c.personId || u.personId || null, lastLoginAt: u.lastLoginAt,
-        role: c.role, active: c.active, local: true
-      };
-    });
-    dir.forEach(function (c) {
-      if (rows.some(function (r) { return r.cloudUid && r.cloudUid === c.cloudUid; })) return;
-      rows.push({
-        id: "cloud:" + c.cloudUid, cloudUid: c.cloudUid, username: c.email,
-        name: c.displayName || c.email, email: c.email, personId: c.personId,
-        role: c.role, active: c.active, lastLoginAt: null, cloudOnly: true
-      });
-    });
-    return rows;
-  }
-
-  // The directory is a cloud read: fetch it the first time the tab is opened
-  // (or forced after an account change) and re-render when it lands.
-  var dirRequested = false;
-  function refreshDirectory(force) {
-    if (!cloudReady() || !PMS.cloudsync || !PMS.cloudsync.cloudAccounts) return;
-    if (dirRequested && !force) return;
-    dirRequested = true;
-    PMS.cloudsync.cloudAccounts(force).then(function () {
-      if (PMS.router.current === "/settings" && section === "accounts") {
-        render(document.getElementById("view-root"));
-      }
-    });
-  }
-
   function render(container) {
     container.innerHTML = "";
     var header = h("div.page-header");
@@ -80,10 +36,7 @@
     sections.forEach(function (s) {
       var btn = h("button.nav-item" + (section === s[0] ? ".active" : ""), {
         text: s[1],
-        // Switching tab re-arms the cloud account directory: an admin who
-        // promotes or adds somebody on another device has to see it on the next
-        // visit, not only on the first one this page load.
-        on: { click: function () { section = s[0]; dirRequested = false; render(container); } }
+        on: { click: function () { section = s[0]; render(container); } }
       });
       nav.appendChild(btn);
     });
@@ -315,10 +268,6 @@
       title: isEdit ? t("common.edit") + " " + t("settings.customFields") : t("settings.addField"),
       size: "sm",
       content: function () {
-        // ADD passes no field at all, so every value read here has to tolerate a
-        // null field. `options` did not, which meant the Add Field dialog threw
-        // "Cannot read properties of null (reading 'options')" the moment it
-        // opened - the field could never be added at all.
         return PMS.forms.build([
           { key: "labelEn", label: t("settings.fieldLabel") + " (EN)", type: "text", required: true },
           { key: "labelAr", label: t("settings.fieldLabel") + " (AR)", type: "text" },
@@ -327,10 +276,10 @@
           { key: "options", label: "Options (comma separated)", type: "text", placeholder: "opt1, opt2, opt3" }
         ], {
           labelEn: field ? PMS.i18n.trilingual(field.label)(field.label) : "",
-          labelAr: field && field.label && field.label.ar ? field.label.ar : "",
+          labelAr: field && field.label.ar ? field.label.ar : "",
           entity: field ? field.entity : "task",
           type: field ? field.type : "text",
-          options: field && field.options ? field.options.join(", ") : ""
+          options: (field.options || []).join(", ")
         });
       },
       footer: [
@@ -393,55 +342,9 @@
     var embedded = PMS.cloudsync.embedded() && PMS.cloudsync.embedded().projectId;
     var blk = h("div", {}, [
       h("div.u-bold", { text: st.enabled ? t("cloud.connected") : (embedded ? t("cloud.embedded") : (st.projectId ? t("cloud.disconnected") : t("cloud.notConfigured"))) }),
-      h("div.u-muted", { text: (st.projectId ? t("cloud.projectId") + ": " + st.projectId : "") + (st.lastSyncAt ? " · " + t("cloud.lastSync") + ": " + PMS.utils.formatDate(new Date(st.lastSyncAt).toISOString(), PMS.i18n) : "") + " · " + t("settings.buildVersion") + " " + ((PMS.build && PMS.build.version) || "?") })
+      h("div.u-muted", { text: (st.projectId ? t("cloud.projectId") + ": " + st.projectId : "") + (st.lastSyncAt ? " · " + t("cloud.lastSync") + ": " + PMS.utils.formatDate(new Date(st.lastSyncAt).toISOString(), PMS.i18n) : "") })
     ]);
     row.appendChild(blk);
-
-    // Why the shared cloud is not moving. This has to be on screen, not only in the
-    // console: whatever it covers never reaches the other users, so to them it
-    // reads as data loss rather than as a sign-in or deployment problem.
-    var blockers = (st.blocked || []).slice();
-    if (st.denied && st.denied.path && !blockers.some(function (b) { return b.reason === "denied"; })) {
-      blockers.push({ reason: "denied", detail: st.denied.path });
-    }
-    if (blockers.length) {
-      blockers.forEach(function (b) {
-        var key = "cloud.blocked." + b.reason;
-        var title = t(key);
-        if (title === key) title = t("cloud.blocked.unknown");
-        row.appendChild(h("div", {
-          style: {
-            marginBlockStart: "10px", padding: "8px 10px",
-            borderInlineStart: "4px solid var(--danger)",
-            background: "var(--danger-soft)", borderRadius: "6px"
-          }
-        }, [
-          h("div.u-bold", { text: title }),
-          h("div", { text: t("cloud.blocked." + b.reason + "Body") }),
-          b.detail ? h("div.u-muted", { style: { marginBlockStart: "4px", wordBreak: "break-word" }, text: b.detail }) : null
-        ]));
-      });
-    }
-    // A write that failed for a reason OTHER than the rules still blocks the
-    // upload, and the old toast blamed the rules for all of them. Show the real
-    // code and message, so "Upload failed" is answerable without a console.
-    if (st.failed && st.failed.length) {
-      row.appendChild(h("div", {
-        style: {
-          marginBlockStart: "10px", padding: "8px 10px",
-          borderInlineStart: "4px solid var(--danger)",
-          background: "var(--danger-soft)", borderRadius: "6px"
-        }
-      }, [
-        h("div.u-bold", { text: t("cloud.failedTitle") }),
-        h("div", { text: t("cloud.failedBody") })
-      ].concat(st.failed.slice(0, 12).map(function (f) {
-        return h("div.u-muted", {
-          style: { marginBlockStart: "4px", wordBreak: "break-word" },
-          text: (f.label || "?") + (f.code ? " [" + f.code + "]" : "") + (f.message ? " — " + f.message : "")
-        });
-      }))));
-    }
     var sw = h("label.switch");
     var inp = h("input", { type: "checkbox", checked: !!st.enabled, on: { change: function (e) {
       if (e.target.checked) {
@@ -468,50 +371,11 @@
       PMS.auth.confirmSensitive(function () {
         PMS.cloudsync.push().then(function (ok) {
           if (ok) PMS.toast.show(t("cloud.pushDone"), "success");
-          else {
-            PMS.toast.show(t("cloud.pushFail"), "error");
-            // Re-render so the reason list below appears immediately instead of
-            // waiting for the user to notice a stale card.
-            if (PMS.router && PMS.router.handle) PMS.router.handle();
-          }
+          else PMS.toast.show(t("cloud.pushFail"), "error");
         });
       });
     } } }));
     actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.pullNow"), on: { click: function () { PMS.auth.confirmSensitive(function () { pullModal(); }); } } }));
-
-    // "Upload failed" on its own says nothing about WHICH part of the cloud
-    // refused this device, and the three possible reasons (rules, account role,
-    // not signed in) need three different fixes. This prints the answer on
-    // screen. Read-only: it never writes anything.
-    var diagBox = null;
-    function showDiag(node) {
-      if (diagBox) diagBox.remove();
-      diagBox = node;
-      b.insertBefore(node, actions.nextSibling);
-    }
-    actions.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("cloud.diagnose"), on: { click: function () {
-      if (!PMS.cloudsync.diagnose) return;
-      showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, [
-        h("div.u-muted", { text: t("cloud.diagnoseRunning") })
-      ]));
-      PMS.cloudsync.diagnose().then(function (rep) {
-        var kids = [h("div.u-bold", { text: t("cloud.diagnoseTitle") })];
-        if (rep.email) kids.push(h("div.u-muted", { style: { wordBreak: "break-word" }, text: rep.email }));
-        rep.checks.forEach(function (c) {
-          var known = t(c.name);
-          var label = (known === c.name ? c.name : known) + (c.detail ? " — " + c.detail : "");
-          kids.push(h("div", { style: { marginBlockStart: "4px" } }, [
-            h("span", { style: { color: c.ok ? "var(--success)" : "var(--danger)", fontWeight: "700" }, text: c.ok ? "✓" : "✗" }),
-            h("span", { text: " " + label })
-          ]));
-        });
-        showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, kids));
-      }, function (e) {
-        showDiag(h("div", { style: { marginTop: "10px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px" } }, [
-          h("div", { style: { color: "var(--danger)" }, text: (e && e.message) || String(e) })
-        ]));
-      });
-    } } }));
     b.appendChild(actions);
 
     b.appendChild(h("div.section-title", [txt(t("cloud.helpTitle"))]));
@@ -904,7 +768,7 @@
     ]));
     var b = h("div.card-body");
     b.appendChild(h("p.u-muted", { text: t("auth.accountsHint"), style: { marginBlockEnd: "8px" } }));
-    var list = accountRows();
+    var list = PMS.auth.users();
     if (!list.length) b.appendChild(h("div.u-muted", { text: t("common.noResults") }));
     list.forEach(function (u) {
       var row = h("div.account-row");
@@ -937,27 +801,9 @@
       // active toggle
       var toggle = h("label.switch", { attrs: { title: t("auth.activeToggle") } });
       var chk = h("input", { type: "checkbox", checked: u.active !== false, on: { change: function (e) {
-        // A cloud-only row has no local record: the authoritative flag lives in
-        // zms_auth_users, which is what every other device (and the Firestore
-        // rules) reads.
-        if (u.cloudOnly && u.cloudUid) {
-          var want = e.target.checked;
-          if (PMS.cloudsync && PMS.cloudsync.setCloudActive) {
-            e.target.checked = u.active !== false;
-            PMS.cloudsync.setCloudActive(u.cloudUid, want).then(function () {
-              refreshDirectory(true);
-              render(document.getElementById("view-root"));
-            }).catch(function () {
-              e.target.checked = u.active !== false;
-              PMS.toast.show(PMS.authUI.errorMessage("generic"), "error");
-            });
-          }
-          return;
-        }
         var res = PMS.auth.updateUser(u.id, { active: e.target.checked });
         if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); render(document.getElementById("view-root")); return; }
         PMS.store.flush();
-        if (u.cloudUid) { if (PMS.cloudsync && PMS.cloudsync.setCloudActive) PMS.cloudsync.setCloudActive(u.cloudUid, e.target.checked); refreshDirectory(true); }
       } } });
       toggle.appendChild(chk);
       toggle.appendChild(h("span.slider"));
@@ -973,7 +819,6 @@
     }
     card.appendChild(b);
     body.appendChild(card);
-    refreshDirectory(false);
   }
 
   function accountOptions() {
@@ -1018,13 +863,10 @@
           onClick: function (_, body) {
             var v = body.querySelector("form")._getValues();
             if (!isEdit && v.password !== v.confirm) { PMS.toast.show(t("auth.mismatch"), "error"); return; }
-            // A cloud-only row (an account this browser never adopted) has no
-            // local record to update: the local update is skipped and the cloud
-            // writes below become the only place the change is recorded.
-            var res = null;
-            if (!isEdit) res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
-            else if (!user.cloudOnly) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
-            if (res && res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
+            var res;
+            if (isEdit) res = PMS.auth.updateUser(user.id, { username: v.username, role: v.role, personId: v.personId || null });
+            else res = PMS.auth.createUser({ username: v.username, password: v.password, role: v.role, personId: v.personId || null });
+            if (res.error) { PMS.toast.show(PMS.authUI.errorMessage(res.error), "error"); return; }
             // reverse-sync: keep the linked person's email in lockstep with the
             // account's sign-in email (person e-mail is the profile of record).
             if (isEdit && v.username && v.personId && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.username) && PMS.repos && PMS.repos.people) {
@@ -1068,7 +910,6 @@
             PMS.modal.close();
             PMS.store.flush();
             render(document.getElementById("view-root"));
-            refreshDirectory(true);
           }
         }
       ]
@@ -1106,7 +947,6 @@
               PMS.store.flush();
               PMS.toast.show(t("auth.cloudAccountCreated"), "success");
               render(document.getElementById("view-root"));
-              refreshDirectory(true);
             }).catch(function (err) {
               PMS.toast.show(PMS.authUI.errorMessage((err && err.userCode) || "generic"), "error");
               console.error("[zms] create cloud account failed:", err && err.code || err, err);
@@ -1210,7 +1050,6 @@
               PMS.modal.close();
               PMS.store.flush();
               render(document.getElementById("view-root"));
-              refreshDirectory(true);
             }).catch(function (err) {
               PMS.modal.close();
               PMS.toast.show((err && err.userCode) === "backendRequired"
@@ -1231,11 +1070,6 @@
     b.appendChild(h("p", { text: t("app.name") + " v" + PMS.version }));
     b.appendChild(h("p.u-muted", { text: t("settings.appVersion") + ": " + PMS.version }));
     b.appendChild(h("p.u-muted", { text: t("settings.schemaVersion") + ": " + PMS.schema.VERSION }));
-    // The build number, so "is this device on the current version?" is a fact
-    // rather than a guess. Two people on different copies is the normal state
-    // here, and it is invisible until a fix appears not to work.
-    var build = PMS.build || {};
-    b.appendChild(h("p.u-muted", { text: t("settings.buildVersion") + ": " + (build.version || "?") + " (" + (build.released || "?") + ")" }));
     card.appendChild(b);
     body.appendChild(card);
   }
