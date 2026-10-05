@@ -1321,7 +1321,19 @@
 
 /* ---------------- push (local -> cloud) ---------------- */
   function push() {
-    if (!enabled || applying) return Promise.resolve(false);
+    // "A download is still being applied" is a normal, momentary state, not a
+    // failed upload - say so, because push() returns false here and the caller
+    // used to render that as "Upload failed" with an empty error list.
+    if (applying) {
+      console.info("[cloudsync] push skipped: a cloud download is still being applied");
+      blockSync("busyApplying", "zms (every collection)");
+      return Promise.resolve(false);
+    }
+    if (!enabled) {
+      console.info("[cloudsync] push skipped: cloud sharing is not enabled on this device");
+      blockSync("notEnabled", "zms (every collection)");
+      return Promise.resolve(false);
+    }
     var d = PMS.store.data;
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
@@ -1607,36 +1619,43 @@
       // accounts + per-device preferences never come from the cloud
       obj.users = PMS.utils.deepClone((PMS.store.data && PMS.store.data.users) || []);
       obj.settings = PMS.utils.deepClone((PMS.store.data && PMS.store.data.settings) || PMS.schema.defaultData().settings);
+      // `applying` gates BOTH pull and push, so it must never be left stuck on: a
+      // throw anywhere below would make every later push() return false at its
+      // first line, forever, with nothing in the error list - an upload that can
+      // never run and never says why.
       applying = true;
-      PMS.store.setData(obj);
-      // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
-      // cloud as its baseline; a local edit made before/after still differs).
-      // Projects/tasks track status fields; append-only collections (activity
-      // log) just track which entry ids the cloud already holds.
-      COLLECTIONS.forEach(function (cname) {
-        var map = {};
-        (rawRemote[cname] || []).forEach(function (rec) {
-          if (!rec || !rec.id) return;
-          // Reference collections are compared by content signature on push,
-          // so their baseline has to be the signature and not a bare `true`.
-          map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : wholeSig(rec);
+      try {
+        PMS.store.setData(obj);
+        // per-record mirror = the RAWH remote snapshot (a fresh device adopts the
+        // cloud as its baseline; a local edit made before/after still differs).
+        // Projects/tasks track status fields; append-only collections (activity
+        // log) just track which entry ids the cloud already holds.
+        COLLECTIONS.forEach(function (cname) {
+          var map = {};
+          (rawRemote[cname] || []).forEach(function (rec) {
+            if (!rec || !rec.id) return;
+            // Reference collections are compared by content signature on push,
+            // so their baseline has to be the signature and not a bare `true`.
+            map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : wholeSig(rec);
+          });
+          setMirrorFor(cname, map);
         });
-        setMirrorFor(cname, map);
-      });
-      // accountEvents is a CLOUD-ONLY, admin-read cache: it is not part of
-      // COLLECTIONS, so it is neither pushed nor merged here. Keep whatever the
-      // local cache already holds instead of letting the wholesale replacement
-      // drop it (setData() replaces the store, and this key is not rebuilt
-      // from a pull). It is refreshed explicitly by accountEvents().
-      if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
-      // This device now holds the shared dataset. Until this is recorded, every
-      // later boot treats the local store as an unadopted seed and refuses to
-      // publish it over the cloud.
-      markAdopted(remoteUpdated || now());
-      applying = false;
-      lastPulled = Date.now();
-      PMS.bus.emit("cloud:state", { pulled: true });
-      return true;
+        // accountEvents is a CLOUD-ONLY, admin-read cache: it is not part of
+        // COLLECTIONS, so it is neither pushed nor merged here. Keep whatever the
+        // local cache already holds instead of letting the wholesale replacement
+        // drop it (setData() replaces the store, and this key is not rebuilt
+        // from a pull). It is refreshed explicitly by accountEvents().
+        if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
+        // This device now holds the shared dataset. Until this is recorded, every
+        // later boot treats the local store as an unadopted seed and refuses to
+        // publish it over the cloud.
+        markAdopted(remoteUpdated || now());
+        lastPulled = Date.now();
+        PMS.bus.emit("cloud:state", { pulled: true });
+        return true;
+      } finally {
+        applying = false;
+      }
     }).catch(function (e) {
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;

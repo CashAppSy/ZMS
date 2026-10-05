@@ -4781,6 +4781,22 @@ section("Meeting card leads with the creator, logo + favicon");
          " emptyDeviceNamed=" + emptyDeviceNamed + " i18n=" + (named && namedAr) + ")", true);
       return noOpsIsSuccess && noOpsExplains && emptyDeviceNamed && named && namedAr;
     })());
+    // `applying` gates push() at its very first line. Left stuck on by a throw
+    // during the pull's apply step, every later upload returned false
+    // immediately - with no write attempted, no error recorded, and therefore
+    // an empty failure list next to "Upload failed". try/finally makes the flag
+    // impossible to strand.
+    ok("a throw while applying a download cannot disable uploads for good", (function () {
+      const guarded = /applying = true;\s*\n\s*try \{[\s\S]*?\} finally \{\s*\n\s*applying = false;/.test(syncSrc);
+      // every skip in push() names itself, so none of them is a silent false
+      const applyingNamed = /if \(applying\) \{[\s\S]{0,200}?blockSync\("busyApplying"/.test(syncSrc);
+      const enabledNamed = /if \(!enabled\) \{[\s\S]{0,200}?blockSync\("notEnabled"/.test(syncSrc);
+      const named = /busyApplying: "Please wait/.test(fs.readFileSync(path.join(APP, "js/i18n/en.js"), "utf8")) &&
+                    /notEnabled: "Cloud sharing is not enabled/.test(fs.readFileSync(path.join(APP, "js/i18n/en.js"), "utf8"));
+      ok("  (trace: guarded=" + guarded + " applyingNamed=" + applyingNamed +
+         " enabledNamed=" + enabledNamed + " i18n=" + named + ")", true);
+      return guarded && applyingNamed && enabledNamed && named;
+    })());
     ok("a refused write is reported instead of aborting the whole push",
       /if \(noteDenied\(r\.error, r\.label\)\) denied\.push\(r\.label\)/.test(syncSrc) &&
       /PMS\.bus\.emit\("cloud:denied"/.test(syncSrc) &&
