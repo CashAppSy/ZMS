@@ -479,6 +479,8 @@
       pushFail: "Upload failed — check the Firestore rules (help box below) and your connection, then retry.",
       replaceDone: "Cloud data downloaded (replaced local)",
       mergeDone: "Cloud data downloaded (merged with local)",
+      writeDenied: "The Firestore rules refused a write",
+      writeDeniedBody: "These records were not uploaded, so they exist only on this device and other users cannot see them. This happens when the published rules do not cover the documents the app writes — re-publish the current firestore.rules and try again.",
       pullConfirm: "Download shared data",
       pullReplace: "Replace local data",
       pullMerge: "Merge with local data",

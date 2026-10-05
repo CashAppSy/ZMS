@@ -4747,6 +4747,85 @@ section("Meeting card leads with the creator, logo + favicon");
     }
   })());
 
+  // The app stores projects/tasks/meetings as one document PER RECORD
+  // (zms_tasks/<id>). A ruleset published for the older whole-document layout
+  // has no rule for those paths, so every write is refused with permission-denied
+  // and the record never leaves this device - invisible to every other user,
+  // with nothing on screen to say so. Three things are locked down here:
+  //   1. push() reports the refusal instead of claiming success
+  //   2. status() carries the refused path, so the UI can name it
+  //   3. a refusal does not discard the bookkeeping for the writes that landed
+  {
+    const syncSrc = PMS.utils.readFile
+      ? PMS.utils.readFile("js/services/sync-firestore.js")
+      : fs.readFileSync(path.join(APP, "js/services/sync-firestore.js"), "utf8");
+    ok("every write in a push is labelled with the document it targets",
+      /function writeOp\(label, promise\)/.test(syncSrc) &&
+      (syncSrc.match(/writeOp\(/g) || []).length >= 8 &&
+      !/ops\.push\((recordRef|stateRef)\(/.test(syncSrc),
+      "an unlabelled write cannot be named when the rules refuse it");
+    ok("a refused write is reported instead of aborting the whole push",
+      /if \(noteDenied\(r\.error, r\.label\)\) denied\.push\(r\.label\)/.test(syncSrc) &&
+      /PMS\.bus\.emit\("cloud:denied"/.test(syncSrc) &&
+      /return denied\.length === 0 && failed\.length === 0;/.test(syncSrc),
+      "push() resolved true while the records were still only local");
+    ok("a refused reference collection does not block the per-record writes",
+      /\.catch\(function \(e\) \{\s*\n\s*\/\/ A refused reference collection/.test(syncSrc),
+      "one denied whole-collection write used to cancel every task write with it");
+    ok("the refused path is exposed for the UI to show",
+      /denied: lastDenied/.test(syncSrc) && /function noteDenied\(err, where\)/.test(syncSrc));
+    ok("permission-denied is recognised in either spelling",
+      /permission-denied\|Missing or insufficient permissions/i.test(syncSrc));
+  }
+
+  // Behaviour, not just shape: a refused write must settle rather than reject,
+  // so the other writes in the same push still complete and get recorded.
+  // (ok() is synchronous - an un-awaited promise would be truthy and pass here.)
+  {
+    const deniedErr = { code: "permission-denied", message: "Missing or insufficient permissions." };
+    const writeOp = PMS.cloudsync._writeOpForTest;
+    const noteDenied = PMS.cloudsync._noteDeniedForTest;
+    ok("the settled-write helper is exposed for testing", typeof writeOp === "function" && typeof noteDenied === "function");
+
+    let rejected = false;
+    let refused = null;
+    try { refused = await writeOp("tasks/t-1 (write)", Promise.reject(deniedErr)); } catch (e) { rejected = true; }
+    ok("a refused write settles instead of rejecting",
+      !rejected && refused && refused.ok === false &&
+      refused.label === "tasks/t-1 (write)" && refused.error === deniedErr);
+
+    const landed = await writeOp("tasks/t-2 (write)", Promise.resolve("done"));
+    ok("a landed write still reports success through the same path",
+      landed && landed.ok === true && landed.label === "tasks/t-2 (write)");
+
+    ok("one refusal does not cancel the writes beside it",
+      refused.ok === false && landed.ok === true);
+
+    const noted = noteDenied(deniedErr, "tasks/t-1 (write)");
+    const stAfter = PMS.cloudsync.status();
+    ok("a refusal is recorded with the path it could not write",
+      noted === true && !!stAfter.denied &&
+      stAfter.denied.path === "tasks/t-1 (write)" && !!stAfter.denied.at);
+
+    ok("an ordinary failure is not mistaken for a rules refusal",
+      noteDenied({ code: "unavailable", message: "backend down" }, "tasks/t-3") === false);
+
+    ok("the Firestore wording 'Missing or insufficient permissions' is recognised",
+      noteDenied({ code: "permission-denied", message: "Missing or insufficient permissions." }, "projects/p-1") === true);
+  }
+
+  // The refusal has to be visible without opening a console.
+  ok("the cloud settings card names a refused write", (function () {
+    const st = PMS.cloudsync.status();
+    const i18n = PMS.i18n;
+    const hasKeys = i18n.t("cloud.writeDenied") && i18n.t("cloud.writeDeniedBody");
+    const settingsSrc = fs.readFileSync(path.join(APP, "js/views/settings.js"), "utf8");
+    const readsStatus = /st\.denied && st\.denied\.path/.test(settingsSrc);
+    const showsPath = /st\.denied\.path/.test(settingsSrc);
+    ok("  (trace: status has denied=" + !!st.denied + ", i18n keys=" + !!hasKeys + ")", true);
+    return !!hasKeys && readsStatus && showsPath;
+  })());
+
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");
   console.log(process.exitCode ? "FULL TEST FAILED" : "FULL TEST PASSED");

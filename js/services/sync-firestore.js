@@ -137,8 +137,27 @@
       projectId: c ? c.projectId : null,
       config: c,
       realtime: enabled,
-      lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null)
+      lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null),
+      denied: lastDenied
     };
+  }
+
+  // A write the rules refused. Kept apart from a generic error because it means
+  // something only a deployment can fix: the Firestore rules in the project do
+  // not cover the path being written. The usual cause is a ruleset left behind
+  // by an earlier storage layout - the app writes projects/tasks/meetings as one
+  // document PER RECORD, so a ruleset that only knows the old whole-document
+  // paths (zms_tasks/data and friends) matches nothing at all and every task
+  // write is denied by default. That looks exactly like "my task vanished" from
+  // the other devices, with nothing on screen to say why.
+  var lastDenied = null;
+  function noteDenied(err, where) {
+    var code = (err && err.code) || "";
+    var msg = (err && err.message) || String(err);
+    var denied = /permission-denied|Missing or insufficient permissions/i.test(code + " " + msg);
+    if (!denied) return false;
+    lastDenied = { at: now(), path: where || null, message: msg };
+    return true;
   }
 
   function isConfigured() { return !!config(); }
@@ -1064,6 +1083,19 @@
     return null;
   }
 
+  // Tags a write with the document it targets and turns a rejection into a
+  // settled result, so one refused write cannot discard the bookkeeping for
+  // every other write in the same push. Before this, Promise.all rejected on
+  // the first denial and the mirror was never persisted - so a ruleset that
+  // denies one collection silently blocked the bookkeeping for all of them, and
+  // the app carried on as if it had uploaded.
+  function writeOp(label, promise) {
+    return promise.then(
+      function () { return { ok: true, label: label }; },
+      function (e) { return { ok: false, label: label, error: e }; }
+    );
+  }
+
   // Builds every operation needed to push ONE record collection (projects or
   // tasks) from local state to the cloud, honoring the per-record rules:
   //  - admin: full set() for every changed record, delete for locally-deleted
@@ -1073,6 +1105,7 @@
   // Returns { ops, mirror } where mirror maps record id -> new mirror entry
   // (or null to drop it) so the mirror is only persisted after the write set
   // succeeded.
+
   function buildRecordOps(cname, d, idn, t) {
     var ops = [];
     var mirrorUpdates = {};
@@ -1092,7 +1125,7 @@
         var creator = (mirror[id] && mirror[id].createdByPersonId) || null;
         if (creator !== idn.personId) return;
       }
-      ops.push(recordRef(cname, id).delete());
+      ops.push(writeOp(cname + "/" + id + " (delete)", recordRef(cname, id).delete()));
       mirrorUpdates[id] = null;
     });
 
@@ -1142,7 +1175,7 @@
         // can only ASSIGNEE-update cannot be created by them (rules: member
         // has no create right), so skip — it will arrive via a manager/admin.
         if (statusOnly) return;
-        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+        ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
         return;
       }
@@ -1158,11 +1191,11 @@
         ["status", "progress", "activity"].forEach(function (k) {
           if (!statusFieldEquals(k, rec, snap)) payload[k] = rec[k];
         });
-        ops.push(recordRef(cname, rec.id).update(payload));
+        ops.push(writeOp(cname + "/" + rec.id + " (status)", recordRef(cname, rec.id).update(payload)));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
       } else {
         if (snap.updatedAt === rec.updatedAt) return;
-        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+        ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
         mirrorUpdates[rec.id] = recordTrack(cname, rec);
       }
     });
@@ -1188,14 +1221,14 @@
     Object.keys(mirror).forEach(function (id) {
       if (have[id]) return;
       if (!idn.isAdmin) return;
-      ops.push(recordRef(cname, id).delete());
+      ops.push(writeOp(cname + "/" + id + " (delete)", recordRef(cname, id).delete()));
       mirrorUpdates[id] = null;
     });
 
     local.forEach(function (rec) {
       if (!rec || !rec.id) return;
       if (mirror[rec.id]) return;
-      ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
+      ops.push(writeOp(cname + "/" + rec.id + " (write)", recordRef(cname, rec.id).set(PMS.utils.deepClone(rec))));
       mirrorUpdates[rec.id] = true;
     });
 
@@ -1267,6 +1300,12 @@
                   if (rec && rec.id) map[rec.id] = wholeSig(rec);
                 });
                 mirrorPatches[cname] = map;
+              }).catch(function (e) {
+                // A refused reference collection must not take the per-record
+                // writes down with it. Those are separate documents with their
+                // own rules, and they are the ones carrying tasks between users.
+                noteDenied(e, "zms_" + cname + "/data");
+                console.error("[cloudsync] reference collection not written:", cname, e);
               });
             }))
             : Promise.resolve();
@@ -1291,13 +1330,28 @@
               // state clock: managers/admins write the full state doc; members
               // only bump the clock (updatedAt) so other devices pull the change
               if (sharedWrite && (ops.length || wroteWhole)) {
-                ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
+                ops.push(writeOp("zms_meta/state", stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true })));
               } else if (ops.length) {
-                ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
+                ops.push(writeOp("zms_meta/state", stateRef().set({ updatedAt: t }, { merge: true })));
               }
               if (!ops.length && !wroteWhole) return false;
-              return Promise.all(ops).then(function () {
-                // persist the mirror only after the writes succeeded
+              return Promise.all(ops).then(function (results) {
+                // Settled, so a refused write is reported instead of cancelling
+                // the whole push. The mirror below is only patched for the
+                // collections whose writes actually landed.
+                var denied = [], failed = [];
+                (results || []).forEach(function (r) {
+                  if (!r || r.ok !== false) return;
+                  if (noteDenied(r.error, r.label)) denied.push(r.label);
+                  else failed.push(r.label);
+                });
+                if (denied.length) {
+                  console.error("[cloudsync] REFUSED by the Firestore rules - these documents were not written:", denied);
+                }
+                if (failed.length) {
+                  console.error("[cloudsync] write failed:", failed);
+                }
+                // persist the mirror only for the writes that landed
                 Object.keys(mirrorPatches).forEach(function (cname) {
                   var next = PMS.utils.deepClone(mirrorFor(cname));
                   Object.keys(mirrorPatches[cname]).forEach(function (id) {
@@ -1321,7 +1375,6 @@
                 // rather than as an unadopted seed.
                 markAdopted(t);
                 lastPushed = Date.now();
-                PMS.bus.emit("cloud:state", { pushed: true });
                 var summarized = {};
                 COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
                 console.info("[cloudsync] push ok", summarized);
@@ -1332,7 +1385,11 @@
                   console.warn("[cloudsync] not uploaded (no write right for this account):", skippedByCol);
                   PMS.bus.emit("cloud:skipped", { collections: skippedByCol });
                 }
-                return true;
+                if (denied.length) PMS.bus.emit("cloud:denied", { paths: denied });
+                PMS.bus.emit("cloud:state", { pushed: true, denied: denied.length ? denied : null });
+                // A refused write is a failed upload even though other parts of
+                // the push landed, so the caller's promise must say so.
+                return denied.length === 0 && failed.length === 0;
               });
             });
           });
@@ -1853,8 +1910,10 @@
     PMS.cloudsync._mergeWholeForTest = mergeWholeCol;
     PMS.cloudsync._adoptedClockForTest = adoptedClock;
     PMS.cloudsync._markAdoptedForTest = markAdopted;
-    PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
+PMS.cloudsync._resolveSignupRoleForTest = resolveSignupRole;
     PMS.cloudsync._getMirrorForTest = mirrorFor;
     PMS.cloudsync._setMirrorForTest = setMirrorFor;
+    PMS.cloudsync._writeOpForTest = writeOp;
+    PMS.cloudsync._noteDeniedForTest = noteDenied;
   }
 })(window.PMS);

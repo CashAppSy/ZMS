@@ -396,6 +396,25 @@
       h("div.u-muted", { text: (st.projectId ? t("cloud.projectId") + ": " + st.projectId : "") + (st.lastSyncAt ? " · " + t("cloud.lastSync") + ": " + PMS.utils.formatDate(new Date(st.lastSyncAt).toISOString(), PMS.i18n) : "") })
     ]);
     row.appendChild(blk);
+
+    // A write the Firestore rules refused. This has to be on screen, not only in
+    // the console: the records it covers never leave this device, so to everyone
+    // else they simply do not exist - which reads as data loss, not as a
+    // deployment problem.
+    if (st.denied && st.denied.path) {
+      var warn = h("div", {
+        style: {
+          marginBlockStart: "10px", padding: "8px 10px",
+          borderInlineStart: "4px solid var(--danger)",
+          background: "var(--danger-soft)", borderRadius: "6px"
+        }
+      }, [
+        h("div.u-bold", { text: t("cloud.writeDenied") }),
+        h("div", { text: t("cloud.writeDeniedBody") }),
+        h("div.u-muted", { style: { marginBlockStart: "4px", wordBreak: "break-word" }, text: st.denied.path })
+      ]);
+      row.appendChild(warn);
+    }
     var sw = h("label.switch");
     var inp = h("input", { type: "checkbox", checked: !!st.enabled, on: { change: function (e) {
       if (e.target.checked) {
