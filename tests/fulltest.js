@@ -4764,6 +4764,23 @@ section("Meeting card leads with the creator, logo + favicon");
       (syncSrc.match(/writeOp\(/g) || []).length >= 8 &&
       !/ops\.push\((recordRef|stateRef)\(/.test(syncSrc),
       "an unlabelled write cannot be named when the rules refuse it");
+    // "Nothing to upload" is a success and an empty device is a distinct
+    // condition. Both used to return the same false as "the rules refused your
+    // writes", so a device that was already in sync - which is the normal state
+    // right after adopting the cloud - reported "Upload failed" on every press
+    // of Upload Now, with nothing actually wrong and nothing in the error list.
+    ok("an upload with nothing to send is not reported as a failed upload", (function () {
+      const noOpsIsSuccess = /if \(!ops\.length && !wroteWhole\) \{[\s\S]{0,400}?return true;/.test(syncSrc);
+      const noOpsExplains = /nothing to upload/.test(syncSrc);
+      const emptyDeviceNamed = /blockSync\("emptyDevice"/.test(syncSrc);
+      const named = /emptyDevice: "There is nothing on this device to share yet"/.test(
+        fs.readFileSync(path.join(APP, "js/i18n/en.js"), "utf8"));
+      const namedAr = /emptyDevice: "لا يوجد على هذا الجهاز أي بيانات للمشاركة بعد"/.test(
+        fs.readFileSync(path.join(APP, "js/i18n/ar.js"), "utf8"));
+      ok("  (trace: noOpsIsSuccess=" + noOpsIsSuccess + " noOpsExplains=" + noOpsExplains +
+         " emptyDeviceNamed=" + emptyDeviceNamed + " i18n=" + (named && namedAr) + ")", true);
+      return noOpsIsSuccess && noOpsExplains && emptyDeviceNamed && named && namedAr;
+    })());
     ok("a refused write is reported instead of aborting the whole push",
       /if \(noteDenied\(r\.error, r\.label\)\) denied\.push\(r\.label\)/.test(syncSrc) &&
       /PMS\.bus\.emit\("cloud:denied"/.test(syncSrc) &&

@@ -493,7 +493,9 @@
         skipped: "These records were not uploaded: this account has no write right for them",
         skippedBody: "The records listed below stayed on this device because your role cannot write them. An admin or the project manager can upload them.",
         unreadable: "Part of the shared data cannot be read",
-        unreadableBody: "The collections listed below could not be downloaded, so what other people do in them will not appear here. Everything else still syncs."
+        unreadableBody: "The collections listed below could not be downloaded, so what other people do in them will not appear here. Everything else still syncs.",
+        emptyDevice: "There is nothing on this device to share yet",
+        emptyDeviceBody: "This device has no records of its own, so there is nothing to upload. If you expected your work to be here, it was replaced when this device adopted the shared dataset — check that you are signed in with the right account."
       },
       failedTitle: "Some records were not uploaded",
       failedBody: "These writes did not go through. The code in brackets is what the cloud replied:",

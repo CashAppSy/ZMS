@@ -1325,7 +1325,13 @@
     var d = PMS.store.data;
     // Never share/clobber an empty device dataset — refuse to push when there
     // is no real user content at all.
-    if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) return Promise.resolve(false);
+    if (!USER_COLS.some(function (c) { return Array.isArray(d && d[c]) && d[c].length > 0; })) {
+      // An empty device is not a failed upload. Say so, instead of returning the
+      // same false that means "the rules refused your writes".
+      console.info("[cloudsync] push skipped: this device holds no records to share");
+      blockSync("emptyDevice", "zms (every collection)");
+      return Promise.resolve(false);
+    }
     lastPushAt = Date.now();
     PMS.bus.emit("cloud:inflight", { busy: true, op: "push" });
     return waitForSignedIn().then(function (ok) {
@@ -1405,7 +1411,15 @@
               } else if (ops.length) {
                 ops.push(writeOp("zms_meta/state", stateRef().set({ updatedAt: t }, { merge: true })));
               }
-              if (!ops.length && !wroteWhole) return false;
+              // There was nothing to send. This is a SUCCESS - the device already matches
+              // the cloud - and it must not be reported as the same thing as a
+              // refused write, or the UI shows "Upload failed" for an upload
+              // that had nothing to do and nothing went wrong.
+              if (!ops.length && !wroteWhole) {
+                console.info("[cloudsync] push: nothing to upload (local already matches the cloud)");
+                PMS.bus.emit("cloud:state", { pushed: true, nothingToDo: true });
+                return true;
+              }
               return Promise.all(ops).then(function (results) {
                 // Settled, so a refused write is reported instead of cancelling
                 // the whole push. The mirror below is only patched for the
