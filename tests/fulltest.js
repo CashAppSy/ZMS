@@ -3364,7 +3364,14 @@ section("Cloud sync (offline-safe API)");
       PMS.cloudsync._setMirrorForTest("customFieldDefs", mirrorAfter);
       const remoteNow = PMS.utils.deepClone(saved);
       remoteNow.customFieldDefs = PMS.utils.deepClone(pushed);
-      PMS.store.setData(PMS.utils.deepClone(saved));
+      // Adopting the cloud means taking what was published, i.e. `pushed`. Using
+      // `saved` here instead left cf-priority in the baseline but out of the
+      // local copy with no delete behind it, which reads as "deleted here" - the
+      // very shape the next test asserts on - and made the round trip look like
+      // it had failed for the wrong reason.
+      PMS.store.setData(Object.assign(PMS.utils.deepClone(saved), {
+        customFieldDefs: PMS.utils.deepClone(pushed)
+      }));
       const pulled = PMS.cloudsync._mergeForTest(remoteNow);
       cfSteps.push("pulled=" + JSON.stringify((pulled.customFieldDefs || []).map(f => f.id)));
       const pullKeptItGone = !has(pulled.customFieldDefs, "cf-ticket") && has(pulled.customFieldDefs, "cf-priority");
@@ -4689,6 +4696,56 @@ section("Meeting card leads with the creator, logo + favicon");
       /accountForPerson\(person\.id\)/.test(editorSrc) &&
       /if \(!acc\.cloudOnly\) PMS\.auth\.updateUser/.test(editorSrc));
   }
+
+  // A custom field deleted on THIS device, while the cloud still holds it because
+  // the push has not landed yet (offline, denied, or not signed in as somebody
+  // who may write). The next pull used to hand the record straight back: the
+  // per-record pull merged by id with no reference to the baseline, so a record
+  // the cloud had and the local copy did not was simply re-added. The edit then
+  // survived in memory and came back as the old field on the next refresh.
+  ok("a pull does not hand back a custom field deleted on this device", (function () {
+    const sig = function (v) {
+      if (v === null || v === undefined) return String(v);
+      if (typeof v !== "object") return JSON.stringify(v);
+      if (Array.isArray(v)) return "[" + v.map(sig).join(",") + "]";
+      return "{" + Object.keys(v).sort().map(function (k) {
+        return JSON.stringify(k) + ":" + sig(v[k]);
+      }).join(",") + "}";
+    };
+    const ticket = { id: "cf-del", label: { en: "Ticket ID" }, entity: "task", type: "text", options: [], updatedAt: "2026-01-01T00:00:00.000Z" };
+    const region = { id: "cf-keep", label: { en: "Region" }, entity: "task", type: "text", options: [], updatedAt: "2026-01-01T00:00:00.000Z" };
+    const saved = PMS.utils.deepClone(PMS.store.data);
+    const defsMirrorSaved = PMS.cloudsync._getMirrorForTest("customFieldDefs");
+    let out = "";
+    try {
+      // Local: both fields. Cloud: both fields. Baseline: both published here.
+      const local = PMS.utils.deepClone(saved);
+      local.customFieldDefs = [PMS.utils.deepClone(ticket), PMS.utils.deepClone(region)];
+      PMS.store.setData(local);
+      PMS.cloudsync._setMirrorForTest("customFieldDefs", {
+        "cf-del": sig(ticket), "cf-keep": sig(region)
+      });
+      // The admin deletes it here. Nothing has been pushed yet.
+      PMS.repos.fields.remove("cf-del");
+      out = "local after delete=" + JSON.stringify((PMS.store.data.customFieldDefs || []).map(f => f.id));
+      // The next device pulls. The cloud copy is unchanged and still has it.
+      const remote = PMS.utils.deepClone(saved);
+      remote.customFieldDefs = [PMS.utils.deepClone(ticket), PMS.utils.deepClone(region)];
+      remote.meta = { updatedAt: "2026-02-01T00:00:00.000Z" };
+      const merged = PMS.cloudsync._mergeForTest(remote);
+      out += " after pull=" + JSON.stringify((merged.customFieldDefs || []).map(f => f.id));
+      return (PMS.store.data.customFieldDefs || []).every(f => f.id !== "cf-del") &&
+        (merged.customFieldDefs || []).every(f => f.id !== "cf-del");
+    } catch (e) { out += " THREW " + (e && e.message); return false; }
+    finally {
+      PMS.store.setData(saved);
+      PMS.cloudsync._setMirrorForTest("customFieldDefs", defsMirrorSaved);
+      if (out.indexOf("cf-del") !== -1 && out.indexOf("after pull") !== -1) {
+        // recorded in the failure detail below
+        ok("  (pull trace: " + out + ")", false, out);
+      }
+    }
+  })());
 
   console.log("\n==========================================");
   console.log("RESULTS: " + passCount + " passed, " + failCount + " failed");

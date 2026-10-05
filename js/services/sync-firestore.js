@@ -1519,6 +1519,18 @@
       // remote snapshot on every successful pull, so a cleared mirror
       // self-heals on the next sync instead of freezing deletions forever.
       var recMirror = mirrorFor(cname);
+      // Reference collections are merged by the same baseline-aware routine the
+      // PUSH uses, not by the generic id+updatedAt rule below. Two reasons:
+      // a custom field definition carries no usable clock of its own, and "the
+      // cloud has this id and I do not" is precisely the shape of a record this
+      // device deleted. The generic rule could only read that as somebody else's
+      // addition and re-added it, so every custom field removed here came back
+      // from the cloud on the next pull - which is what a refresh then showed,
+      // long before the push that was meant to carry the delete had landed.
+      if (WHOLE_COLS.indexOf(cname) !== -1) {
+        merged[cname] = mergeWholeCol(cname, existing, incoming, recMirror);
+        return;
+      }
       incoming.forEach(function (item) {
         var idx = -1;
         for (var i = 0; i < existing.length; i++) {
