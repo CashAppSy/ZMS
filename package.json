@@ -5,9 +5,17 @@
   "description": "Offline project management app (HTML/CSS/JS, no build). 'npm test' runs the full feature/service test suite under jsdom.",
   "scripts": {
     "test": "node tests/fulltest.js",
-    "test:smoke": "node smoke-test.js"
+    "test:smoke": "node smoke-test.js",
+    "test:regression": "node --test tests/regressions.js",
+    "test:browser": "node tests/browser.js",
+    "test:rules": "node tests/run-rules.js"
   },
   "devDependencies": {
-    "jsdom": "^24.0.0"
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "fake-indexeddb": "^6.2.5",
+    "firebase": "^13.0.0",
+    "firebase-tools": "^15.33.0",
+    "jsdom": "^24.0.0",
+    "playwright-core": "^1.64.0"
   }
 }

@@ -598,11 +598,14 @@
       PMS.router.register("/projects", "projects");
       if (params.id) renderDetail(container, params.id);
       else renderList(container);
-      var off = PMS.bus.on("store:changed", function () {
+      var off = PMS.bus.on("store:changed", function (event) {
+        if (!PMS.dom.affects(event, ["projects", "tasks", "subtasks", "people", "departments", "users", "settings", "taskStatuses", "projectStatuses", "priorities", "customFieldDefs"])) return;
         var cur = PMS.router.current;
         if (cur.indexOf("/projects") === 0) {
-          if (params.id) renderDetail(container, params.id);
-          else renderList(container);
+          PMS.dom.refresh(container, function () {
+            if (params.id) renderDetail(container, params.id);
+            else renderList(container);
+          });
         }
       });
       return function () { off(); };

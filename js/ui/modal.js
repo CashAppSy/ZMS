@@ -7,16 +7,18 @@
   var h = PMS.dom.h;
   var current = null;
   var lastFocused = null;
+  var nextId = 0;
 
   function open(opts) {
     close();
 
     lastFocused = document.activeElement;
-    var overlay = h("div.modal-overlay", { on: { mousedown: function (e) { if (e.target === overlay) opts.onClose && opts.onClose(); } } });
-    var modal = h("div.modal" + (opts.size ? ".modal-" + opts.size : ""), { attrs: { role: "dialog", "aria-modal": "true" } });
+    var titleId = "modal-title-" + (++nextId);
+    var overlay = h("div.modal-overlay", { on: { mousedown: function (e) { if (e.target === overlay) close(); } } });
+    var modal = h("div.modal" + (opts.size ? ".modal-" + opts.size : ""), { attrs: { role: "dialog", "aria-modal": "true", "aria-labelledby": titleId, tabindex: "-1" } });
     var header = h("div.modal-header");
-    header.appendChild(h("div.modal-title", { text: opts.title }));
-    var closeBtn = h("button.modal-close", { text: "✕", attrs: { "aria-label": "close" }, on: { click: function () { close(); } } });
+    header.appendChild(h("div.modal-title", { id: titleId, text: opts.title }));
+    var closeBtn = h("button.modal-close", { type: "button", text: "✕", attrs: { "aria-label": PMS.i18n.t("common.close") }, on: { click: function () { close(); } } });
     header.appendChild(closeBtn);
 
     var body = h("div.modal-body");
@@ -46,12 +48,16 @@
 
     overlay.appendChild(modal);
     document.getElementById("modal-root").appendChild(overlay);
-    current = { overlay: overlay, modal: modal, body: body, onClose: opts.onClose };
+    var background = Array.from(document.body.children).filter(function (el) { return !el.contains(overlay); }).map(function (el) {
+      var previous = el.inert;
+      el.inert = true;
+      return { el: el, previous: previous };
+    });
+    current = { overlay: overlay, modal: modal, body: body, onClose: opts.onClose, background: background };
 
     // focus first input
     var firstInput = modal.querySelector("input,select,textarea,button.btn-primary");
-    if (firstInput) setTimeout(function () { firstInput.focus(); }, 30);
-    else modal.focus && modal.focus();
+    (firstInput || closeBtn || modal).focus();
 
     document.addEventListener("keydown", onKey);
     return current;
@@ -59,14 +65,26 @@
 
   function close() {
     if (!current) return;
-    document.removeEventListener("keydown", onKey);
-    current.overlay.remove();
+    var closing = current;
     current = null;
+    document.removeEventListener("keydown", onKey);
+    closing.overlay.remove();
+    closing.background.forEach(function (item) { item.el.inert = item.previous; });
     if (lastFocused && lastFocused.focus) lastFocused.focus();
+    if (closing.onClose) closing.onClose();
   }
 
   function onKey(e) {
-    if (e.key === "Escape") close();
+    if (!current) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key !== "Tab") return;
+    var items = Array.from(current.modal.querySelectorAll("button,input,select,textarea,a[href],[tabindex]")).filter(function (el) {
+      return !el.disabled && el.tabIndex >= 0 && !el.hidden && !el.closest('[hidden], [inert]') && window.getComputedStyle(el).display !== "none";
+    });
+    var first = items[0], last = items[items.length - 1];
+    if (!first) { e.preventDefault(); current.modal.focus(); }
+    else if (e.shiftKey && (document.activeElement === first || !current.modal.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !current.modal.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
   }
 
   PMS.modal = { open: open, close: close, get isOpen() { return !!current; }, get body() { return current && current.body; } };

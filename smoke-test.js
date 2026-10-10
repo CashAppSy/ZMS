@@ -6,63 +6,19 @@ const vm = require("vm");
 // the site lives at the repo root (index.html + js + css)
 const root = process.cwd();
 
-// ---- minimal browser/environment stubs ----
-function makeEl() {
-  const el = {
-    nodeType: 1,
-    _children: [],
-    _listeners: {},
-    style: {},
-    dataset: {},
-    classList: { _set: new Set(), add(c){ this._set.add(c); }, remove(c){ this._set.delete(c); }, toggle(c){ this._set.has(c)?this._set.delete(c):this._set.add(c); }, contains(c){ return this._set.has(c); } },
-    attrs: {},
-    appendChild(c){ this._children.push(c); return c; },
-    append(...cs){ cs.forEach(c=>this._children.push(c)); },
-    addEventListener(type, fn){ (this._listeners[type] = this._listeners[type] || []).push(fn); },
-    removeEventListener(type, fn){ const a=this._listeners[type]||[]; const i=a.indexOf(fn); if(i>-1)a.splice(i,1); },
-    querySelector(){ return null; },
-    querySelectorAll(){ return []; },
-    set innerHTML(v){ this._html=v; }, get innerHTML(){ return this._html||""; },
-    set textContent(v){ this._text=String(v); }, get textContent(){ return this._text||""; },
-    insertBefore(child, ref){ this._children.push(child); return child; },
-    setAttribute(k, v){ this.attrs[k]=String(v); if(k==="class") this._class=String(v); },
-    getAttribute(k){ return this.attrs[k]!==undefined?this.attrs[k]:null; },
-    remove(){},
-    focus(){}, select(){}, blur(){},
-    get childNodes(){ return this._children; },
-    contains(){ return false; },
-    getBoundingClientRect(){ return { top:0, left:0, right:0, bottom:0, width:0, height:0 }; },
-    get firstChild(){ return this._children[0]||null; },
-    get ownerDocument(){ return docStub; }
-  };
-  return el;
-}
-const elStub = makeEl();
-
-global.document = {
-  readyState: "complete",
-  documentElement: { setAttribute(){}, getAttribute(){ return "light"; }, style: {} },
-  getElementById(){ return elStub; },
-  createElement(){ return makeEl(); },
-  createElementNS(ns, tag){ return makeEl(); },
-  createTextNode(t){ return { nodeType:3, textContent: String(t) }; },
-  addEventListener(){},
-  removeEventListener(){},
-  activeElement: elStub,
-  title: ""
-};
-
-global.window = global;
-global.__ZMS_TEST__ = true; // allow modules to expose test-only hooks
-global.addEventListener = () => {};
-global.removeEventListener = () => {};
-global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
-global.indexedDB = undefined; // forces localStorage fallback
-global.location = { hash: "#/" };
-global.history = { replaceState(){}, pushState(){} };
-global.requestAnimationFrame = (cb)=>0;
-
-const consoleLog = [];
+// Use the same real DOM implementation as the full suite, not incomplete stubs.
+const { JSDOM } = require("jsdom");
+const dom = new JSDOM(`<!doctype html><html><body>
+<div id="auth-root"></div><div id="app-shell"><div id="view-root"></div></div>
+<div id="sidebar"></div><div id="topbar"></div><div id="modal-root"></div>
+<div id="toast-root"></div><input id="app-search"></body></html>`, {
+  url: "http://localhost/", runScripts: "outside-only", pretendToBeVisual: true
+});
+const { window } = dom;
+global.window = window;
+global.document = window.document;
+global.location = window.location;
+window.__ZMS_TEST__ = true;
 
 // ---- load all scripts in index.html order ----
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -75,7 +31,7 @@ for (const src of srcs) {
   const file = path.join(root, src);
   const code = fs.readFileSync(file, "utf8");
   try {
-    vm.runInThisContext(code, { filename: file });
+    window.eval(code + "\n//# sourceURL=" + file);
   } catch (e) {
     console.error("LOAD ERROR in " + src + ": " + e.message);
     process.exitCode = 1;
@@ -83,7 +39,7 @@ for (const src of srcs) {
   }
 }
 
-const PMS = global.PMS;
+const PMS = window.PMS;
 if (!PMS) { console.error("PMS namespace missing"); process.exit(1); }
 
 // ---- post-load wiring assertions (no DOM render needed) ----
@@ -224,9 +180,9 @@ for (const route of routes) {
 //     tables, chart rows never rendered -> "reports show no results")
 {
   const d = PMS.dom.h("div.u-grow", [PMS.dom.h("b", { text: "B" }), PMS.dom.h("i", { text: "I" })]);
-  assert(d._children.length === 2 && d._children[0]._text === "B", "h() renders array-as-2nd-arg children");
+  assert(d.childNodes.length === 2 && d.childNodes[0].textContent === "B", "h() renders array-as-2nd-arg children");
   const d3 = PMS.dom.h("div", null, PMS.dom.h("b", { text: "single" }));
-  assert(d3._children.length === 1, "h() handles a single element child");
+  assert(d3.childNodes.length === 1, "h() handles a single element child");
 }
 
 // 2) forms: select controls must prefill the CURRENT value when editing
@@ -239,7 +195,7 @@ for (const route of routes) {
   );
   assert(ctl.el.value === "doing", "select prefills current value on edit");
   const num = PMS.forms.buildControl({ key: "progress", type: "number" }, 42);
-  assert(num.el.value === 42, "number prefills value");
+  assert(num.el.value === "42", "number prefills value");
 }
 
 // 3) rendered views expose the new affordances (walk only the latest subtree)
@@ -249,7 +205,7 @@ function findWalk(root, pred) {
     const e = stack.pop();
     if (!e) continue;
     if (pred(e)) return e;
-    if (e._children) for (let i = e._children.length - 1; i >= 0; i--) stack.push(e._children[i]);
+    if (e.childNodes) for (let i = e.childNodes.length - 1; i >= 0; i--) stack.push(e.childNodes[i]);
   }
   return null;
 }
@@ -260,38 +216,38 @@ function countWalk(root, pred) {
     const e = stack.pop();
     if (!e) continue;
     if (pred(e)) n++;
-    if (e._children) for (const c of e._children) stack.push(c);
+    if (e.childNodes) for (const c of e.childNodes) stack.push(c);
   }
   return n;
 }
 function inLastRender(pred) {
   const root = document.getElementById("view-root");
-  const parts = root._children.slice(Math.max(0, root._children.length - 8));
+  const parts = Array.from(root.childNodes);
   for (const p of parts) { const hit = findWalk(p, pred); if (hit) return hit; }
   return null;
 }
 function countInLast(pred) {
   const root = document.getElementById("view-root");
-  const parts = root._children.slice(Math.max(0, root._children.length - 8));
+  const parts = Array.from(root.childNodes);
   let n = 0;
   for (const p of parts) n += countWalk(p, pred);
   return n;
 }
-const cnameFirst = e => String((e._class) || e.className || "").split(" ")[0];
+const cnameFirst = e => (e.getAttribute ? e.getAttribute("class") || "" : "").split(" ")[0];
 PMS.store.setData(PMS.seed.build());
 ensureAuth();
 global.location.hash = "#/projects";
 PMS.router.handle();
-assert(inLastRender(e => e._text === "✎") !== null, "projects tree rows show an Edit button");
+assert(inLastRender(e => e.textContent === "✎") !== null, "projects tree rows show an Edit button");
 global.location.hash = "#/tasks/kanban";
 PMS.router.handle();
 const kanbanSel = inLastRender(e => e.dataset && e.dataset.id === "kanban-project-filter");
 assert(kanbanSel !== null, "kanban view has project filter select");
 assert(kanbanSel && kanbanSel.value === "__all__", "kanban filter defaults to all projects");
-assert(kanbanSel && kanbanSel._children.length >= PMS.repos.projects.all().length + 1, "kanban filter lists all projects");
+assert(kanbanSel && kanbanSel.childNodes.length >= PMS.repos.projects.all().length + 1, "kanban filter lists all projects");
 global.location.hash = "#/tasks";
 PMS.router.handle();
-assert(inLastRender(e => e._text === "✎") !== null, "tasks table title cells show an Edit button");
+assert(inLastRender(e => e.textContent === "✎") !== null, "tasks table title cells show an Edit button");
 
 // 4) Settings -> Statuses must render rows (regression: ReferenceError on
 //    'body' left the whole section blank even when statuses data existed)
@@ -299,9 +255,9 @@ PMS.store.setData(PMS.seed.build());
 ensureAuth();
 global.location.hash = "#/settings";
 PMS.router.handle();
-const stNav = inLastRender(e => (e._text || "").trim() === PMS.i18n.t("settings.statuses"));
+const stNav = inLastRender(e => (e.textContent || "").trim() === PMS.i18n.t("settings.statuses"));
 assert(stNav !== null, "settings statuses nav present");
-if (stNav) (stNav._listeners.click || []).forEach(fn => fn({}));
+if (stNav) stNav.click();
 assert(PMS.store.data.taskStatuses.length === 4, "statuses data present");
 assert(countInLast(e => cnameFirst(e) === "setting-row") >= PMS.store.data.taskStatuses.length, "statuses rows rendered");
 
@@ -310,7 +266,7 @@ assert(countInLast(e => cnameFirst(e) === "setting-row") >= PMS.store.data.taskS
 const allSub = PMS.seed.build();
 allSub.tasks.forEach((tk, i) => { tk.parentTaskId = i === 0 ? null : allSub.tasks[0].id; });
 PMS.store.setData(allSub);
-document.getElementById("view-root")._children.length = 0;
+document.getElementById("view-root").replaceChildren();
 global.location.hash = "#/tasks/gantt";
 PMS.router.handle();
 assert(countInLast(e => cnameFirst(e) === "gantt-row") === allSub.tasks.length, "gantt shows all tasks incl. subtasks");
@@ -319,7 +275,7 @@ assert(countInLast(e => cnameFirst(e) === "gantt-row") === allSub.tasks.length, 
 const strDep = PMS.seed.build();
 strDep.tasks.forEach((tk, i) => { tk.dependencies = i === 0 ? "some,string" : []; });
 PMS.store.setData(strDep);
-document.getElementById("view-root")._children.length = 0;
+document.getElementById("view-root").replaceChildren();
 global.location.hash = "#/tasks/gantt";
 PMS.router.handle();
 assert(countInLast(e => cnameFirst(e) === "gantt-row") === strDep.tasks.length, "gantt tolerates string dependencies");

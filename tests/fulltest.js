@@ -3224,7 +3224,7 @@ section("Cloud sync (offline-safe API)");
   // --- a manager may edit any task, and may delete only what they created ---
   {
     const rulesSrc = fs.readFileSync(path.join(APP, "firestore.rules"), "utf8");
-    const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
+    const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8") + fs.readFileSync(path.join(APP, "js", "services", "sync-mirror.js"), "utf8");
     const authSrc = fs.readFileSync(path.join(APP, "js", "core", "auth.js"), "utf8");
 
     ok("canEditTask lets a manager edit ANY task, not just their own pillar's",

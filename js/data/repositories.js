@@ -333,6 +333,7 @@
       get: function (id) { return find("projects", id); },
       add: function (obj) {
         obj.parentId = obj.parentId || null;
+        if (!PMS.projectHierarchy.canParent(list("projects"), obj.id, obj.parentId)) return { error: "parentId" };
         // Pillars need an owner for the same reason tasks and meetings do:
         // auth.js canDeleteRecord() lets a manager delete a pillar they
         // created, and it can only answer that if the creator was stamped.
@@ -355,6 +356,8 @@
         return add("projects", obj);
       },
       update: function (id, patch) {
+        if (patch && Object.prototype.hasOwnProperty.call(patch, "parentId") &&
+            !PMS.projectHierarchy.canParent(list("projects"), id, patch.parentId)) return { error: "parentId" };
         if (patch && patch.plannedTaskCount !== undefined && patch.plannedTaskCount !== null) {
           patch.plannedTaskCount = Math.max(0, parseInt(patch.plannedTaskCount, 10) || 0);
         }
@@ -381,6 +384,7 @@
         var toDelete = [];
         var all = list("projects");
         function collect(pid) {
+          if (toDelete.indexOf(pid) !== -1) return;
           toDelete.push(pid);
           all.forEach(function (p) {
             if (p.parentId === pid) collect(p.id);

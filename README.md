@@ -2,6 +2,8 @@
 
 A complete, offline project-management system built with **pure vanilla HTML/CSS/JavaScript** — no frameworks, no build tools, no npm, no CDN. Open `index.html` by double-clicking it and it runs directly from the filesystem (`file://` protocol).
 
+For development requirements, regression tests, and deployment checks, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## Features
 
 - **Bilingual UI (Arabic / English)** with instant language toggle (no reload), full RTL layout switching, and per-field `{ en, ar }` translations.
@@ -13,7 +15,7 @@ A complete, offline project-management system built with **pure vanilla HTML/CSS
 - **Filters**: multi-criteria filter bar (search, project, person, department, statuses, priorities, tags, dates, overdue-only, custom field values) with saved filters.
 - **Progress engine**: leaf tasks use their own progress; parents and projects aggregate children (optionally weighted by estimated hours).
 - **Export / Import / Backups**: CSV/JSON export, JSON import (merge or replace), manual + automatic in-page backups with retention.
-- **Undo / Redo** (snapshots, last 50 edits), **keyboard shortcuts**, **print CSS**, and a demo data generator.
+- **Undo / Redo** (reversible record changes, last 50 edits), **keyboard shortcuts**, **print CSS**, and a demo data generator.
 
 ## Project structure
 
@@ -170,7 +172,7 @@ sample-data/seed.json      Full schema-valid sample dataset compatible with Sett
 
 ## Undo / Redo
 
-- Every `store.commit` pushes a snapshot (limit 50). Ctrl+Z / Ctrl+Y (or the topbar buttons) revert/apply. Restoring a backup or importing in "replace" mode resets the undo history.
+- Every `store.commit` records reversible changes (limit 50), retaining changed records rather than full dataset snapshots. Ctrl+Z / Ctrl+Y (or the topbar buttons) revert/apply. Restoring a backup or importing in "replace" mode resets the undo history.
 
 ## Keyboard shortcuts
 

@@ -106,6 +106,7 @@
       });
       mergeArray(d, "tasks", obj, function (x) { return PMS.dataMerge.taskDB(x); });
       mergeArray(d, "meetings", obj, function (x) { return PMS.dataMerge.meetingDB(x); });
+      PMS.projectHierarchy.repair(d.projects);
     }, "import-merge");
     PMS.toast.show(PMS.i18n.t("export.importOk_merge"), "success");
     return { ok: true, records: obj.tasks.length };

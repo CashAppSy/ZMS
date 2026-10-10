@@ -27,3 +27,7 @@ html[lang="ar"] .btn,
 html[lang="ar"] input,
 html[lang="ar"] select,
 html[lang="ar"] textarea { letter-spacing: 0; }
+
+@media (max-width: 720px) {
+  html[dir="rtl"] #sidebar.collapsed { --sidebar-hidden-offset: 100%; }
+}

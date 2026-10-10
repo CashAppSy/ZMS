@@ -80,5 +80,45 @@
     return function () { el.removeEventListener(evt, fn); };
   }
 
-  PMS.dom = { h: h, clear: clear, html: html, on: on };
+  function affects(event, collections) {
+    return !event || !event.collections || event.collections.some(function (key) {
+      return collections.indexOf(key) !== -1;
+    });
+  }
+
+  // Rebuilding a data view must not discard a user's search focus or scroll.
+  function refresh(container, render) {
+    var active = document.activeElement;
+    var index = container.contains(active) ? Array.from(container.querySelectorAll("input,select,textarea,button")).indexOf(active) : -1;
+    var top = container.scrollTop, left = container.scrollLeft;
+    var scrolling = Array.from(container.querySelectorAll("*")).filter(function (el) { return el.scrollTop || el.scrollLeft; }).map(function (el) {
+      var peers = el.className && typeof el.className === "string" ? Array.from(container.getElementsByClassName(el.className)) : [];
+      return { id: el.id, className: el.className, index: peers.indexOf(el), top: el.scrollTop, left: el.scrollLeft };
+    });
+    var start = active && active.selectionStart, end = active && active.selectionEnd;
+    render();
+    container.scrollTop = top;
+    container.scrollLeft = left;
+    scrolling.forEach(function (saved) {
+      var el = saved.id ? document.getElementById(saved.id) : (typeof saved.className === "string" && saved.className ? container.getElementsByClassName(saved.className)[saved.index] : null);
+      if (el && container.contains(el)) { el.scrollTop = saved.top; el.scrollLeft = saved.left; }
+    });
+    if (index >= 0) {
+      var candidates = Array.from(container.querySelectorAll("input,select,textarea,button"));
+      var target = active.id ? candidates.find(function (el) { return el.id === active.id; }) : null;
+      if (!target && active.name) {
+        var named = candidates.filter(function (el) { return el.name === active.name; });
+        if (named.length === 1) target = named[0];
+      }
+      if (!target && active.tagName !== "BUTTON") target = candidates[index];
+      if (target && target.tagName === active.tagName && target.type === active.type && target.name === active.name) {
+        target.focus({ preventScroll: true });
+        if (start !== null && start !== undefined && target.setSelectionRange) {
+          try { target.setSelectionRange(start, end); } catch (e) { /* non-text input */ }
+        }
+      }
+    }
+  }
+
+  PMS.dom = { h: h, clear: clear, html: html, on: on, affects: affects, refresh: refresh };
 })(window.PMS);

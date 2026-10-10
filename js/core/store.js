@@ -3,7 +3,7 @@
    - single source of truth (this.data)
    - all mutations flow through store.commit(fn, desc) which:
        * deep-clones data, runs fn, persists (debounced), emits "store:changed"
-   - Undo/Redo snapshots (last N edits)
+   - Undo/Redo reversible record patches (last N edits)
    NOTE: views must NEVER write to storage directly — only repositories call commit.
    ========================================================================== */
 (function (PMS) {
@@ -27,15 +27,16 @@
   function commit(fn, desc) {
     if (!data) return;
     var prev = U.deepClone(data);
-    fn(data); // mutate in place
+    try { fn(data); } catch (e) { data = prev; throw e; }
     data.meta.updatedAt = new Date().toISOString();
+    var patches = PMS.history.diff(prev, data);
     if (!savingSnapshot) {
-      undoStack.push({ data: prev, desc: desc || "edit" });
+      undoStack.push({ patches: patches, desc: desc || "edit" });
       if (undoStack.length > UNDO_LIMIT) undoStack.shift();
       redoStack = [];
     }
     scheduleSave();
-    PMS.bus.emit("store:changed", { desc: desc });
+    PMS.bus.emit("store:changed", PMS.history.event(patches, desc));
   }
 
   function setData(newData) {
@@ -54,12 +55,13 @@
 
   function flush(dataToWrite) {
     if (saving) {
-      // coalesce: queue a fresh flush after current finishes
-      saveQueue = saveQueue.then(function () { return flush(dataToWrite || data); });
-      return saveQueue;
+      // Wait for the active write without adding the next flush to the very
+      // promise it would wait on (which would create a circular dependency).
+      return saveQueue.then(function () { return flush(dataToWrite || data); });
     }
     clearTimeout(pendingSave);
     clearTimeout(retryTimer);
+    retryTimer = null;
     if (!data) return Promise.resolve();
     var payload = dataToWrite || data;
     PMS.bus.emit("save:starting", payload);
@@ -82,8 +84,10 @@
         PMS.bus.emit("save:error", { error: e2, message: e2 && e2.message ? e2.message : String(e2) });
       });
     }).then(function () {
-      if (retryTimer) { retryCount = 0; clearTimeout(retryTimer); retryTimer = null; }
       if (localOk) {
+        retryCount = 0;
+        clearTimeout(retryTimer);
+        retryTimer = null;
         PMS.bus.emit("save:done", { local: true });
         return mirrorToFile(payload);
       }
@@ -128,7 +132,8 @@
         data = raw;
       }
       // ensure all arrays exist (schema coherence for older saved data)
-      ensureShape(data);
+      var repaired = ensureShape(data);
+      if (repaired.length) scheduleSave();
       initialized = true;
       PMS.bus.emit("store:ready", data);
       return data;
@@ -141,6 +146,7 @@
     keys.forEach(function (k) {
       if (!Array.isArray(d[k])) d[k] = [];
     });
+    var repaired = PMS.projectHierarchy.repair(d.projects);
     // Old builds did not persist statuses/priorities. Backfill the schema
     // defaults when they are missing or empty, otherwise views (kanban,
     // reports, settings) render with no rows at all.
@@ -218,37 +224,34 @@
       if (!s.status) s.status = "todo";
       if (typeof s.progress !== "number" || isNaN(s.progress)) s.progress = 0;
     });
+    return repaired;
   }
 
   function undo() {
     if (!undoStack.length) return false;
     if (savingSnapshot) return false;
     savingSnapshot = true;
-    redoStack.push({ data: U.deepClone(data), desc: redoDesc() });
     var entry = undoStack.pop();
-    data = entry.data;
+    redoStack.push(entry);
+    PMS.history.apply(data, entry.patches, "before");
     ensureShape(data);
     savingSnapshot = false;
     scheduleSave();
-    PMS.bus.emit("store:changed", { desc: "undo:" + entry.desc });
+    PMS.bus.emit("store:changed", PMS.history.event(entry.patches, "undo:" + entry.desc));
     return true;
   }
 
   function redo() {
     if (!redoStack.length) return false;
     savingSnapshot = true;
-    undoStack.push({ data: U.deepClone(data), desc: "redo" });
     var entry = redoStack.pop();
-    data = entry.data;
+    undoStack.push(entry);
+    PMS.history.apply(data, entry.patches, "after");
     ensureShape(data);
     savingSnapshot = false;
     scheduleSave();
-    PMS.bus.emit("store:changed", { desc: "redo" });
+    PMS.bus.emit("store:changed", PMS.history.event(entry.patches, "redo"));
     return true;
-  }
-
-  function redoDesc() {
-    return "redo";
   }
 
   function canUndo() { return undoStack.length > 0; }

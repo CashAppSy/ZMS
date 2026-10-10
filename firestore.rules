@@ -82,7 +82,7 @@ service cloud.firestore {
     // account (zms_auth/bootstrap.firstUid). Grants dataset WRITE access to
     // pre-role deployments; never grants account management.
     function isBootstrapOwner(uid) {
-      return hasCloudProfile(uid)
+      return isActiveUser(uid)
         && exists(/databases/$(database)/documents/zms_auth/bootstrap)
         && get(/databases/$(database)/documents/zms_auth/bootstrap).data.firstUid == uid;
     }
@@ -337,7 +337,9 @@ service cloud.firestore {
       allow read: if signupCanRead();
       // created once, only while it does not exist yet
       allow create: if request.auth != null
-        && !exists(/databases/$(database)/documents/zms_auth/bootstrap);
+        && !exists(/databases/$(database)/documents/zms_auth/bootstrap)
+        && request.resource.data.firstUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/zms_auth_users/$(request.auth.uid)).data.role == 'admin';
       allow update: if isAdmin(request.auth.uid);
       allow delete: if false;
     }
@@ -387,14 +389,20 @@ service cloud.firestore {
       // can mint an elevated role for a later account; promotion afterwards
       // is an admin update / the adminSetRole callable.
       allow create: if request.auth.uid == uid
-        && (request.resource.data.role == 'member'
-            || !exists(/databases/$(database)/documents/zms_auth/bootstrap));
+        && request.resource.data.keys().hasOnly(['email', 'role', 'displayName', 'personId', 'createdAt', 'active'])
+        && (!('active' in request.resource.data) || request.resource.data.active == true)
+        && ((request.resource.data.role == 'member'
+             && (!('personId' in request.resource.data) || request.resource.data.personId == null))
+            || (request.resource.data.role == 'admin'
+                && !exists(/databases/$(database)/documents/zms_auth/bootstrap)
+                && getAfter(/databases/$(database)/documents/zms_auth/bootstrap).data.firstUid == uid));
 
-      // role is immutable from the browser for everyone but an admin; a user
-      // may update their OWN non-role fields (e.g. link/unlink personId)
+      // Authorization fields, including personId and active, are admin-only.
+      // Self-service is restricted to a display name on an active profile.
       allow update: if isAdmin(request.auth.uid)
         || (request.auth.uid == uid
-            && request.resource.data.role == resource.data.role);
+            && isActiveUser(uid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName']));
 
       // deleting an account is reserved for an admin
       allow delete: if isAdmin(request.auth.uid);

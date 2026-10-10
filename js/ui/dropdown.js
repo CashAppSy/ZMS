@@ -6,6 +6,7 @@
 
   var h = PMS.dom.h;
   var openMenu = null;
+  var cleanup = null;
 
   function attach(trigger, items, opts) {
     opts = opts || {};
@@ -39,10 +40,15 @@
       if (menu.contains(e.target) || trigger.contains(e.target)) return;
       close();
     }
-    setTimeout(function () {
+    var timer = setTimeout(function () {
       document.addEventListener("mousedown", closeSoon);
       document.addEventListener("keydown", escHandler);
     }, 0);
+    cleanup = function () {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", closeSoon);
+      document.removeEventListener("keydown", escHandler);
+    };
     return menu;
   }
 
@@ -51,9 +57,9 @@
   function escText(s) { return String(s === undefined || s === null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
   function close() {
-    if (openMenu) { openMenu.remove(); openMenu = null; document.removeEventListener("mousedown", closeSoon); document.removeEventListener("keydown", escHandler); }
+    if (cleanup) { cleanup(); cleanup = null; }
+    if (openMenu) { openMenu.remove(); openMenu = null; }
   }
-  function closeSoon() { close(); }
 
   PMS.dropdown = { attach: attach, close: close };
 })(window.PMS);

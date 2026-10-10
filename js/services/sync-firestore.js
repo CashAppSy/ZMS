@@ -525,20 +525,25 @@
       return a.createUserWithEmailAndPassword(opts.email, opts.password);
     }).then(function (cred) {
       var uid = cred.user.uid;
-      return bootRef().get().then(function (b) {
-        var role = resolveSignupRole("member", b.exists);
-        if (role === "admin") cachedBootstrapOwner = uid;
-        var rec = {
-          email: opts.email, role: role,
-          displayName: opts.name || "", personId: opts.personId || null, createdAt: now()
-        };
-        return cloudUserRef(uid).set(rec).then(function () {
-          if (!b.exists) return bootRef().set({ firstUid: uid, updatedAt: now() });
-          return undefined;
-        }).then(function () {
-          if (PMS.cloudBridge && PMS.cloudBridge.markVerified) PMS.cloudBridge.markVerified(uid);
-          return { uid: uid, email: opts.email, role: role, displayName: opts.name || "", isAdmin: role === "admin" };
+      // Claim the first administrator atomically: concurrent signups cannot
+      // both receive admin profiles or write an unrelated bootstrap owner.
+      return firestore.runTransaction(function (tx) {
+        return tx.get(bootRef()).then(function (b) {
+          var role = resolveSignupRole("member", b.exists);
+          var rec = {
+            email: opts.email, role: role, displayName: opts.name || "",
+            personId: role === "admin" ? (opts.personId || null) : null,
+            active: true, createdAt: now()
+          };
+          tx.set(cloudUserRef(uid), rec);
+          if (!b.exists) tx.set(bootRef(), { firstUid: uid, updatedAt: now() });
+          return { uid: uid, email: opts.email, role: role, displayName: rec.displayName,
+            personId: rec.personId, isAdmin: role === "admin" };
         });
+      }).then(function (res) {
+        if (res.isAdmin) cachedBootstrapOwner = uid;
+        if (PMS.cloudBridge && PMS.cloudBridge.markVerified) PMS.cloudBridge.markVerified(uid);
+        return res;
       });
       }).then(function (res) {
         return recordAccountEvent("account.created", opts.email, "created " + res.role).then(function () { return res; });
@@ -637,7 +642,7 @@
   // authorization model (managerId/assignees comparison) requires the cloud
   // profile to know which person the account is, so this must be written to
   // zms_auth_users/<uid> whenever Settings links/unlinks a person. Rules keep
-  // it admin-only for other users, or the user's own profile (role unchanged).
+  // it admin-only for all users; personId is an authorization field.
   function setCloudPersonId(uid, personId) {
     if (!uid) return Promise.resolve(false);
     if (!PMS.auth || !PMS.auth.isAdmin || !PMS.auth.isAdmin()) return Promise.resolve(false);
@@ -757,19 +762,13 @@
   // (repositories.update() bumps updatedAt on every edit). For assignee
   // status-only updates we additionally compare status/progress/activity.
 
-  function loadMirror() {
-    try { return JSON.parse(window.localStorage.getItem(MIRROR_KEY) || "null") || {}; }
-    catch (e) { return {}; }
-  }
-  function saveMirror(m) {
-    try { window.localStorage.setItem(MIRROR_KEY, JSON.stringify(m)); } catch (e) {}
-  }
-  function mirrorFor(col) { return loadMirror()[col] || {}; }
-  function setMirrorFor(col, map) {
-    var m = loadMirror();
-    m[col] = map || {};
-    saveMirror(m);
-  }
+  var mirrorStore = PMS.syncMirror.create(MIRROR_KEY);
+  var mirrorFor = mirrorStore.forCollection;
+  var setMirrorFor = mirrorStore.setCollection;
+  var statusTrack = mirrorStore.statusTrack;
+  var statusEquals = mirrorStore.statusEquals;
+  var recordTrack = mirrorStore.recordTrack;
+  var statusFieldEquals = mirrorStore.statusFieldEquals;
 
   // A whole-dataset replacement (load demo data, restore a backup, replace
   // import, erase all data) swaps the store wholesale without going through
@@ -791,49 +790,6 @@
   // projects/tasks and the append-only activities collection.
   function isRecordCol(cname) {
     return RECORD_COLS.indexOf(cname) !== -1 || APPEND_COLS.indexOf(cname) !== -1;
-  }
-
-  function statusTrack(rec) {
-    return {
-      updatedAt: rec.updatedAt || null,
-      status: rec.status === undefined ? null : rec.status,
-      progress: rec.progress === undefined ? null : rec.progress,
-      activity: rec.activity === undefined ? null : PMS.utils.deepClone(rec.activity)
-    };
-  }
-
-  function statusEquals(a, b) {
-    if (!a && !b) return true;
-    if (!a || !b) return false;
-    return a.updatedAt === b.updatedAt &&
-      a.status === b.status &&
-      a.progress === b.progress &&
-      JSON.stringify(a.activity || null) === JSON.stringify(b.activity || null);
-  }
-
-  // Mirror entry for a per-record document. Tasks/projects track the status
-  // fields (for the assignee status-only path); a MEETING has no status,
-  // progress or activity, so tracking them would store meaningless nulls and
-  // make the mirror misleading — its updatedAt alone decides changed/not.
-  // createdByPersonId is kept in the mirror on purpose: once a record is deleted
-  // locally there is no record left to read the creator from, and the mirror is
-  // the only place that can still tell whether this account may delete it in
-  // the cloud (auth.js canDeleteRecord).
-  function recordTrack(cname, rec) {
-    if (cname === "meetings") {
-      return { updatedAt: (rec && rec.updatedAt) || null, createdByPersonId: (rec && rec.createdByPersonId) || null };
-    }
-    var t = statusTrack(rec);
-    t.createdByPersonId = (rec && rec.createdByPersonId) || null;
-    return t;
-  }
-
-  // Serialized equality for a single status field (activity is an array).
-  function statusFieldEquals(key, localRec, snap) {
-    if (key === "activity") {
-      return JSON.stringify(localRec[key] || null) === JSON.stringify(snap[key] || null);
-    }
-    return (localRec[key] === undefined ? null : localRec[key]) === snap[key];
   }
 
   // The managerId of the project a task belongs to (personId match drives the

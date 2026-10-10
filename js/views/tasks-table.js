@@ -611,7 +611,11 @@
         state.query.search = params.q || "";
       }
       render(container);
-      var off = PMS.bus.on("store:changed", function () { if (PMS.router.current.indexOf("/tasks") === 0) render(container); });
+      var off = PMS.bus.on("store:changed", function (event) {
+        if (PMS.router.current.indexOf("/tasks") !== 0 || !PMS.dom.affects(event,
+          ["tasks", "subtasks", "projects", "meetings", "people", "departments", "users", "settings", "taskStatuses", "priorities", "customFieldDefs", "savedFilters"])) return;
+        PMS.dom.refresh(container, function () { render(container); });
+      });
       return function () { off(); };
     }
   };

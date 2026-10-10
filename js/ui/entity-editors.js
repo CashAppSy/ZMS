@@ -105,9 +105,11 @@
 
   // For a manager the editor only lists the projects they manage (parents
   // to attach under) and keeps the manager field locked to themselves.
-  function projectSchema(managedOnly, isEdit) {
+  function projectSchema(managedOnly, isEdit, projectId) {
     var people = PMS.repos.people.active();
-    var projects = PMS.repos.projects.all();
+    var projects = PMS.repos.projects.all().filter(function (p) {
+      return PMS.projectHierarchy.canParent(PMS.store.data.projects, projectId, p.id);
+    });
     var statuses = (PMS.store.data.projectStatuses || []).map(function (s) {
       return { label: PMS.i18n.trilingual(s.name)(s.name), value: s.key };
     });
@@ -421,7 +423,7 @@
       size: "lg",
       content: function () {
         return buildFormSafely(function () {
-          var sch = projectSchema(isManager, isEdit);
+          var sch = projectSchema(isManager, isEdit, project && project.id);
           // merge custom fields into schema
           PMS.repos.fields.forEntity("project").forEach(function (f) {
             sch.push({ key: "cf_" + f.id, label: PMS.i18n.trilingual(f.label)(f.label), fieldType: f.type, options: f.options, full: true });
@@ -456,8 +458,8 @@
             };
             var check = PMS.validation.check("project", payload);
             if (!check.valid) return toastFirstError(form, check.errors, projectSchema());
-            if (isEdit) PMS.repos.projects.update(project.id, payload);
-            else PMS.repos.projects.add(payload);
+            var saved = isEdit ? PMS.repos.projects.update(project.id, payload) : PMS.repos.projects.add(payload);
+            if (saved && saved.error) return toastFirstError(form, [saved.error], projectSchema(isManager, isEdit, project && project.id));
             PMS.modal.close();
             if (opts.onSaved) opts.onSaved(payload);
           }
