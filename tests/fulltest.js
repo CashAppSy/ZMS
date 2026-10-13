@@ -70,7 +70,7 @@ const html = fs.readFileSync(path.join(APP, "index.html"), "utf8");
 const srcs = [];
 const re = /<script src="([^"]+)"><\/script>/g;
 let m;
-while ((m = re.exec(html))) srcs.push(m[1]);
+while ((m = re.exec(html))) srcs.push(m[1].split("?")[0]);
 for (const src of srcs) {
   window.eval(fs.readFileSync(path.join(APP, src), "utf8"));
 }
@@ -109,7 +109,7 @@ const root = () => document.getElementById("view-root");
   ok("no woff2 is suspiciously empty", woff2.every(s => s > 5000), "smallest " + Math.min.apply(null, woff2) + " bytes");
   ok("the whole family is a sane size", woff2.reduce((a, b) => a + b, 0) < 900 * 1024, Math.round(woff2.reduce((a, b) => a + b, 0) / 1024) + " KB total");
   // it has to be loaded, or declaring it changes nothing
-  ok("index.html links css/fonts.css", /<link rel="stylesheet" href="css\/fonts\.css">/.test(html));
+  ok("index.html links css/fonts.css", /<link rel="stylesheet" href="css\/fonts\.css(?:\?v=[a-f0-9]+)?">/.test(html));
   ok("fonts.css is linked before variables.css", html.indexOf("css/fonts.css") < html.indexOf("css/variables.css"));
   const preloads = [...html.matchAll(/<link rel="preload" href="(fonts\/[^"]+\.woff2)"[^>]*crossorigin>/g)].map(x => x[1]);
   ok("index.html preloads the regular and bold faces", preloads.length === 2 && preloads.indexOf("fonts/Zain-Regular.woff2") !== -1 && preloads.indexOf("fonts/Zain-Bold.woff2") !== -1, preloads.join(", "));

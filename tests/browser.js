@@ -22,7 +22,7 @@ const server = http.createServer((req,res)=>{
   page.on('response',r=>{if(r.url().startsWith(base)&&r.status()>=400)missing.push(r.url());});
   // Exercise local workflows only. Never send test authentication or data to
   // the embedded real Firebase project; configuration is disabled in memory.
-  await page.route('**/js/cloud-config.js',route=>route.fulfill({contentType:'text/javascript',body:'window.PMS.cloudConfig = {};'}));
+  await page.route(/\/js\/cloud-config\.js(?:\?.*)?$/,route=>route.fulfill({contentType:'text/javascript',body:'window.PMS.cloudConfig = {};'}));
   await page.goto(base);await page.waitForFunction(()=>window.PMS&&PMS.store.initialized);
   await page.evaluate(()=>{
     const res=PMS.auth.createUser({username:'browser-admin',password:'test-password',name:'Browser Admin'});

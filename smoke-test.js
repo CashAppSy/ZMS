@@ -25,7 +25,7 @@ const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const srcs = [];
 const re = /<script src="([^"]+)"><\/script>/g;
 let m;
-while ((m = re.exec(html))) srcs.push(m[1]);
+while ((m = re.exec(html))) srcs.push(m[1].split("?")[0]);
 
 for (const src of srcs) {
   const file = path.join(root, src);

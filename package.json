@@ -5,6 +5,8 @@
   "description": "Offline project management app (HTML/CSS/JS, no build). 'npm test' runs the full feature/service test suite under jsdom.",
   "scripts": {
     "test": "node tests/fulltest.js",
+    "version:assets": "node scripts/version-assets.js",
+    "test:assets": "node scripts/version-assets.js --check && node tests/asset-cache.js",
     "test:smoke": "node smoke-test.js",
     "test:regression": "node --test tests/regressions.js",
     "test:browser": "node tests/browser.js",

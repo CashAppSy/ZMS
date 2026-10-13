@@ -88,11 +88,17 @@ Run these with Node 22 for the deployment runtime. The browser test workflow con
 npx firebase deploy --only functions,firestore:rules --project YOUR_PROJECT_ID
 ```
 
-Publish the static client through the site's existing hosting process and reload clients. No live deployment, production data mutation or real multi-device Firebase test was performed in this workspace.
+Publish the static client through the site's existing hosting process. Existing users receive versioned client assets on their next normal opening once the new HTML is served. No live deployment, production data mutation or real multi-device Firebase test was performed in this workspace.
 
 ## Compatibility with rules that have not yet been deployed
 
 A permission denial reading the newly added `subtasks` collection must not cancel the task/project pull. The client records that collection as unavailable, keeps its local rows and cloud baseline, and skips its writes while primary tasks continue syncing. Members retain only subtasks of tasks they can read. Once rules permit access, polling retries even when the shared clock is unchanged. Primary collection permission errors and network failures remain hard failures, preserve local data, and appear in the existing save indicator; no toolbar button is added. `Saved` describes local persistence, not proof of a cloud upload.
 
-Subtasks never had a whole-document legacy wrapper, so admin migration does not read `zms_subtasks/data`. Startup performs a merge reconciliation even if the stored clocks match, recovering tasks written before an interrupted push updated the shared clock. Deploy `firestore.rules` in Firebase Console → Firestore Database → Rules → Publish, then refresh clients. The compatibility path does not replace deployment of the security rules.
+Subtasks never had a whole-document legacy wrapper, so admin migration does not read `zms_subtasks/data`. Startup performs a merge reconciliation even if the stored clocks match, recovering tasks written before an interrupted push updated the shared clock. Deploy `firestore.rules` in Firebase Console → Firestore Database → Rules → Publish. The compatibility path does not replace deployment of the security rules.
 Startup also checks per-record baselines after merging, so unpublished local tasks and offline edits upload even when reconciliation has made the dataset clock equal to the remote clock. Role and field permissions are still enforced by the record writer and Firestore.
+
+## Client asset versions
+
+After editing JavaScript or CSS, run `npm run version:assets` and commit the resulting `index.html` with the changed files. Every local JS/CSS URL includes a SHA-256 content version, so cached files from older releases cannot mask a changed file. This uses native Node APIs and requires no bundler. Run `npm run test:assets` before publishing: it checks all versions against the actual files, then uses Chromium with genuine HTTP caching to verify a normal reopening loads a new release, retains local user data, and keeps unchanged assets cacheable.
+
+The hosting service must serve updated HTML on normal navigation/revalidation (avoid long immutable caching for `index.html`). Versioning does not replace HTML already running in an open tab, force a reload during editing, clear IndexedDB/localStorage, or publish Firebase rules. A tab already open on an older release will use the new code after its next normal opening or reload; a hard refresh is not part of the user workflow.

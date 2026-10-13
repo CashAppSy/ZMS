@@ -155,7 +155,7 @@ test('project hierarchy repairs self-parent, cycles and missing parents without 
 test('Testing is visible after loading legacy data and editor/CRUD prevent cycles',()=>{
  const html=read('index.html'),dom=new JSDOM(html,{url:'http://localhost/',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
  w.__ZMS_TEST__=true;
- for(const m of html.matchAll(/<script src="([^"]+)"><\/script>/g))if(m[1]!=='js/main.js')w.eval(read(m[1]));
+ for(const m of html.matchAll(/<script src="([^"]+)"><\/script>/g)){const src=m[1].split('?')[0];if(src!=='js/main.js')w.eval(read(src));}
  w.PMS.cloudConfig={};const data=w.PMS.schema.defaultData();
  data.projects=[{id:'testing',name:'Testing',parentId:'testing'},{id:'child',name:'Child',parentId:'testing'}];
  data.tasks=[{id:'task',title:'Preserved task',projectId:'testing'}];w.PMS.store.setData(data);
@@ -185,7 +185,7 @@ test('startup persists repaired legacy project links without changing task assoc
 function appFixture() {
  const html=read('index.html'),dom=new JSDOM(html,{url:'http://localhost/',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
  w.__ZMS_TEST__=true;
- for(const m of html.matchAll(/<script src="([^"]+)"><\/script>/g))if(m[1]!=='js/main.js')w.eval(read(m[1]));
+ for(const m of html.matchAll(/<script src="([^"]+)"><\/script>/g)){const src=m[1].split('?')[0];if(src!=='js/main.js')w.eval(read(src));}
  w.PMS.cloudConfig={};w.PMS.store.setData(w.PMS.schema.defaultData());
  w.PMS.auth.createUser({username:'review-admin',password:'test-password'});w.PMS.auth.login('review-admin','test-password');
  return {dom,w,p:w.PMS};
