@@ -107,7 +107,7 @@
         appendingSections(node, task);
 
         // quick add comment (admin only — members may only change status)
-        var canComment = PMS.auth ? PMS.auth.can("tasks.write") : true;
+        var canComment = PMS.auth ? PMS.auth.canEditTask(task) : true;
         if (canComment) {
           node.appendChild(h("div.section-title", [txt(t("tasks.comments"))]));
           var commentArea = h("div.field");
@@ -278,7 +278,7 @@
             broken: ok === false,
             done: DD.isTaskDone(PMS.store.data, x.task)
           }));
-          var name = h("span.u-grow.u-ellipsis", { text: x.task.title, style: { cursor: "pointer" } });
+          var name = h("button.btn.btn-ghost.u-grow.u-ellipsis", { type: "button", text: x.task.title });
           name.addEventListener("click", function () { PMS.modal.close(); open(x.task.id); });
           row.appendChild(name);
           row.appendChild(PMS.vformat.statusBadge(x.task.status, "task"));
@@ -297,7 +297,7 @@
           var row = h("div.u-flex", { style: { gap: "6px", alignItems: "center" } });
           row.appendChild(h("span.u-muted", { text: "←" }));
           row.appendChild(PMS.vformat.depChip(x.dep, depNumbers[x.task.id], {}));
-          var name = h("span.u-grow.u-ellipsis", { text: x.task.title, style: { cursor: "pointer" } });
+          var name = h("button.btn.btn-ghost.u-grow.u-ellipsis", { type: "button", text: x.task.title });
           name.addEventListener("click", function () { PMS.modal.close(); open(x.task.id); });
           row.appendChild(name);
           succWrap.appendChild(row);

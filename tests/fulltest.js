@@ -596,12 +596,12 @@ const root = () => document.getElementById("view-root");
   ok("a whole-list write refuses a loop and writes nothing",
     PMS.repos.tasks.update(listA.id, { dependencies: [{ id: listC.id, type: "FS", lag: 0 }] }).error === "cycle" &&
     PMS.repos.tasks.dependenciesOf(listA.id).length === 0);
-  ok("a whole-list write drops a self-link instead of refusing it",
-    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: listC.id, type: "FS", lag: 0 }] }) &&
-    PMS.repos.tasks.dependenciesOf(listC.id).length === 0);
-  ok("a whole-list write drops links to tasks that are gone",
-    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: "no-such-task", type: "FS", lag: 0 }] }) &&
-    PMS.repos.tasks.dependenciesOf(listC.id).length === 0);
+  ok("a whole-list write refuses a self-link and preserves previous links",
+    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: listC.id, type: "FS", lag: 0 }] }).error === "self" &&
+    PMS.repos.tasks.dependenciesOf(listC.id)[0].id === listA.id);
+  ok("a whole-list write refuses missing tasks and preserves previous links",
+    PMS.repos.tasks.update(listC.id, { dependencies: [{ id: "no-such-task", type: "FS", lag: 0 }] }).error === "notfound" &&
+    PMS.repos.tasks.dependenciesOf(listC.id)[0].id === listA.id);
   PMS.repos.tasks.addDependency(listC.id, listA.id, "FS", 0);
   ok("the loop question for a whole list agrees with the analysis",
     PMS.dependencies.wouldCycleWith(PMS.store.data, listA.id, [{ id: listC.id, type: "FS", lag: 0 }]) === true &&
@@ -1328,7 +1328,7 @@ const root = () => document.getElementById("view-root");
   const GATE_CASES = [
     { type: "FS", pred: "inprogress", hold: true, why: "holds the successor until the predecessor is finished" },
     { type: "FS", pred: "todo", hold: true, why: "holds the successor while the predecessor is untouched" },
-    { type: "FF", pred: "inprogress", hold: true, why: "holds the successor until the predecessor is finished" },
+    { type: "FF", pred: "inprogress", hold: false, why: "allows starting before the predecessor finishes" },
     { type: "SS", pred: "todo", hold: true, why: "holds the successor while the predecessor has not started" },
     { type: "SS", pred: "inprogress", hold: false, why: "lets the successor start once the predecessor has started" },
     { type: "SF", pred: "inprogress", hold: false, why: "lets the successor start once the predecessor has started" }
@@ -2706,7 +2706,7 @@ if (!PMS.auth.users().some(u => u.username === "boss" && u.role === "admin")) {
   const foreignTask = PMS.repos.tasks.add({ title: "Foreign status task", projectId: foreignProj.id, status: "todo" });
   ok("manager canChangeStatus task in own project", PMS.auth.canChangeStatus(mgrTask) === true);
   ok("manager canChangeStatus SUBTASK in own project", PMS.auth.canChangeStatus(mgrSub) === true);
-  ok("manager canChangeStatus an UNASSIGNED task in a foreign pillar", PMS.auth.canChangeStatus(foreignTask) === true);
+  ok("manager cannot change an unassigned task in a foreign pillar", PMS.auth.canChangeStatus(foreignTask) === false);
   ok("manager may open status-only editor for own-project task", PMS.editors.canOpenTask(mgrTask) === true);
   ok("manager canCreateTask in ANY pillar", PMS.auth.canCreateTask(foreignProj.id) === true && PMS.auth.canCreateTask(mgrProj.id) === true && PMS.auth.canCreateTask() === true);
   ok("manager canCreateMeeting", PMS.auth.canCreateMeeting() === true);
@@ -3021,14 +3021,13 @@ section("Cloud sync (offline-safe API)");
       ];
       local.meta = { updatedAt: "2026-01-01T00:00:00.000Z" };
       // The per-record mirror is what separates "a remote writer deleted this"
-      // from "this was never uploaded". t1/t2/t3 were published by this device,
-      // so the remote clock may judge them; t4 was never published, so it must
+      // from "this was never uploaded". t1/t2 were published by this device,
+      // so remote deletions apply to unchanged rows; t3/t4 were never published and must
       // survive the pull even though it is absent from the remote snapshot.
       const mirrorSaved = PMS.cloudsync._getMirrorForTest("tasks");
       PMS.cloudsync._setMirrorForTest("tasks", {
         t1: { updatedAt: "2026-01-01T00:00:00.000Z" },
-        t2: { updatedAt: "2026-01-01T00:00:00.000Z" },
-        t3: { updatedAt: "2026-01-01T00:00:00.000Z" }
+        t2: { updatedAt: "2026-01-01T00:00:00.000Z" }
       });
       const projMirrorSaved = PMS.cloudsync._getMirrorForTest("projects");
       PMS.cloudsync._setMirrorForTest("projects", { p1: { updatedAt: "2026-01-01T00:00:00.000Z" } });
@@ -3194,18 +3193,18 @@ section("Cloud sync (offline-safe API)");
     ok("the push engine lets a manager create (but not rewrite) a task in a foreign pillar",
       /idn\.role === "manager" && !mirror\[rec\.id\]/.test(syncSrc));
     ok("a record that was never published survives a pull",
-      /if \(recMirror && !recMirror\[e\.id\]\) return true/.test(syncSrc));
+      /if \(!baseline\) return true; \/\/ never published -> keep/.test(syncSrc));
     ok("a refused write is reported instead of passing as a clean push",
       /cloud:skipped/.test(syncSrc) && /not uploaded \(no write right/.test(syncSrc));
     // The narrower update right must survive the widening of create.
     ok("editing a task in a foreign pillar stays with its manager",
       /projectManagerOf\(d, rec\.projectId\) === idn\.personId/.test(syncSrc) &&
-      /allow update: if isAdmin\(request\.auth\.uid\)\s*\|\|\s*isTaskProjectManaged\(request\.auth\.uid, resource\.data\)/.test(rulesSrc));
+      /allow update: if creatorUnchanged\(\) && \(isAdmin\(request\.auth\.uid\)\s*\|\|\s*isTaskProjectManaged\(request\.auth\.uid, resource\.data\)/.test(rulesSrc));
   }
   {
     const mtgSyncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8");
     ok("meetings are a synced per-record collection",
-      /var RECORD_COLS = \["projects", "tasks", "meetings"\]/.test(mtgSyncSrc));
+      /var RECORD_COLS = \["projects", "tasks", "meetings", "subtasks"\]/.test(mtgSyncSrc));
     // store.setData() REPLACES the whole dataset, so any collection missing
     // from the pull skeleton is silently reset to [] on every applied pull.
     ok("the pull skeleton includes meetings (a pull must not wipe them)",
@@ -3227,8 +3226,8 @@ section("Cloud sync (offline-safe API)");
     const syncSrc = fs.readFileSync(path.join(APP, "js", "services", "sync-firestore.js"), "utf8") + fs.readFileSync(path.join(APP, "js", "services", "sync-mirror.js"), "utf8");
     const authSrc = fs.readFileSync(path.join(APP, "js", "core", "auth.js"), "utf8");
 
-    ok("canEditTask lets a manager edit ANY task, not just their own pillar's",
-      /function canEditTask[\s\S]{0,700}if \(u\.role === "manager"\) return true;/.test(authSrc));
+    ok("canEditTask limits full manager edits to their managed pillars",
+      /function canEditTask[\s\S]{0,700}u\.role === "manager"[\s\S]{0,100}managesProject/.test(authSrc));
 
     ok("auth exposes a per-record delete right for the manager",
       /function canDeleteRecord\(rec\)[\s\S]{0,300}if \(r === "manager"\) return createdByCurrentUser\(rec\)/.test(authSrc) &&
@@ -3242,7 +3241,7 @@ section("Cloud sync (offline-safe API)");
     // The push engine reads the creator from the MIRROR: by the time it runs,
     // the local record is gone, so there is nothing left to read it from.
     ok("the mirror keeps createdByPersonId so a deletion can be authorized",
-      /function recordTrack[\s\S]{0,700}createdByPersonId: \(rec && rec\.createdByPersonId\) \|\| null/.test(syncSrc));
+      /function recordTrack[\s\S]{0,700}createdByPersonId = \(rec && rec\.createdByPersonId\) \|\| null/.test(syncSrc));
     ok("a manager may delete a record they created, and only that one",
       /if \(idn\.role !== "manager" \|\| !idn\.personId\) return;[\s\S]{0,200}creator !== idn\.personId\) return;/.test(syncSrc));
 
@@ -3274,10 +3273,11 @@ section("Cloud sync (offline-safe API)");
     PMS.store.setData(recs);
     PMS.auth.login("mara@z", "pw12345");
     ok("signed in as the promoted manager", PMS.auth.currentUser().role === "manager" && PMS.auth.currentUser().personId === "person-mgr-1");
-    const mine = { id: "t-mine", title: "Mine", projectId: "p-foreign", assignees: [], createdBy: mgr.id, createdByPersonId: "person-mgr-1" };
+    const managed = PMS.repos.projects.add({name:"Managed editor pillar",managerId:"person-mgr-1"});
+    const mine = { id: "t-mine", title: "Mine", projectId: managed.id, assignees: [], createdBy: mgr.id, createdByPersonId: "person-mgr-1" };
     const theirs = { id: "t-theirs", title: "Theirs", projectId: "p-foreign", assignees: [], createdBy: "someone-else", createdByPersonId: "person-other" };
-    ok("a manager may edit any task, including one in a pillar they do not manage",
-      PMS.auth.canEditTask(theirs) === true && PMS.auth.canEditTask(mine) === true);
+    ok("a manager edits their pillar tasks and cannot fully edit foreign tasks",
+      PMS.auth.canEditTask(theirs) === false && PMS.auth.canEditTask(mine) === true);
     ok("a manager may delete a task they created",
       PMS.auth.canDeleteRecord(mine) === true && PMS.auth.requireDelete(mine) === true);
     ok("a manager may NOT delete a task created by someone else",
@@ -3296,7 +3296,7 @@ section("Cloud sync (offline-safe API)");
     ok("the task editor footer routes through the delete gate",
       /footer: taskEditorFooter\(isEdit, restricted, task, \[/.test(edSrc) &&
       /function taskEditorFooter[\s\S]{0,300}canDeleteRecord\(task\)/.test(edSrc));
-    const edMine = PMS.repos.tasks.add({ projectId: "p-foreign", title: "Editor mine", status: "todo", assignees: [] });
+    const edMine = PMS.repos.tasks.add({ projectId: managed.id, title: "Editor mine", status: "todo", assignees: [] });
     PMS.repos.tasks.update(edMine.id, { createdBy: mgr.id, createdByPersonId: "person-mgr-1", createdByName: "Mara" });
     const deleteLabel = PMS.i18n.t("common.delete");
     PMS.editors.openTaskEditor(PMS.repos.tasks.get(edMine.id), {});
@@ -3304,7 +3304,7 @@ section("Cloud sync (offline-safe API)");
     ok("the task editor offers delete on a task the manager created",
       !!edFooter && edFooter.textContent.indexOf(deleteLabel) !== -1);
     PMS.modal.close();
-    const edTheirs = PMS.repos.tasks.add({ projectId: "p-foreign", title: "Editor theirs", status: "todo", assignees: [] });
+    const edTheirs = PMS.repos.tasks.add({ projectId: managed.id, title: "Editor theirs", status: "todo", assignees: [] });
     PMS.repos.tasks.update(edTheirs.id, { createdBy: "someone-else", createdByPersonId: "person-other", createdByName: "Other" });
     PMS.editors.openTaskEditor(PMS.repos.tasks.get(edTheirs.id), {});
     edFooter = document.querySelector(".modal-footer");

@@ -13,7 +13,7 @@
    Deploy (Blaze plan required for Cloud Functions):
      firebase deploy --only functions,firestore:rules
    ========================================================================== */
-const functions = require("firebase-functions");
+const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
@@ -44,9 +44,8 @@ async function guardLastAdmin(uid) {
   if (snap.data().role !== "admin") return null;
   const admins = await db.collection("zms_auth_users")
     .where("role", "==", "admin")
-    .where("active", "!=", false)
     .get();
-  const others = admins.docs.filter((d) => d.id !== uid);
+  const others = admins.docs.filter((d) => d.id !== uid && d.data().active !== false);
   if (others.length === 0) {
     const error = new functions.https.HttpsError("failed-precondition", "LAST_ADMIN", { lastAdmin: true });
     throw error;
@@ -186,14 +185,22 @@ exports.adminCreateUser = functions.https.onCall(async (data, context) => {
     }
     throw new functions.https.HttpsError("internal", "AUTH_CREATE_FAILED", { detail: e && e.code });
   }
-  await cloudUserRef(user.uid).set({
-    email,
-    role: "member",
-    displayName: name || email,
-    personId: data && data.personId ? String(data.personId) : null,
-    active: data.active !== false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  });
+  try {
+    await cloudUserRef(user.uid).set({
+      email,
+      role: "member",
+      displayName: name || email,
+      personId: data && data.personId ? String(data.personId) : null,
+      active: data.active !== false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    // Do not leave an Authentication identity without its authorization profile.
+    try { await admin.auth().deleteUser(user.uid); } catch (rollbackError) {
+      console.error("Account profile rollback failed", { uid: user.uid, code: rollbackError.code });
+    }
+    throw new functions.https.HttpsError("internal", "PROFILE_CREATE_FAILED");
+  }
   return { uid: user.uid };
 });
 
@@ -214,6 +221,7 @@ exports.adminSetActive = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("not-found", "NO_SUCH_CLOUD_ACCOUNT");
   }
   const active = data.active !== false;
+  if (!active) await guardLastAdmin(uid);
   try {
     await admin.auth().updateUser(uid, { disabled: !active });
   } catch (e) {

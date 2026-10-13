@@ -173,10 +173,8 @@
       content: function () {
         return PMS.forms.build([
           { key: "personId", label: t("auth.linkPerson"), type: "select", options: personOptions },
-          { key: "email", label: t("auth.cloudEmail"), type: "text", required: true },
-          { key: "name", label: t("auth.name"), type: "text" },
-          { key: "password", label: t("auth.password") + " (" + t("auth.pwHint") + ")", type: "password", required: true },
-          { key: "confirm", label: t("auth.confirmPassword"), type: "password", required: true }
+          { key: "email", label: t("auth.cloudEmail"), type: "email", required: true },
+          { key: "name", label: t("auth.name"), type: "text", hint: t("auth.inviteInfo") }
         ], {});
       },
       footer: [
@@ -185,12 +183,17 @@
           label: t("common.save"), class: "btn-primary",
           onClick: function (_, body) {
             var v = body.querySelector("form")._getValues();
-            if (v.password !== v.confirm) { PMS.toast.show(t("auth.mismatch"), "error"); return; }
-            if (!PMS.cloudsync || !PMS.cloudsync.signUpWithPassword) return;
-            PMS.cloudsync.signUpWithPassword({
-              email: v.email, password: v.password, name: v.name || "", personId: v.personId || null
-            }).then(function (res) {
-              PMS.cloudBridge.register({ username: res.email, cloudUid: res.uid, role: res.role, name: res.displayName || v.name || "", personId: res.personId || null });
+            if (!body.querySelector("form").reportValidity()) return;
+            if (!PMS.cloudsync || !PMS.cloudsync.createMemberAccount) return;
+            var saveButton = _.querySelector(".modal-footer button:last-child");
+            if (saveButton) saveButton.disabled = true;
+            PMS.cloudsync.createMemberAccount({
+              email: v.email, name: v.name || "", personId: v.personId || null
+            }).then(function () {
+              return PMS.cloudsync.resetPassword(v.email).catch(function () {
+                PMS.toast.show(t("auth.inviteFailed"), "error");
+              });
+            }).then(function () {
               PMS.modal.close();
               PMS.store.flush();
               PMS.toast.show(t("auth.cloudAccountCreated"), "success");
@@ -198,7 +201,7 @@
             }).catch(function (err) {
               PMS.toast.show(PMS.authUI.errorMessage((err && err.userCode) || "generic"), "error");
               console.error("[zms] create cloud account failed:", err && err.code || err, err);
-            });
+            }).finally(function () { if (saveButton) saveButton.disabled = false; });
           }
         }
       ]

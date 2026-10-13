@@ -114,7 +114,8 @@ service cloud.firestore {
     // Is `uid` the active manager of project `projId` (by person match)?
     function isProjectManagerOf(uid, projId) {
       return projId != null
-        && isActiveUser(uid)
+        && isManagerOrAdmin(uid)
+        && myPersonId() != null
         && exists(/databases/$(database)/documents/zms_projects/$(projId))
         && 'managerId' in get(/databases/$(database)/documents/zms_projects/$(projId)).data
         && get(/databases/$(database)/documents/zms_projects/$(projId)).data.managerId == myPersonId();
@@ -131,8 +132,8 @@ service cloud.firestore {
     }
     function isCreatorOf(uid, docData) {
       return isActiveUser(uid)
-        && myPersonId() != null
-        && creatorOf(docData) == myPersonId();
+        && ((myPersonId() != null && creatorOf(docData) == myPersonId())
+          || ('createdByCloudUid' in docData && docData.createdByCloudUid == uid));
     }
 
     // Deletion. An admin may delete anything. A MANAGER may delete only a record
@@ -142,6 +143,25 @@ service cloud.firestore {
     // destroy that pillar's manager's data.
     function canDeleteRecord(uid, docData) {
       return isAdmin(uid) || (isManagerOrAdmin(uid) && isCreatorOf(uid, docData));
+    }
+
+    // Creator attribution is immutable, including legacy records without it.
+    function creatorUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['createdBy', 'createdByName', 'createdByPersonId', 'createdByCloudUid']);
+    }
+    function validCreator() {
+      return isAdmin(request.auth.uid)
+        || (isCreatorOf(request.auth.uid, request.resource.data)
+          && (creatorOf(request.resource.data) == null || creatorOf(request.resource.data) == myPersonId())
+          && (!('createdByCloudUid' in request.resource.data)
+            || request.resource.data.createdByCloudUid == request.auth.uid));
+    }
+    function canReadScoped(data, field) {
+      return isManagerOrAdmin(request.auth.uid)
+        || (isActiveUser(request.auth.uid)
+          && (isCreatorOf(request.auth.uid, data)
+            || (myPersonId() != null && field in data && myPersonId() in data[field])));
     }
 
     // A task can be fully managed when its project is managed by `uid`.
@@ -198,27 +218,28 @@ service cloud.firestore {
     // delete      : admin only
     match /zms_projects/{projId} {
       allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create: if isAdmin(request.auth.uid)
+      allow create: if validCreator() && (isAdmin(request.auth.uid)
         || (isManagerOrAdmin(request.auth.uid)
+            && myPersonId() != null
             && 'managerId' in request.resource.data
-            && request.resource.data.managerId == myPersonId());
-      allow update: if isAdmin(request.auth.uid)
-        || isProjectManagerOf(request.auth.uid, projId);
+            && request.resource.data.managerId == myPersonId()));
+      allow update: if creatorUnchanged() && (isAdmin(request.auth.uid)
+        || isProjectManagerOf(request.auth.uid, projId));
       allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
     // ---- per-record: tasks ----
-    // read        : any ACTIVE team member
+    // read        : managers/admins, or an active assignee/creator
     // create      : an admin or a manager, in ANY pillar (canCreateTask)
     // update      : admin, or the manager of the task's project (full edit),
     //               or an ASSIGNEE changing ONLY the status of that task
     // delete      : admin only
     match /zms_tasks/{taskId} {
-      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create: if canCreateTask(request.auth.uid);
-      allow update: if isAdmin(request.auth.uid)
+      allow read: if canReadScoped(resource.data, 'assignees');
+      allow create: if canCreateTask(request.auth.uid) && validCreator();
+      allow update: if creatorUnchanged() && (isAdmin(request.auth.uid)
         || isTaskProjectManaged(request.auth.uid, resource.data)
-        || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate());
+        || (isTaskAssigneeOf(request.auth.uid, taskId) && isStatusOnlyUpdate()));
       allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
@@ -226,18 +247,38 @@ service cloud.firestore {
     // The client stores meetings PER RECORD (zms_meetings/<meetingId>). They
     // were previously never pushed at all, so the app kept them in one
     // browser's localStorage only and no other user could ever see them.
-    // read        : any ACTIVE team member — same as tasks/projects. The
-    //               attendee/creator scope is a READ-SIDE UI policy enforced in
-    //               the single read path (PMS.auth.canViewMeeting), exactly
-    //               like tasks; it is not a write-level restriction.
+    // read        : managers/admins, or an active member attending/creating it.
+    //               Member queries must constrain attendees or creator personId.
     // create/update : admin or manager, mirroring auth.js canCreateMeeting /
     //               canEditMeeting. Members are read-only for meetings.
     // delete      : an admin, or a manager who created this meeting
     //               (canDeleteRecord, same as tasks/projects).
     match /zms_meetings/{meetingId} {
-      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
-      allow create: if isManagerOrAdmin(request.auth.uid);
-      allow update: if isManagerOrAdmin(request.auth.uid);
+      allow read: if canReadScoped(resource.data, 'attendees');
+      allow create: if isManagerOrAdmin(request.auth.uid) && validCreator();
+      allow update: if isManagerOrAdmin(request.auth.uid) && creatorUnchanged();
+      allow delete: if canDeleteRecord(request.auth.uid, resource.data);
+    }
+
+    // Flat subtasks share the visibility of their parent task.
+    function subtaskParent(data) {
+      return get(/databases/$(database)/documents/zms_tasks/$(data.taskId)).data;
+    }
+    function canReadSubtask(data) {
+      return isManagerOrAdmin(request.auth.uid)
+        || ('taskId' in data && canReadScoped(subtaskParent(data), 'assignees'));
+    }
+    function canManageSubtask(data) {
+      return isAdmin(request.auth.uid)
+        || ('taskId' in data && isTaskProjectManaged(request.auth.uid, subtaskParent(data)));
+    }
+    match /zms_subtasks/{id} {
+      allow read: if canReadSubtask(resource.data);
+      allow create: if canManageSubtask(request.resource.data) && validCreator();
+      allow update: if creatorUnchanged()
+        && request.resource.data.taskId == resource.data.taskId
+        && (canManageSubtask(resource.data)
+          || (isTaskAssigneeOf(request.auth.uid, resource.data.taskId) && isStatusOnlyUpdate()));
       allow delete: if canDeleteRecord(request.auth.uid, resource.data);
     }
 
@@ -248,7 +289,8 @@ service cloud.firestore {
     // update: never — append-only, no field edits
     // delete: admin only (clearing the log)
     match /zms_activities/{id} {
-      allow read: if isTeamMember(request.auth.uid) && isActiveUser(request.auth.uid);
+      // Activity details may contain titles of tasks hidden from members.
+      allow read: if isManagerOrAdmin(request.auth.uid);
       allow create: if isActiveUser(request.auth.uid);
       allow update: if false;
       allow delete: if isAdmin(request.auth.uid);

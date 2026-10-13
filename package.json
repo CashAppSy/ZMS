@@ -8,7 +8,8 @@
     "test:smoke": "node smoke-test.js",
     "test:regression": "node --test tests/regressions.js",
     "test:browser": "node tests/browser.js",
-    "test:rules": "node tests/run-rules.js"
+    "test:rules": "node tests/run-rules.js",
+    "test:functions": "node --test tests/functions.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",

@@ -337,6 +337,7 @@
     var b = h("div.card-body");
     b.appendChild(h("p.u-muted", { text: t("cloud.intro"), style: { marginBlockEnd: "8px" } }));
 
+    PMS.syncConflicts.render(b, function () { render(document.getElementById("view-root")); });
     var st = PMS.cloudsync.status();
     var row = h("div.setting-row");
     var embedded = PMS.cloudsync.embedded() && PMS.cloudsync.embedded().projectId;

@@ -518,6 +518,7 @@
           label: t("common.save"), class: "btn-primary",
           onClick: function (_, body) {
             var form = body.querySelector("form");
+            if (!form.reportValidity()) return;
             var v = form._getValues();
             if (!v.title && !restricted) {
               var firstInput = form.querySelectorAll(".field")[0].querySelector("input");
@@ -547,23 +548,7 @@
                   : PMS.programProgress.defaultPlannedSubtasks(PMS.store.data),
                 tags: v.tags || [], customFields: cf, meetingId: meetingId
               };
-              // Typed predecessors. Deduped here because the picker is free to
-              // offer the same task twice and a duplicated row would show as one
-              // link twice in every view.
-              if (v.dependencies) {
-                var seen = {};
-                payload.dependencies = v.dependencies.filter(function (d) {
-                  if (!d || !d.id || d.id === (task && task.id) || seen[d.id]) return false;
-                  seen[d.id] = true;
-                  return true;
-                }).map(function (d) {
-                  return {
-                    id: d.id,
-                    type: PMS.dependencies.isType(d.type) ? d.type : "FS",
-                    lag: isFinite(d.lag) ? Math.trunc(d.lag) : 0
-                  };
-                });
-              }
+              if (v.dependencies) payload.dependencies = v.dependencies;
             }
             if (isEdit) {
               if (restricted) {
@@ -585,6 +570,7 @@
             } else {
               if (!PMS.auth || PMS.auth.canCreateTask(payload.projectId)) {
                 var created = PMS.repos.tasks.add(payload);
+                if (!created || created.error) return;
                 (v.linkedTaskIds || []).forEach(function (id) { PMS.repos.tasks.link(created.id, id); });
               } else { deny(); return; }
             }

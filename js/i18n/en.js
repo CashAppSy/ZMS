@@ -213,20 +213,28 @@
       title: "Calendar", month: "Month", week: "Week", dayEvents: "tasks"
     },
     deps: {
+      searchTask: "Search by task name, number or pillar",
+      remove: "Remove dependency",
+      invalid: "Choose existing tasks, a valid relationship and a whole number of days.",
+      explainFS: "This task starts after the selected task finishes.",
+      explainSS: "This task starts after the selected task starts.",
+      explainFF: "This task may start earlier, but finishes after the selected task finishes.",
+      explainSF: "This task may start earlier, but finishes after the selected task starts.",
+
       title: "Dependencies",
       typeFS: "Finish to start", typeFF: "Finish to finish",
       typeSS: "Start to start", typeSF: "Start to finish",
       typeLabel: "Type", lag: "Lag", lagDays: "days",
-      lagHint: "Days to wait past the constraint. Negative overlaps the two tasks.",
+      lagHint: "Calendar days added to the date constraint. Positive delays; negative overlaps.",
       predecessor: "Waits for", successor: "Waiting on it",
       add: "Add a dependency", none: "No dependencies",
       hint: "What this task waits on. A link that would loop back on itself is refused.",
       pickTask: "Pick a task...",
-      missingTask: "(a task that no longer exists)",
+      missingTask: "(unavailable or deleted task)",
       critical: "Critical path",
       criticalHint: "On the critical path — a delay here moves the end of the program",
       slack: "Slack", slackDays: "slack", blocked: "Blocked", blockedBy: "Blocked by",
-      broken: "Scheduled before its predecessor finishes",
+      broken: "Dates do not satisfy this dependency",
       cycleRefused: "That link would loop back on itself",
       blockedRefused: "Blocked: {n} dependency/dependencies have not been met yet.",
       selfRefused: "A task cannot wait on itself",
@@ -387,6 +395,7 @@
       }
     },
     auth: {
+      inviteInfo: "An invitation lets the member choose their own password.", inviteFailed: "Account created, but the invitation failed. Use Reset password to retry.",
       loginTitle: "Sign in",
       login: "Sign in",
       logout: "Sign out",
@@ -463,6 +472,17 @@
       password: "Password"
     },
     cloud: {
+      conflictAction: "Resolve sync conflicts",
+      noConflicts: "No sync conflicts",
+      localDeleted: "You deleted this record locally.",
+      remoteDeleted: "This record was deleted in the cloud.",
+
+      localVersion: "My version", remoteVersion: "Cloud version",
+      conflictTitle: "Conflicting edits",
+      conflictHint: "Cloud sync paused for conflicting edits. A resolution dialog appears when the current editor closes. Your local changes are saved.",
+      keepLocal: "Keep my changes",
+      useRemote: "Use cloud version",
+
       title: "Cloud sync (Firebase Firestore)",
       intro: "Share one copy of your projects across every device. When the connection settings are built into the site (js/cloud-config.js), every device connects by itself — no export/import and nothing to set up per device.",
       connected: "Connected to cloud",

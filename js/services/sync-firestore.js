@@ -20,10 +20,9 @@
           project/task record is ALWAYS admin-only.
     - MEETINGS are also per record (zms_meetings/<id>), written by admins and
       managers (the same roles that may create/edit a meeting in the UI) and
-      deleted by admins only. They are read by every active member, exactly
-      like tasks and projects; PMS.auth.canViewMeeting() then narrows what a
-      MEMBER sees (the meetings they attend or created) in the single read
-      path, so the client-side scope rule is unchanged by syncing them.
+      deleted by admins or their manager creator. Members query only meetings
+      they attend or created; Firestore enforces that scope independently of UI.
+      Flat subtasks sync per record and inherit their parent task visibility.
    - The global ACTIVITY LOG (round 6) is a per-record append-only collection
      (zms_activities/<id>): any ACTIVE user may create an entry (recording
      their own action), everyone reads it, only admins delete (e.g. clearing
@@ -73,7 +72,7 @@
   // MEETINGS live here too: they are shared team data, so they must travel
   // with everything else. They used to be absent from this list entirely,
   // which kept every meeting locked to the browser that created it.
-  var RECORD_COLS = ["projects", "tasks", "meetings"];
+  var RECORD_COLS = ["projects", "tasks", "meetings", "subtasks"];
   // Append-only per-record collections (round-6 layout): the global activity
   // log. Entries are only ever created (any active user) and deleted (admin,
   // e.g. clearing the log) — a push uploads new local entries the mirror has
@@ -762,6 +761,51 @@
   // (repositories.update() bumps updatedAt on every edit). For assignee
   // status-only updates we additionally compare status/progress/activity.
 
+  var conflicts = {};
+  function rememberConflict(cname, id, local, remote, base, error) {
+    var key = cname + "/" + id;
+    var fresh = !conflicts[key];
+    conflicts[key] = { key: key, owner: identity().cloudUid || (identity().user && identity().user.id), collection: cname, id: id, local: PMS.utils.deepClone(local),
+      remote: PMS.utils.deepClone(remote), base: PMS.utils.deepClone(base), fields: error.fields || [] };
+    if (fresh && PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.conflictHint"), "error");
+    PMS.bus.emit("cloud:conflict", { key: key });
+    return error;
+  }
+  function listConflicts() {
+    var owner = identity().cloudUid || (identity().user && identity().user.id);
+    return PMS.utils.deepClone(Object.keys(conflicts).map(function (key) { return conflicts[key]; })
+      .filter(function (conflict) { return owner && conflict.owner === owner; }));
+  }
+  function resolveConflict(key, keepLocal) {
+    var conflict = conflicts[key];
+    var owner = identity().cloudUid || (identity().user && identity().user.id);
+    if (!conflict || !owner || conflict.owner !== owner) return false;
+    var cname = conflict.collection, id = conflict.id;
+    var current = (PMS.store.data[cname] || []).find(function (row) { return row.id === id; });
+    var remote = conflict.remote, base = conflict.base || remote || {};
+    var next = remote ? PMS.utils.deepClone(remote) : null;
+    if (keepLocal && current && remote) {
+      next = PMS.utils.deepClone(remote);
+      Object.keys(Object.assign({}, base, current)).forEach(function (field) {
+        if (field === "updatedAt" || mirrorStore.equal(base[field], current[field])) return;
+        if (current[field] === undefined) delete next[field];
+        else next[field] = PMS.utils.deepClone(current[field]);
+      });
+      next.updatedAt = now();
+    } else if (keepLocal) next = current ? PMS.utils.deepClone(current) : null;
+    var mirror = PMS.utils.deepClone(mirrorFor(cname));
+    if (remote) mirror[id] = recordTrack(cname, remote);
+    else delete mirror[id];
+    setMirrorFor(cname, mirror);
+    delete conflicts[key];
+    PMS.store.commit(function (data) {
+      data[cname] = (data[cname] || []).filter(function (row) { return row.id !== id; });
+      if (next) data[cname].push(next);
+    }, "resolve-sync-conflict");
+    PMS.bus.emit("cloud:conflict", { resolved: true });
+    return true;
+  }
+
   var mirrorStore = PMS.syncMirror.create(MIRROR_KEY);
   var mirrorFor = mirrorStore.forCollection;
   var setMirrorFor = mirrorStore.setCollection;
@@ -780,6 +824,7 @@
     clearTimeout(debounce);
     debounce = null;
     try { window.localStorage.removeItem(MIRROR_KEY); } catch (e) {}
+    conflicts = {};
     lastPulled = 0;
     lastPushAt = 0;
     if (!enabled || applying) return Promise.resolve(false);
@@ -801,6 +846,73 @@
       if (list[i].id === projectId) return list[i].managerId || null;
     }
     return null;
+  }
+
+  function writeRecord(cname, rec, snap, mirrorUpdates, statusOnly) {
+    var ref = recordRef(cname, rec.id);
+    return firestore.runTransaction(function (tx) {
+      return tx.get(ref).then(function (remoteSnap) {
+        var remote = remoteSnap.exists ? remoteSnap.data() : null;
+        if (!snap) {
+          if (remote && !mirrorStore.equal(remote, rec)) throw rememberConflict(cname, rec.id, rec, remote, remote,
+            new Error("sync-conflict: " + rec.id + " already exists"));
+          if (!remote) tx.set(ref, PMS.utils.deepClone(rec));
+          return remote || rec;
+        }
+        if (!remote) throw rememberConflict(cname, rec.id, rec, null, snap.snapshot,
+          new Error("sync-conflict: " + rec.id + " was deleted remotely"));
+        var base = snap.snapshot;
+        if (!base) {
+          // Upgrade old mirrors safely: a stale clock is not a field baseline.
+          if (remote.updatedAt !== snap.updatedAt) throw rememberConflict(cname, rec.id, rec, remote, null,
+            new Error("sync-conflict: reload cloud baseline for " + rec.id));
+          base = PMS.utils.deepClone(remote);
+          ["status", "progress", "activity"].forEach(function (key) { if (snap[key] !== undefined) base[key] = snap[key]; });
+        }
+        var local = rec;
+        if (statusOnly) {
+          local = PMS.utils.deepClone(base);
+          ["status", "progress", "activity", "updatedAt"].forEach(function (key) {
+            if (rec[key] !== undefined) local[key] = PMS.utils.deepClone(rec[key]);
+          });
+        }
+        var merged;
+        try { merged = mirrorStore.mergeRecord(base, local, remote); }
+        catch (error) { throw rememberConflict(cname, rec.id, rec, remote, base, error); }
+        if (statusOnly) {
+          var payload = { updatedAt: merged.updatedAt };
+          ["status", "progress", "activity"].forEach(function (key) {
+            if (!mirrorStore.equal(merged[key], remote[key])) payload[key] = merged[key];
+          });
+          tx.update(ref, payload);
+        } else tx.set(ref, merged);
+        return merged;
+      });
+    }).then(function (merged) {
+      mirrorUpdates[rec.id] = recordTrack(cname, merged);
+      // Fold remote-only edits into the local row, but preserve edits made
+      // while this network request was running.
+      var current = (PMS.store.data[cname] || []).find(function (row) { return row.id === rec.id; });
+      if (current && mirrorStore.equal(current, rec)) {
+        applying = true;
+        try { PMS.store.commit(function (data) {
+          var index = data[cname].findIndex(function (row) { return row.id === rec.id; });
+          if (index !== -1) data[cname][index] = PMS.utils.deepClone(merged);
+        }, "cloud-merge"); } finally { applying = false; }
+      }
+    });
+  }
+
+  function deleteRecord(cname, id, baseline) {
+    var ref = recordRef(cname, id);
+    return firestore.runTransaction(function (tx) {
+      return tx.get(ref).then(function (snap) {
+        if (!snap.exists) return;
+        if (snap.data().updatedAt !== baseline.updatedAt) throw rememberConflict(cname, id, null, snap.data(), baseline.snapshot,
+          new Error("sync-conflict: edited remotely before deletion " + id));
+        tx.delete(ref);
+      });
+    });
   }
 
   // Builds every operation needed to push ONE record collection (projects or
@@ -831,8 +943,7 @@
         var creator = (mirror[id] && mirror[id].createdByPersonId) || null;
         if (creator !== idn.personId) return;
       }
-      ops.push(recordRef(cname, id).delete());
-      mirrorUpdates[id] = null;
+      ops.push(deleteRecord(cname, id, mirror[id]).then(function () { mirrorUpdates[id] = null; }));
     });
 
     // Records this device is not allowed to write. They stay local and will be
@@ -848,7 +959,13 @@
       if (cname === "projects") {
         // admin pushes any project; otherwise only the project whose managerId
         // matches the caller's personId
-        allow = idn.isAdmin || (idn.personId && rec.managerId && rec.managerId === idn.personId);
+        allow = idn.isAdmin || (idn.role === "manager" && idn.personId && rec.managerId && rec.managerId === idn.personId);
+      } else if (cname === "subtasks") {
+        var parent = (d.tasks || []).find(function (task) { return task.id === rec.taskId; });
+        allow = idn.isAdmin || (idn.role === "manager" && parent && idn.personId && projectManagerOf(d, parent.projectId) === idn.personId);
+        if (!allow && parent && idn.personId && (parent.assignees || []).indexOf(idn.personId) !== -1) {
+          allow = true; statusOnly = true;
+        }
       } else if (cname === "meetings") {
         // Meetings are created and edited by admins AND managers
         // (auth.js canCreateMeeting/canEditMeeting) and are read-only for
@@ -870,40 +987,18 @@
         // therefore rewrite it afterwards; that stays with the pillar manager.
         if (idn.isAdmin) allow = true;
         else if (idn.role === "manager" && !mirror[rec.id]) allow = true;
-        else if (!allow && idn.personId && projectManagerOf(d, rec.projectId) === idn.personId) allow = true;
+        else if (!allow && idn.role === "manager" && idn.personId && projectManagerOf(d, rec.projectId) === idn.personId) allow = true;
         else if (!allow && idn.personId && Array.isArray(rec.assignees) && rec.assignees.indexOf(idn.personId) !== -1) { allow = true; statusOnly = true; }
       }
       if (!allow) { skipped.push(rec.id); return; }
 
       var snap = mirror[rec.id];
       if (!snap) {
-        // Never seen this record: full push. A brand-new task that the caller
-        // can only ASSIGNEE-update cannot be created by them (rules: member
-        // has no create right), so skip — it will arrive via a manager/admin.
         if (statusOnly) return;
-        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
-        mirrorUpdates[rec.id] = recordTrack(cname, rec);
-        return;
-      }
-
-      if (statusOnly) {
-        if (statusEquals(statusTrack(rec), snap)) return;
-        // Send only the status fields that actually DIFFER from the last-known
-        // remote snapshot, so a concurrent manager/admin edit of another field
-        // (e.g. progress) is never clobbered by a stale local value. Every
-        // field sent stays inside the {status, progress, activity, updatedAt}
-        // allow-set the rules check via isStatusOnlyUpdate().
-        var payload = { updatedAt: rec.updatedAt || t };
-        ["status", "progress", "activity"].forEach(function (k) {
-          if (!statusFieldEquals(k, rec, snap)) payload[k] = rec[k];
-        });
-        ops.push(recordRef(cname, rec.id).update(payload));
-        mirrorUpdates[rec.id] = recordTrack(cname, rec);
-      } else {
-        if (snap.updatedAt === rec.updatedAt) return;
-        ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
-        mirrorUpdates[rec.id] = recordTrack(cname, rec);
-      }
+      } else if (snap.snapshot) {
+        if (mirrorStore.equal(snap.snapshot, rec)) return;
+      } else if (snap.updatedAt === rec.updatedAt) return;
+      ops.push(writeRecord(cname, PMS.utils.deepClone(rec), snap, mirrorUpdates, statusOnly));
     });
 
     return { ops: ops, mirror: mirrorUpdates, skipped: skipped };
@@ -927,15 +1022,13 @@
     Object.keys(mirror).forEach(function (id) {
       if (have[id]) return;
       if (!idn.isAdmin) return;
-      ops.push(recordRef(cname, id).delete());
-      mirrorUpdates[id] = null;
+      ops.push(recordRef(cname, id).delete().then(function () { mirrorUpdates[id] = null; }));
     });
 
     local.forEach(function (rec) {
       if (!rec || !rec.id) return;
       if (mirror[rec.id]) return;
-      ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)));
-      mirrorUpdates[rec.id] = true;
+      ops.push(recordRef(cname, rec.id).set(PMS.utils.deepClone(rec)).then(function () { mirrorUpdates[rec.id] = true; }));
     });
 
     return { ops: ops, mirror: mirrorUpdates };
@@ -966,7 +1059,13 @@
   }
 
   /* ---------------- push (local -> cloud) ---------------- */
+  var pushQueue = Promise.resolve();
   function push() {
+    var request = pushQueue.then(pushNow, pushNow);
+    pushQueue = request.catch(function () {});
+    return request;
+  }
+  function pushNow() {
     if (!enabled || applying) return Promise.resolve(false);
     var d = PMS.store.data;
     // Never share/clobber an empty device dataset — refuse to push when there
@@ -1008,15 +1107,16 @@
           // legacy round-3 wrapper cleanup (admin only)
           return legacyCleanupOps(idn).then(function (legacyOps) {
             ops = ops.concat(legacyOps);
-            // state clock: managers/admins write the full state doc; members
-            // only bump the clock (updatedAt) so other devices pull the change
-            if (sharedWrite) {
-              ops.push(stateRef().set({ updatedAt: t, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true }));
-            } else if (ops.length) {
-              ops.push(stateRef().set({ updatedAt: t }, { merge: true }));
-            }
             if (!ops.length) return false;
-            return Promise.all(ops).then(function () {
+            return Promise.allSettled(ops).then(function (results) {
+              var failure = results.find(function (result) { return result.status === "rejected"; });
+              var succeeded = results.some(function (result) { return result.status === "fulfilled"; });
+              if (!succeeded) throw failure.reason;
+              var clock = sharedWrite
+                ? stateRef().set({ updatedAt: now(), schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true })
+                : stateRef().set({ updatedAt: now() }, { merge: true });
+              return clock.then(function () { return failure; });
+            }).then(function (failure) {
               // persist the mirror only after the writes succeeded
               Object.keys(mirrorPatches).forEach(function (cname) {
                 var next = PMS.utils.deepClone(mirrorFor(cname));
@@ -1027,6 +1127,9 @@
                 });
                 setMirrorFor(cname, next);
               });
+              // Successful records remain tracked even if a different record
+              // failed, so a retry cannot mistake our own write for a conflict.
+              if (failure) throw failure.reason;
               // align the in-memory clock with what we uploaded (and persist
               // it) so the next poll/reboot does not re-import our own data
               // back onto this device. flush() does not emit "store:changed",
@@ -1085,14 +1188,28 @@
         // shared dataset regardless of clocks. An empty local store must never
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
-        if (!localEmpty && localUpdated && remoteUpdated <= localUpdated) return null;
+        if (!localEmpty && localUpdated && remoteUpdated === localUpdated) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
+        if (cname === "subtasks" && identity().role === "member") return Promise.resolve([]);
         if (isRecordCol(cname)) {
           // per-record collection: read every doc. A legacy whole-doc
           // zms_<c>/data (round-3) is re-expanded into its items so existing
           // clouds stay readable until the admin's push migrates them.
-          return recordCol(cname).get().then(function (qs) {
+          var idn = identity();
+          if (idn.role === "member" && cname === "activities") return Promise.resolve([]);
+          var queries;
+          if (idn.role === "member" && (cname === "tasks" || cname === "meetings")) {
+            var field = cname === "tasks" ? "assignees" : "attendees";
+            queries = idn.personId ? [recordCol(cname).where(field, "array-contains", idn.personId).get(),
+              recordCol(cname).where("createdByPersonId", "==", idn.personId).get()] : [];
+            if (idn.cloudUid) queries.push(recordCol(cname).where("createdByCloudUid", "==", idn.cloudUid).get());
+          } else queries = [recordCol(cname).get()];
+          return Promise.all(queries).then(function (snapshots) {
+            var seen = {};
+            var qs = { forEach: function (fn) { snapshots.forEach(function (snapshot) {
+              snapshot.forEach(function (doc) { if (!seen[doc.id]) { seen[doc.id] = true; fn(doc); } });
+            }); } };
             var items = [];
             qs.forEach(function (ds) {
               if (!ds.exists) return;
@@ -1122,7 +1239,13 @@
         snaps.forEach(function (items, i) {
           obj[COLLECTIONS[i]] = items || [];
         });
-        return obj;
+        if (identity().role !== "member") return obj;
+        return Promise.all((obj.tasks || []).map(function (task) {
+          return recordCol("subtasks").where("taskId", "==", task.id).get();
+        })).then(function (snapshots) {
+          snapshots.forEach(function (qs) { qs.forEach(function (doc) { obj.subtasks.push(doc.data()); }); });
+          return obj;
+        });
       });
     }).then(function (obj) {
       if (!obj) return false;
@@ -1178,27 +1301,10 @@
     return String(a) > String(b);
   }
 
-  // Merge remote into the current dataset, propagating EDITS as well as
-  // additions and deletions:
-  //  - a new id -> appended (addition, already worked)
-  //  - same id   -> the writer with the newer per-item updatedAt wins
-  //                 (this is what lets a status change made by the admin show
-  //                 up on every other device)
-  //  - a local-only id last touched at or before the remote's latest push was
-  //    deleted by that push's writer -> dropped (remote deletions reach all
-  //    devices). A local item edited or created AFTER that push is kept, so
-  //    offline edits are never silently discarded.
-  //  - MEETINGS are the one exception: a local-only meeting the mirror has
-  //    never seen is always kept. That heuristic above assumes both sides sync
-  //    the same collection, so "old + missing remotely" can only mean a remote
-  //    delete — but meetings were never syncable at all, so an empty meeting
-  //    mirror is the normal state, not evidence of a lost one. Applying the
-  //    rule here would silently destroy every meeting created before this fix
-  //    on the first pull; the next push then publishes them for the first time.
-  //    The guard is deliberately NOT applied to projects/tasks: there a missing
-  //    mirror really does mean "we lost our mirror" (cleared storage), and
-  //    trusting it would stop remote deletions from ever being applied, so
-  //    deleted records would come back to life on every device.
+  // Per-record collections use the last cloud snapshot for three-way field
+  // merges. Overlapping edits and edit/delete conflicts remain local until the
+  // user resolves them. Never-uploaded records survive a remote pull.
+  // Legacy reference datasets retain their per-item timestamp merge policy.
   function mergeWithLocal(remoteObj) {
     var merged = PMS.utils.deepClone(PMS.store.data);
     var remoteAt = remoteObj.meta && remoteObj.meta.updatedAt;
@@ -1219,10 +1325,30 @@
           if (existing[i].id === item.id) { idx = i; break; }
         }
         if (idx === -1) { existing.push(item); return; }
-        if (!isNewer(existing[idx].updatedAt, item.updatedAt)) existing[idx] = item;
+        var baseline = recMirror && recMirror[item.id] && recMirror[item.id].snapshot;
+        if (baseline) {
+          try { existing[idx] = mirrorStore.mergeRecord(baseline, existing[idx], item); }
+          catch (error) { throw rememberConflict(cname, item.id, existing[idx], item, baseline, error); }
+        }
+        else if (!isNewer(existing[idx].updatedAt, item.updatedAt)) existing[idx] = item;
       });
+      if (identity().role === "member" && cname === "activities") {
+        var activityMirror = mirrorFor(cname), ownId = identity().user && identity().user.id;
+        existing = existing.filter(function (entry) { return ownId && entry.actorId === ownId && !activityMirror[entry.id]; });
+      }
       merged[cname] = existing.filter(function (e) {
-        if (recMirror && !recMirror[e.id]) return true;   // never published -> keep
+        if (identity().role === "member" && (cname === "tasks" || cname === "meetings" || cname === "subtasks")) {
+          return incoming.some(function (row) { return row.id === e.id; });
+        }
+        if (recMirror) {
+          var baseline = recMirror[e.id];
+          if (!baseline) return true; // never published -> keep
+          if (incoming.some(function (row) { return row.id === e.id; })) return true;
+          var changed = baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, e) : baseline.updatedAt !== e.updatedAt;
+          if (changed) throw rememberConflict(cname, e.id, e, null, baseline.snapshot,
+            new Error("sync-conflict: locally edited record was deleted remotely " + e.id));
+          return false;
+        }
         if (!(remoteAt && e.updatedAt && String(e.updatedAt) <= String(remoteAt))) return true;
         return incoming.some(function (r) { return r.id === e.id; });
       });
@@ -1479,6 +1605,8 @@
   }
 
   PMS.cloudsync = {
+    conflicts: listConflicts,
+    resolveConflict: resolveConflict,
     enable: enable,
     disable: disable,
     boot: boot,

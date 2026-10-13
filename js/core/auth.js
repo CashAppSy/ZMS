@@ -404,9 +404,7 @@
     if (u.role === "admin" || u.role === "manager") return true;
     if (!task) return false;
     if (isAssignee(task)) return true;
-    if (task.createdBy && u.id && task.createdBy === u.id) return true;
-    if (task.createdByPersonId && currentPersonId() && task.createdByPersonId === currentPersonId()) return true;
-    return false;
+    return createdByCurrentUser(task);
   }
 
   // Which meetings is a member allowed to SEE? The ones they attended, plus
@@ -417,38 +415,25 @@
     if (u.role === "admin" || u.role === "manager") return true;
     if (!meeting) return false;
     if ((meeting.attendees || []).indexOf(currentPersonId()) !== -1) return true;
-    if (meeting.createdBy && u.id && meeting.createdBy === u.id) return true;
-    if (meeting.createdByPersonId && currentPersonId() && meeting.createdByPersonId === currentPersonId()) return true;
-    return false;
+    return createdByCurrentUser(meeting);
   }
 
-  // Full task CRUD (every field). Admins and managers: EVERY task. Members:
-  // only the tasks assigned to them.
-  //
-  // A manager may edit any task, in a pillar they do not manage, for the same
-  // reason they may create one anywhere (canCreateTask): a task is shared team
-  // work, and a manager who cannot correct someone else's task can only report
-  // the problem. Deletion stays deliberately narrower — a manager may remove
-  // only what they created (canDeleteRecord) — so this widens editing without
-  // handing anyone the power to destroy another manager's data.
+  // Full edits belong to an admin or the manager of the task's pillar.
+  // Assigned members may open the editor, which offers status fields only.
+  // Keep the UI aligned with the server so an edit cannot succeed only locally.
   function canEditTask(task) {
     var u = currentUser();
     if (!u) return false;
-    if (u.role === "admin" || u.role === "manager") return true;
-    if (isAssignee(task)) return true;
+    if (u.role === "admin") return true;
+    if (u.role === "manager") return !!task && managesProject(PMS.repos.projects.get(task.projectId));
     return false;
   }
 
-  // May the current user change the STATUS of this task/subtask?
-  // Admins and managers: any task (managers own every pillar — including an
-  // UNASSIGNED task, which nobody else can act on). Members: their own tasks.
   function canChangeStatus(task) {
     var u = currentUser();
     if (!u || !task) return false;
-    if (u.role === "admin") return true;
-    if (isAssignee(task)) return true;
-    if (u.role === "manager") return true;
-    return false;
+    if (u.role === "admin" || isAssignee(task)) return true;
+    return u.role === "manager" && managesProject(PMS.repos.projects.get(task.projectId));
   }
 
   // May the current user create a task? Admins: any pillar. Managers: any

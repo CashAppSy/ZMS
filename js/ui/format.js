@@ -145,15 +145,17 @@ function priorityBadge(prioKey) {
   // One link as a chip: "waits for #4, finish to start, 2 days late".
   function depChip(dep, number, opts) {
     opts = opts || {};
-    var chip = h("span.dep-chip.dep-type-" + dep.type + (opts.broken ? ".dep-broken" : "") + (opts.done ? ".dep-done" : ""));
+    var chip = h((opts.onClick ? "button" : "span") + ".dep-chip.dep-type-" + dep.type + (opts.broken ? ".dep-broken" : "") + (opts.done ? ".dep-done" : ""));
     var glyph = h("span.dep-glyph", { text: TYPE_GLYPH[dep.type] || "→" });
     chip.appendChild(glyph);
     var num = (number === undefined || number === null) ? "" : "#" + number;
     chip.appendChild(h("span.dep-type", { text: PMS.dependencies.label(dep.type) }));
     if (num) chip.appendChild(h("span.u-muted", { text: num }));
+    if (opts.taskName) chip.appendChild(h("span.dep-task-name", { text: opts.taskName }));
+    if (opts.onClick) { chip.type = "button"; chip.addEventListener("click", opts.onClick); }
     if (dep.lag) {
       chip.appendChild(h("span.dep-lag", {
-        text: (dep.lag > 0 ? "+" : "") + dep.lag + "d",
+        text: (dep.lag > 0 ? "+" : "") + dep.lag + " " + t("deps.lagDays"),
         attrs: { title: t("deps.lagHint") }
       }));
     }
@@ -205,6 +207,8 @@ function priorityBadge(prioKey) {
       wrap.appendChild(depChip(d, numbers && numbers[d.id], {
         broken: ok === false,
         done: p ? DD.isTaskDone(data, p) : false,
+        taskName: p ? p.title : t("deps.missingTask"),
+        onClick: p ? function (event) { event.stopPropagation(); PMS.taskDetail.open(p.id); } : null,
         title: (p ? p.title : "") + " — " + DD.label(d.type)
       }));
     });

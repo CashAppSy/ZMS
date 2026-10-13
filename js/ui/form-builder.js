@@ -292,77 +292,83 @@
         break;
 
       case "dependencies":
-        // Typed predecessors: which task this one waits on, how it waits (FS/FF/
-        // SS/SF) and by how many days. A cycle is not judged here - the field
-        // returns the list and the repository refuses the save if the new
-        // edges would close a loop, which is the only place that can see the
-        // whole graph.
         self.el = h("div.dep-input");
         var depRows = h("div.dep-rows");
+        var depEmpty = h("div.hint", { text: t("deps.none") });
+        self.el.appendChild(depEmpty);
         self.el.appendChild(depRows);
-        self.el.appendChild(h("div.u-flex", { style: { marginBlockStart: "6px" } }, [
-          h("button.btn.btn-sm", { text: "+ " + t("deps.add"), type: "button", on: { click: function () { addDepRow(); } } })
-        ]));
-
-        // Ranked once for the whole list: the row is rebuilt on every add and
-        // remove, and ranking the program per option would be slow on a big one.
         var depNumbers = PMS.utils.taskNumbers(PMS.store.data);
-
+        var here = field.excludeId || null;
+        function refreshDepOptions() {
+          var rows = Array.from(depRows.querySelectorAll(".dep-row"));
+          var selected = rows.map(function (row) { return row.querySelector("select").value; });
+          rows.forEach(function (row, index) {
+            var who = row.querySelector("select"), query = row.querySelector('input[type="search"]').value.toLowerCase();
+            Array.from(who.options).forEach(function (option) {
+              var own = option.value === who.value;
+              option.disabled = !!option.value && !own && (selected.some(function (id, i) { return i !== index && id === option.value; })
+                || !!(here && PMS.repos.tasks.wouldCycle(here, option.value)));
+              option.hidden = !!query && !!option.value && !own && option.textContent.toLowerCase().indexOf(query) === -1;
+            });
+          });
+          depEmpty.hidden = rows.length > 0;
+        }
+        function labeledControl(label, control, className) {
+          var wrap = h("div.dep-control." + className);
+          control.id = "dep-" + PMS.ids.uuid();
+          wrap.appendChild(h("label.dep-label", { text: label, attrs: { for: control.id } }));
+          control.setAttribute("aria-label", label);
+          wrap.appendChild(control);
+          return wrap;
+        }
         function addDepRow(entry) {
           entry = entry || { id: "", type: "FS", lag: 0 };
           var row = h("div.dep-row");
-          var whoSel = h("select.select", { style: { minWidth: "0", flex: "1 1 180px" } });
+          var search = h("input.input", { type: "search", placeholder: t("deps.searchTask"), attrs: { "aria-label": t("deps.searchTask") } });
+          var whoSel = h("select.select", { required: true });
           whoSel.appendChild(h("option", { value: "", text: t("deps.pickTask") }));
-          var here = field.excludeId || null;
-          PMS.repos.tasks.all()
-            .filter(function (x) { return !here || x.id !== here; })
+          PMS.repos.tasks.all().filter(function (x) { return x.id !== here; })
             .sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); })
             .forEach(function (x) {
+              var project = PMS.repos.projects.get(x.projectId);
               var n = depNumbers[x.id];
-              whoSel.appendChild(h("option", {
-                value: x.id,
-                text: (n ? "#" + n + " " : "") + x.title
-              }));
+              whoSel.appendChild(h("option", { value: x.id,
+                text: (n ? "#" + n + " " : "") + x.title + (project ? " — " + project.name : "") }));
             });
-          // An edge to a task that was deleted still has to be shown, or the
-          // row would silently reset itself and the link would be dropped.
-          if (entry.id && !whoSel.querySelector('option[value="' + entry.id + '"]')) {
+          if (entry.id && !Array.from(whoSel.options).some(function (option) { return option.value === entry.id; })) {
             whoSel.appendChild(h("option", { value: entry.id, text: t("deps.missingTask") }));
           }
           whoSel.value = entry.id || "";
-
-          var typeSel = h("select.select", { style: { flex: "0 0 84px" }, attrs: { title: t("deps.typeLabel") } });
+          var taskControl = labeledControl(t("deps.predecessor"), whoSel, "dep-task-control");
+          taskControl.insertBefore(search, whoSel);
+          var typeSel = h("select.select");
           PMS.dependencies.TYPES.forEach(function (ty) {
-            typeSel.appendChild(h("option", { value: ty, text: PMS.dependencies.label(ty) }));
+            typeSel.appendChild(h("option", { value: ty, text: ty + " — " + PMS.dependencies.label(ty) }));
           });
           typeSel.value = PMS.dependencies.isType(entry.type) ? entry.type : "FS";
-
-          var lagIn = h("input.input", {
-            type: "number",
-            value: entry.lag ? String(entry.lag) : "0",
-            style: { flex: "0 0 76px" },
-            attrs: { title: t("deps.lag"), step: "1" }
-          });
-          var del = h("button.btn.btn-sm.btn-soft-danger", {
-            text: "✕", type: "button", attrs: { title: t("common.delete") },
-            on: { click: function () { row.remove(); } }
-          });
-          row.appendChild(whoSel);
-          row.appendChild(typeSel);
-          row.appendChild(lagIn);
-          row.appendChild(del);
-          depRows.appendChild(row);
+          var lagIn = h("input.input", { type: "number", value: String(entry.lag || 0), attrs: { step: "1", required: true, dir: "ltr" } });
+          var explanation = h("div.dep-explanation.hint", { attrs: { "aria-live": "polite" } });
+          function describe() { explanation.textContent = t("deps.explain" + typeSel.value) + " " + t("deps.lagHint"); }
+          var del = h("button.btn.btn-sm.btn-soft-danger", { text: "✕", type: "button",
+            attrs: { title: t("common.delete"), "aria-label": t("deps.remove") },
+            on: { click: function () { row.remove(); refreshDepOptions(); } } });
+          whoSel.addEventListener("change", refreshDepOptions);
+          search.addEventListener("input", refreshDepOptions);
+          typeSel.addEventListener("change", describe);
+          row.appendChild(taskControl);
+          row.appendChild(labeledControl(t("deps.typeLabel"), typeSel, "dep-type-control"));
+          row.appendChild(labeledControl(t("deps.lag") + " (" + t("deps.lagDays") + ")", lagIn, "dep-lag-control"));
+          row.appendChild(del); row.appendChild(explanation);
+          depRows.appendChild(row); describe(); refreshDepOptions();
         }
-        // Normalised on the way in, so legacy ["id"] records open as one row
-        // per FS link instead of an empty editor.
-        (PMS.dependencies.normList(value)).forEach(addDepRow);
+        self.el.appendChild(h("button.btn.btn-sm", { text: "+ " + t("deps.add"), type: "button",
+          on: { click: function () { addDepRow(); } } }));
+        PMS.dependencies.normList(value).forEach(addDepRow);
         self.getValue = function () {
           var out = [];
           depRows.querySelectorAll(".dep-row").forEach(function (row) {
             var id = row.querySelector("select").value;
-            var lag = parseInt(row.querySelector('input[type="number"]').value, 10);
-            if (!id) return;
-            out.push({ id: id, type: row.querySelectorAll("select")[1].value, lag: isNaN(lag) ? 0 : lag });
+            if (id) out.push({ id: id, type: row.querySelectorAll("select")[1].value, lag: Number(row.querySelector('input[type="number"]').value) });
           });
           return out;
         };
@@ -464,14 +470,15 @@
       on: { click: function () {
         var open = panel.style.display === "none";
         panel.style.display = open ? "block" : "none";
+        nameInput.disabled = emailInput.disabled = !open;
         if (open) setTimeout(function () { nameInput.focus(); }, 20);
       } }
     });
     wrap.appendChild(btn);
 
-    var nameInput = h("input.input", { placeholder: t("people.name"), required: true });
+    var nameInput = h("input.input", { placeholder: t("people.name"), required: true, disabled: true });
     var jobInput = h("input.input", { placeholder: t("people.jobTitle") });
-    var emailInput = h("input.input", { type: "email", placeholder: t("people.email"), required: true });
+    var emailInput = h("input.input", { type: "email", placeholder: t("people.email"), required: true, disabled: true });
     var phoneInput = h("input.input", { type: "tel", placeholder: t("people.phone") });
     var deptSel = h("select.select");
     deptSel.appendChild(h("option", { value: "", text: "— " + t("common.none") + " —" }));
@@ -512,13 +519,14 @@
         nameInput.value = ""; jobInput.value = ""; emailInput.value = ""; phoneInput.value = "";
         notesInput.value = ""; statusSel.value = "active";
         panel.style.display = "none";
+        nameInput.disabled = emailInput.disabled = true;
         clearError();
         PMS.toast.show(t("people.personAdded", { name: person.name }), "success");
       } }
     });
     var cancelBtn = h("button.btn.btn-sm", {
       type: "button", text: t("common.cancel"),
-      on: { click: function () { panel.style.display = "none"; clearError(); } }
+      on: { click: function () { panel.style.display = "none"; nameInput.disabled = emailInput.disabled = true; clearError(); } }
     });
 
     panel.appendChild(h("div.person-create-title", { text: t("people.newPerson") }));

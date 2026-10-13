@@ -43,12 +43,41 @@
   // the only place that can still tell whether this account may delete it in
   // the cloud (auth.js canDeleteRecord).
   function recordTrack(cname, rec) {
-    if (cname === "meetings") {
-      return { updatedAt: (rec && rec.updatedAt) || null, createdByPersonId: (rec && rec.createdByPersonId) || null };
-    }
-    var t = statusTrack(rec);
+    var t = statusTrack(rec || {});
     t.createdByPersonId = (rec && rec.createdByPersonId) || null;
+    t.snapshot = PMS.utils.deepClone(rec || {});
     return t;
+  }
+
+  function equal(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    var keys = Object.keys(a), other = Object.keys(b);
+    return keys.length === other.length && keys.every(function (key) {
+      return Object.prototype.hasOwnProperty.call(b, key) && equal(a[key], b[key]);
+    });
+  }
+  // Three-way field merge. Different fields combine; overlapping edits are
+  // refused and retained locally for explicit resolution, never silently lost.
+  function mergeRecord(base, local, remote) {
+    var result = PMS.utils.deepClone(remote), conflicts = [];
+    var keys = Object.keys(Object.assign({}, base, local));
+    keys.forEach(function (key) {
+      if (key === "updatedAt") return;
+      if (equal(base[key], local[key])) return;
+      if (!equal(base[key], remote[key]) && !equal(local[key], remote[key])) {
+        conflicts.push(key); return;
+      }
+      if (local[key] === undefined) delete result[key];
+      else result[key] = PMS.utils.deepClone(local[key]);
+    });
+    if (conflicts.length) {
+      var error = new Error("sync-conflict: " + conflicts.join(", "));
+      error.code = "sync-conflict"; error.fields = conflicts; throw error;
+    }
+    result.updatedAt = local.updatedAt || remote.updatedAt;
+    return result;
   }
 
   // Serialized equality for a single status field (activity is an array).
@@ -61,6 +90,6 @@
 
   return { forCollection: mirrorFor, setCollection: setMirrorFor,
     statusTrack: statusTrack, statusEquals: statusEquals, recordTrack: recordTrack,
-    statusFieldEquals: statusFieldEquals };
+    statusFieldEquals: statusFieldEquals, mergeRecord: mergeRecord, equal: equal };
   } };
 })(window.PMS);

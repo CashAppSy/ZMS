@@ -68,6 +68,45 @@ const server = http.createServer((req,res)=>{
     PMS.repos.tasks.remove(temporary.id);if(PMS.repos.tasks.get(temporary.id)!==null)throw new Error('delete');
     return task.id;
   });
+  const dependencies=await page.evaluate(taskId=>{
+    PMS.repos.tasks.update(taskId,{startDate:'2026-10-04',dueDate:'2026-10-06'});
+    const pred=PMS.repos.tasks.add({title:'Browser predecessor',status:'todo',startDate:'2026-10-01',dueDate:'2026-10-03'});
+    const cycle=PMS.repos.tasks.add({title:'Would create a cycle',status:'todo',dependencies:[taskId]});
+    return {pred:pred.id,cycle:cycle.id};
+  },task);
+  for(const lang of ['en','ar']){
+    await page.setViewportSize({width:lang==='ar'?390:1280,height:844});
+    await page.evaluate(({lang,task})=>{PMS.i18n.setLang(lang);PMS.editors.openTaskEditor(PMS.repos.tasks.get(task),{});},{lang,task});
+    const field=page.locator('.dep-input');
+    if(await field.locator('.dep-row').count()===0)await field.locator(':scope > button').click();
+    const row=field.locator('.dep-row').first();
+    const who=row.locator('select').first();
+    assert.equal(await who.locator('option').evaluateAll((options,id)=>options.some(o=>o.value===id),task),false);
+    assert.equal(await who.locator('option').evaluateAll((options,id)=>options.find(o=>o.value===id).disabled,dependencies.cycle),true);
+    await row.locator('input[type=search]').fill('Browser predecessor');
+    await who.selectOption(dependencies.pred);
+    await row.locator('select').nth(1).selectOption('FF');
+    assert.ok(await row.locator('.dep-explanation').textContent());
+    await field.locator(':scope > button').click();
+    assert.equal(await field.locator('.dep-row').nth(1).locator('select').first().locator('option').evaluateAll((options,id)=>options.find(o=>o.value===id).disabled,dependencies.pred),true);
+    await field.locator('.dep-row').nth(1).locator('button').click();
+    const lag=row.locator('input[type=number]');await lag.fill('1.5');
+    await page.locator('.modal-footer button').last().click();
+    assert.equal(await page.locator('.modal').count(),1,'fractional lag must keep the editor open');
+    await lag.fill('-2');
+    const bounds=await row.boundingBox(),modalBounds=await page.locator('.modal').boundingBox();
+    assert.ok(bounds.x>=modalBounds.x&&bounds.x+bounds.width<=modalBounds.x+modalBounds.width+1,'dependency fields fit modal in '+lang);
+    if(lang==='ar')await page.screenshot({path:'/tmp/zms-dependencies-ar-mobile.png'});
+    await page.locator('.modal-footer button').last().click();
+    assert.equal(await page.locator('.modal').count(),0);
+    const stored=await page.evaluate(id=>PMS.repos.tasks.dependenciesOf(id),task);
+    assert.deepEqual(stored,[{id:dependencies.pred,type:'FF',lag:-2}]);
+    await page.evaluate(()=>PMS.router.navigate('/tasks'));
+    assert.ok((await page.locator('.dep-task-name').allTextContents()).includes('Browser predecessor'));
+    await page.evaluate(()=>PMS.router.navigate('/tasks/gantt'));
+    assert.ok((await page.locator('.gantt-links path title').allTextContents()).some(text=>text.includes('Browser predecessor')));
+  }
+  await page.setViewportSize({width:1280,height:844});
   await page.evaluate(id=>PMS.editors.openTaskEditor(PMS.repos.tasks.get(id),{}),task);
   await page.waitForSelector('.modal');
   assert.ok(await page.locator('.modal').getAttribute('aria-labelledby'));
@@ -88,6 +127,6 @@ const server = http.createServer((req,res)=>{
   assert.equal(await page.evaluate(id=>PMS.repos.tasks.get(id).title,task),'Edited browser task');
   assert.equal(await page.evaluate(()=>PMS.auth.currentUser().username),'browser-admin');
   assert.deepEqual(errors,[]);assert.deepEqual(missing,[]);
-  console.log('Browser checks passed: '+routes+' routes, 8 settings sections, task CRUD/undo/redo, modal keyboard access, mobile EN/AR, IndexedDB reload and session persistence.');
+  console.log('Browser checks passed: '+routes+' routes, 8 settings sections, task CRUD/undo/redo, typed dependency fields/guards/chips/Gantt in EN/AR, modal keyboard access, mobile EN/AR, IndexedDB reload and session persistence.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>server.close());

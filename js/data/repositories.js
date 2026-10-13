@@ -192,7 +192,7 @@
     if (!task || !PMS.dependencies || !PMS.dependencies.blocking) return null;
     if (!nextStatus || nextStatus === task.status) return null;
     if (statusOrder(nextStatus) <= statusOrder(task.status)) return null;
-    var open = PMS.dependencies.blocking(PMS.store.data, task);
+    var open = PMS.dependencies.blocking(PMS.store.data, task, nextStatus);
     if (!open || !open.length) return null;
     return open;
   }
@@ -263,17 +263,66 @@
   // The type is checked BEFORE normalizing, and that order matters: norm() folds
   // an unknown type to FS so that old or hand-edited data still draws, which
   // would make a check on the normalized value true forever.
+  function removeTaskRecords(d, ids) {
+    d.tasks = d.tasks.filter(function (t) { return ids.indexOf(t.id) === -1; });
+    d.subtasks = (d.subtasks || []).filter(function (s) { return ids.indexOf(s.taskId) === -1; });
+    d.tasks.forEach(function (t) {
+      var dependencies = (t.dependencies || []).filter(function (dep) {
+        var id = typeof dep === "string" ? dep : dep && (dep.id || dep.taskId);
+        return id && ids.indexOf(id) === -1;
+      });
+      var links = (t.linkedTaskIds || []).filter(function (id) { return ids.indexOf(id) === -1 && id !== t.id; });
+      if (dependencies.length !== (t.dependencies || []).length || links.length !== (t.linkedTaskIds || []).length) {
+        t.dependencies = dependencies; t.linkedTaskIds = links;
+        t.updatedAt = new Date().toISOString();
+      }
+      if (ids.indexOf(t.parentTaskId) !== -1) { t.parentTaskId = null; t.updatedAt = new Date().toISOString(); }
+    });
+    (d.meetings || []).forEach(function (m) {
+      if (Array.isArray(m.taskIds)) {
+        var kept = m.taskIds.filter(function (id) { return ids.indexOf(id) === -1; });
+        if (kept.length !== m.taskIds.length) { m.taskIds = kept; m.updatedAt = new Date().toISOString(); }
+      }
+    });
+  }
+
+  function checkedDependencies(id, deps) {
+    if (!Array.isArray(deps)) return { error: "dependencies" };
+    var seen = Object.create(null), error = null;
+    deps.forEach(function (raw) {
+      var dep = PMS.dependencies.norm(raw);
+      if (dep && dep.id === id) error = "self";
+      else if (!dep || !findVisible("tasks", dep.id)) error = "notfound";
+      else if (seen[dep.id]) error = "duplicate";
+      else seen[dep.id] = true;
+      if (typeof raw === "object" && raw && ((raw.type && !PMS.dependencies.isType(raw.type))
+        || (raw.lag !== undefined && !Number.isSafeInteger(Number(raw.lag))))) error = "dependencies";
+    });
+    if (error) {
+      if (PMS.toast) PMS.toast.show(PMS.i18n.t("deps.invalid"), "error");
+      return { error: error };
+    }
+    var list = PMS.dependencies.normList(deps);
+    if (PMS.dependencies.wouldCycleWith(PMS.store.data, id, list)) {
+      if (PMS.toast) PMS.toast.show(PMS.i18n.t("deps.cycleRefused"), "error");
+      return { error: "cycle" };
+    }
+    return { dependencies: list };
+  }
+
   function writeDependency(taskId, predecessorId, type, lag) {
-    var t = find("tasks", taskId);
-    if (!t) return { error: "notfound" };
+    var t = findVisible("tasks", taskId);
+    if (!t || !findVisible("tasks", predecessorId)) return { error: "notfound" };
+    if (taskId === predecessorId) return { error: "self" };
+    if (lag !== undefined && !Number.isSafeInteger(Number(lag))) return { error: "lag" };
     if (type !== undefined && type !== null && type !== "" && !PMS.dependencies.isType(type)) {
       return { error: "type" };
     }
     var dep = PMS.dependencies.norm({ id: predecessorId, type: type, lag: lag });
     var kept = PMS.dependencies.predecessors(t).filter(function (d) { return d.id !== predecessorId; });
     kept.push(dep);
-    update("tasks", taskId, { dependencies: kept });
-    return dep;
+    var result = PMS.repos.tasks.update(taskId, { dependencies: kept });
+    return result && result.error ? result : dep;
   }
 
   function update(collection, id, patch) {
@@ -394,7 +443,8 @@
         PMS.store.commit(function (d) {
           var root = d.projects.find(function (p) { return p.id === id; });
           d.projects = d.projects.filter(function (p) { return toDelete.indexOf(p.id) === -1; });
-          d.tasks = d.tasks.filter(function (t) { return toDelete.indexOf(t.projectId) === -1; });
+          var taskIds = d.tasks.filter(function (t) { return toDelete.indexOf(t.projectId) !== -1; }).map(function (t) { return t.id; });
+          removeTaskRecords(d, taskIds);
           if (root) pushLog(d, makeEntry("projects", root, "deleted"));
         }, "remove-project");
         return true;
@@ -414,7 +464,11 @@
         // dependencies are links with a type and a lag; a bare id list is
         // accepted on input and normalized once, here, so nothing downstream has
         // to cope with both shapes.
-        obj.dependencies = PMS.dependencies.normList(obj.dependencies);
+        var checked = checkedDependencies(obj.id || null, obj.dependencies || []);
+        if (checked.error) return checked;
+        obj.dependencies = checked.dependencies;
+        var held = dependencyGate(Object.assign({}, obj, { status: "todo" }), obj.status);
+        if (held) { warnBlocked(held); return { error: "blocked" }; }
         // `priority` is the single importance field; a stale `importance` from
         // before that cleanup is folded in, then dropped.
         var levels = (PMS.programProgress && PMS.programProgress.IMPORTANCE_LEVELS) || ["low", "medium", "high", "urgent"];
@@ -452,20 +506,9 @@
           patch.plannedSubtasks = Math.max(0, Math.floor(parseInt(patch.plannedSubtasks,10)||0));
         }
         if (patch && patch.dependencies !== undefined) {
-          // A full edit writes the whole predecessor list, so it needs the same
-          // two guards `addDependency` applies one edge at a time: normalize the
-          // shape, and refuse the write if the finished graph would contain a
-          // loop. Self-links and links to deleted tasks are dropped rather than
-          // refused, because there is nothing the user could do about them.
-          var depRec = find("tasks", id);
-          var normDeps = PMS.dependencies.normList(patch.dependencies).filter(function (d) {
-            return d.id && d.id !== id && !!find("tasks", d.id);
-          });
-          if (depRec && PMS.dependencies.wouldCycleWith(PMS.store.data, id, normDeps)) {
-            if (PMS.toast) PMS.toast.show(PMS.i18n.t("deps.cycleRefused"), "error");
-            return { error: "cycle" };
-          }
-          patch.dependencies = normDeps;
+          var checked = checkedDependencies(id, patch.dependencies);
+          if (checked.error) return checked;
+          patch.dependencies = checked.dependencies;
         }
         // A task may only be marked done once every subtask is done. Enforced
         // here so the rule holds whichever screen (or import) asks for it; the
@@ -486,7 +529,7 @@
         // rather than through setStatus, and both must refuse identically.
         if (patch && patch.status) {
           var moved = find("tasks", id);
-          var held = dependencyGate(moved, patch.status);
+          var held = dependencyGate(Object.assign({}, moved, { dependencies: patch.dependencies || (moved && moved.dependencies) }), patch.status);
           if (held) {
             warnBlocked(held);
             return { error: "blocked", open: held.length, titles: held.map(function (x) { return x.task.title; }) };
@@ -543,23 +586,7 @@
         }
         PMS.store.commit(function (d) {
           var root = d.tasks.find(function (t) { return t.id === id; });
-          d.tasks = d.tasks.filter(function (t) { return toDelete.indexOf(t.id) === -1; });
-          // a task's subtasks are part of that task's scope: they go with it
-          if (Array.isArray(d.subtasks)) {
-            d.subtasks = d.subtasks.filter(function (s) { return toDelete.indexOf(s.taskId) === -1; });
-          }
-          d.tasks.forEach(function (t) {
-            // links naming a deleted task are dropped. The entry is {id,type,lag}
-            // now, but older files hold bare ids and both are read here.
-            t.dependencies = (t.dependencies || []).filter(function (dep) {
-              var id = typeof dep === "string" ? dep : (dep && (dep.id || dep.taskId));
-              return id && toDelete.indexOf(id) === -1;
-            });
-            // task-to-task links pointing at a deleted task are dropped too
-            t.linkedTaskIds = (t.linkedTaskIds || []).filter(function (lid) {
-              return toDelete.indexOf(lid) === -1 && lid !== t.id;
-            });
-          });
+          removeTaskRecords(d, toDelete);
           if (root) pushLog(d, makeEntry("tasks", root, "deleted"));
         }, "remove-task");
         return true;
@@ -621,8 +648,8 @@
         if (!t) return false;
         var kept = PMS.dependencies.predecessors(t).filter(function (d) { return d.id !== predecessorId; });
         if (kept.length === PMS.dependencies.predecessors(t).length) return false;
-        update("tasks", taskId, { dependencies: kept });
-        return true;
+        var result = PMS.repos.tasks.update(taskId, { dependencies: kept });
+        return result && result.error ? result : true;
       },
       // Would linking predecessor -> task close a loop? Checked before the
       // write and re-checked over the stored data, so the editor can grey the

@@ -997,14 +997,20 @@ table.tbl {
 
 /* The dependency picker in the task editor: one row per link, wrapping on its
    own so a long list never grows a dialog past the screen. */
-.dep-rows { display: flex; flex-direction: column; gap: 6px; }
-.dep-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+.dep-rows { display: flex; flex-direction: column; gap: 12px; margin-block-end: 10px; }
+.dep-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.5fr) minmax(72px, .6fr) auto;
+  gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.dep-control { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.dep-label { font-size: 12px; font-weight: 600; }
+.dep-row .select, .dep-row .input { width: 100%; min-width: 0; }
+.dep-explanation { grid-column: 1 / -1; }
+.dep-task-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.dep-chip { cursor: pointer; font: inherit; }
+@media (max-width: 640px) {
+  .dep-row { grid-template-columns: minmax(0, 1fr) 84px auto; }
+  .dep-task-control, .dep-type-control { grid-column: 1 / -1; }
+  .dep-lag-control { grid-column: 1 / 3; }
 }
-.dep-row .select, .dep-row .input { min-width: 0; }
 
 /* Critical is marked twice on purpose: a tint to catch the eye while scanning
    and a hard edge so the row still reads when the tint is lost in a print or a
@@ -1070,3 +1076,6 @@ table.tbl {
   font-size: .72rem;
   color: var(--text-muted);
 }
+
+.sync-conflict-card { padding: 12px; margin-block-end: 10px; }
+.sync-conflict-value { white-space: pre-wrap; overflow-wrap: anywhere; }

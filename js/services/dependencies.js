@@ -38,7 +38,7 @@
 
   function clampLag(n) {
     n = Math.round(Number(n));
-    return isNaN(n) ? 0 : n;
+    return Number.isSafeInteger(n) ? n : 0;
   }
 
   // One link as { id, type, lag }. Accepts the bare ids this field used to hold
@@ -146,7 +146,9 @@
         return x.id === taskId ? Object.assign({}, x, { dependencies: deps }) : x;
       })
     };
-    return analyze(candidate).cyclic === true;
+    return normList(deps).some(function (dep) {
+      return dep.id === taskId || reaches(candidate, taskId, dep.id);
+    });
   }
 
   // Length of a task in whole days. Both ends count, the way the gantt draws a
@@ -286,7 +288,9 @@
 
   function analyzeCached(data) {
     var meta = (data && data.meta) || {};
-    var key = (meta.updatedAt || "") + ":" + ((data && data.tasks) || []).length;
+    var key = JSON.stringify((data && data.tasks || []).map(function (t) {
+      return [t.id, t.startDate, t.dueDate, t.dependencies];
+    }));
     if (cache.key !== key) {
       cache = { key: key, value: analyze(data) };
     }
@@ -361,7 +365,7 @@
     return false;
   }
 
-  function blocking(data, task) {
+  function blocking(data, task, nextStatus) {
     if (!task) return [];
     // A finished task is waiting on nothing: its gate opened on the way in, so
     // painting it Blocked now would contradict the status shown beside it.
@@ -371,6 +375,8 @@
     (data.tasks || []).forEach(function (t) { if (t && t.id) byId[t.id] = t; });
     predecessors(task).forEach(function (dep) {
       var p = byId[dep.id];
+      var finishing = nextStatus ? nextStatus === "done" : task.status !== "todo";
+      if ((dep.type === "FF" || dep.type === "SF") && !finishing) return;
       if (!p || gateOpen(data, dep, p)) return;
       open.push({ task: p, dep: dep });
     });
