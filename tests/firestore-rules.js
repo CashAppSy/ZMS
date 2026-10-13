@@ -126,3 +126,21 @@ test('bootstrap is atomic and binds the first admin to its authenticated uid',as
  await assertFails(setDoc(doc(other,'zms_auth/bootstrap'),{firstUid:'second'}));
  await assertSucceeds(getDoc(doc(db,'zms_auth_users/first')));
 });
+
+test('admin reads activity from every active role while entries remain immutable and private to members',async()=>{
+ await env.withSecurityRulesDisabled(async c=>{
+  for(const role of ['member','manager','admin'])await setDoc(doc(c.firestore(),'zms_auth_users',role),{role,active:true,personId:role+'-person'});
+ });
+ for(const uid of ['member','manager','admin']){
+  const db=env.authenticatedContext(uid).firestore();
+  const event={id:'audit-'+uid,actor:uid,actorUid:uid,entity:'task',action:'status',at:'2026-01-01'};
+  await assertSucceeds(setDoc(doc(db,'zms_activities',event.id),event));
+  await assertFails(updateDoc(doc(db,'zms_activities',event.id),{actor:'Someone else'}));
+ }
+ const snapshot=await assertSucceeds(getDocs(collection(env.authenticatedContext('admin').firestore(),'zms_activities')));
+ for(const uid of ['member','manager','admin'])if(!snapshot.docs.some(row=>row.data().actorUid===uid))throw new Error('Missing activity for '+uid);
+ await assertFails(getDocs(collection(env.authenticatedContext('member').firestore(),'zms_activities')));
+ await assertFails(setDoc(doc(env.unauthenticatedContext().firestore(),'zms_activities/anonymous'),{id:'anonymous'}));
+ await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'zms_auth_users/inactive-auditor'),{role:'member',active:false}));
+ await assertFails(setDoc(doc(env.authenticatedContext('inactive-auditor').firestore(),'zms_activities/inactive'),{id:'inactive'}));
+});

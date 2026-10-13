@@ -378,7 +378,7 @@
       cleared: "تم مسح سجل النشاطات",
       at: "متى", user: "المستخدم", entity: "الجهة", entityName: "العنصر",
       action: "الإجراء", detail: "التفاصيل",
-      entities: { task: "مهمة", project: "ركيزة", person: "شخص", department: "قسم", meeting: "اجتماع", account: "حساب" },
+      entities: { task: "مهمة", subtask: "مهمة فرعية", project: "ركيزة", person: "شخص", department: "قسم", meeting: "اجتماع", account: "حساب" },
       actions: {
         created: "أنشأ", updated: "عدّل", status: "غيّر الحالة",
         progress: "غيّر الإنجاز", deleted: "حذف", archived: "أرشفة",

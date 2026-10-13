@@ -116,7 +116,7 @@
           var cBtn = h("button.btn.btn-sm.btn-primary", { text: t("tasks.addComment"), on: { click: function () {
             var text = cInput.value.trim();
             if (!text) return;
-            var comments = task.comments || [];
+            var comments = (task.comments || []).slice();
             comments.push({ id: PMS.ids.uuid(), authorId: null, text: text, createdAt: new Date().toISOString() });
             PMS.repos.tasks.update(task.id, { comments: comments });
           } } });

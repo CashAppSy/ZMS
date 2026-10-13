@@ -2910,7 +2910,17 @@ section("Login hand-off + render resilience (no blank screen without a refresh)"
     PMS.router.handle = function () { root().innerHTML = ""; };
     root().innerHTML = "";
     shell.style.display = "none";
-    await new Promise(r => setTimeout(r, 5200));
+    // Wait for the observable recovery report rather than assuming a fixed
+    // interval phase. Under concurrent Chromium/emulator load the watchdog
+    // and its follow-up render can both run later than the old 5.2s sleep.
+    await new Promise(resolve => {
+      const deadline = Date.now() + 8000;
+      function poll() {
+        if (root().querySelector(".blank-report") || Date.now() >= deadline) return resolve();
+        setTimeout(poll, 50);
+      }
+      poll();
+    });
     const report = root().querySelector(".blank-report");
     ok("an interface that stays hidden explains itself on the page",
       !!report && report.textContent.indexOf(PMS.i18n.t("errors.blankScreen")) !== -1);

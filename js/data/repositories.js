@@ -10,15 +10,14 @@
 
   // ------- global activity log (ZMS-R06) -------
   // Every create/edit/status/progress/delete is appended to `activities`
-  // (newest first, capped). The admin-only "Activity log" view lists them and
+  // (newest first). The admin-only "Activity log" view lists them and
   // the cloud sync ships them as an append-only per-record collection
   // (zms_activities) so every device records the same history.
-  var LOG_LIMIT = 500;
-  var LOGGED_COLLECTIONS = ["tasks", "projects", "people", "departments", "meetings"];
-  var LOG_NOISE = ["id", "createdAt", "updatedAt", "activity", "checklist", "comments"];
+  var LOGGED_COLLECTIONS = ["tasks", "subtasks", "projects", "people", "departments", "meetings"];
+  var LOG_NOISE = ["id", "createdAt", "updatedAt", "activity"];
   // Per-collection key stored on an entry = singular entity name (matches the
   // activity.entities i18n keys and the entity colors in the view).
-  var ENTITY_KEY = { tasks: "task", projects: "project", people: "person", departments: "department", meetings: "meeting" };
+  var ENTITY_KEY = { tasks: "task", subtasks: "subtask", projects: "project", people: "person", departments: "department", meetings: "meeting" };
 
   function actorName() {
     var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
@@ -80,7 +79,7 @@
 
   function entityLabel(collection, rec) {
     if (!rec) return "";
-    if (collection === "tasks" || collection === "meetings") return rec.title || "";
+    if (collection === "tasks" || collection === "subtasks" || collection === "meetings") return rec.title || "";
     if (rec.name != null) {
       if (typeof rec.name === "string") return rec.name;
       return rec.name.en || rec.name.ar || "";
@@ -106,6 +105,7 @@
       ts: Date.now(),
       actor: actorName(),
       actorId: u ? u.id : null,
+      actorUid: u ? (u.cloudUid || null) : null,
       entity: ENTITY_KEY[collection] || collection,
       entityId: rec ? rec.id : null,
       entityName: entityLabel(collection, rec),
@@ -117,7 +117,6 @@
   function pushLog(d, entry) {
     if (!Array.isArray(d.activities)) d.activities = [];
     d.activities.unshift(entry);
-    if (d.activities.length > LOG_LIMIT) d.activities.length = LOG_LIMIT;
   }
 
   function fieldChanged(prev, cur, key) {
@@ -125,7 +124,7 @@
   }
 
   // Build (and append) an entry describing what a generic update() changed.
-  // Fields the status UI manages itself (activity, comments, clocks) never
+  // Fields the status UI manages itself (activity and clocks) never
   // count as changes, so a plain status/progress touch logs exactly that.
   function logUpdate(d, collection, prev, target, patch) {
     if (LOGGED_COLLECTIONS.indexOf(collection) === -1) return;
@@ -950,10 +949,15 @@
       return Promise.resolve(accountEventRows());
     },
     clear: function () {
-      PMS.store.commit(function (d) { d.activities = []; }, "clear-activities");
+      PMS.store.commit(function (d) {
+        // Explicit intent, distinct from an incomplete cache or imported data.
+        var ids = d.activityDeletedIds || [];
+        (d.activities || []).forEach(function (entry) { if (ids.indexOf(entry.id) === -1) ids.push(entry.id); });
+        d.activityDeletedIds = ids;
+        d.activities = [];
+      }, "clear-activities");
       return true;
-    },
-    limit: LOG_LIMIT
+    }
   };
 
   // The whole store, with tasks and meetings narrowed by the same visibility

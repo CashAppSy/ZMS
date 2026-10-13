@@ -10,7 +10,7 @@
   var h = PMS.dom.h;
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
-  var ENTITY_COLORS = { task: "#2563eb", project: "#7c3aed", person: "#16a34a", department: "#ea580c", meeting: "#db2777", account: "#b45309" };
+  var ENTITY_COLORS = { task: "#2563eb", subtask: "#0891b2", project: "#7c3aed", person: "#16a34a", department: "#ea580c", meeting: "#db2777", account: "#b45309" };
 
   function entityLabel(entity) {
     return t("activity.entities." + (entity || "")) !== ("activity.entities." + (entity || ""))
@@ -123,7 +123,7 @@
     }
     root.appendChild(body);
 
-    container.appendChild(root);
+    container.replaceChildren(root);
   }
 
   var view = {

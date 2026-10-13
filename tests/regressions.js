@@ -276,10 +276,10 @@ test('adding a cloud member uses the admin callable and preserves person link an
  }finally{dom.window.close();}
 });
 
-async function syncFixture(user={id:'admin',cloudUid:'admin',role:'admin',personId:'admin-person'}) {
- const documents=new Map(),queries=[],writes=[],control={beforeRead:null,beforeQuery:null};
+async function syncFixture(user={id:'admin',cloudUid:'admin',role:'admin',personId:'admin-person'}, sharedDocuments) {
+ const documents=sharedDocuments || new Map(),queries=[],writes=[],control={beforeRead:null,beforeQuery:null,beforeWrite:null};
  const snapshot=key=>({exists:documents.has(key),data:()=>structuredClone(documents.get(key))});
- const ref=key=>({key,get:async()=>{if(control.beforeRead)await control.beforeRead(key);return snapshot(key);},set:async(value,opts)=>{documents.set(key,opts&&opts.merge?{...(documents.get(key)||{}),...structuredClone(value)}:structuredClone(value));writes.push(key);},delete:async()=>{documents.delete(key);writes.push(key);}});
+ const ref=key=>({key,get:async()=>{if(control.beforeRead)await control.beforeRead(key);return snapshot(key);},set:async(value,opts)=>{if(control.beforeWrite)await control.beforeWrite(key,value);documents.set(key,opts&&opts.merge?{...(documents.get(key)||{}),...structuredClone(value)}:structuredClone(value));writes.push(key);},delete:async()=>{documents.delete(key);writes.push(key);}});
  const col=(name,filters=[])=>({doc:id=>ref(name+'/'+id),where:(...filter)=>col(name,filters.concat([filter])),get:async()=>{
   if(control.beforeQuery)await control.beforeQuery(name,filters);
   queries.push([name,filters]);const records=[...documents.entries()].filter(([key,value])=>key.startsWith(name+'/')&&filters.every(([field,op,wanted])=>op==='array-contains'?(value[field]||[]).includes(wanted):value[field]===wanted));
@@ -487,4 +487,222 @@ test('cloud success never hides a failed local save',()=>{
  assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.error')));
  p.bus.emit('save:done',{});assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.saved')));
  }finally{dom.window.close();}
+});
+
+test('activity history retains more than 500 events and account refresh renders one timeline',async()=>{
+ const {dom,w,p}=appFixture();try{
+ p.store.data.activities=Array.from({length:501},(_,i)=>({id:'history-'+i,entity:'task',actor:'User '+i,at:'2026-01-01',updatedAt:'2026-01-01'}));
+ p.repos.tasks.add({title:'New work'});assert.equal(p.store.data.activities.length,502);
+ p.store.data.accountEvents=[{id:'account',kind:'account.signin',actor:'Another user',at:'2026-01-02'}];
+ p.activity.refreshAccountEvents=()=>Promise.resolve(p.store.data.accountEvents);
+ const cleanup=p.registry.getView('activity').render(w.document.getElementById('view-root'));await new Promise(r=>setTimeout(r,10));cleanup();
+ assert.equal(w.document.querySelectorAll('.act-list').length,1);
+ assert.equal(w.document.querySelectorAll('.act-row').length,503);
+ }finally{dom.window.close();}
+});
+test('offline activities survive newer cloud clocks and upload after normal startup',async()=>{
+ const {p,documents,close}=await syncFixture();try{
+ p.store.data.activities=[{id:'offline',actorId:'admin',actor:'Offline admin',updatedAt:'2025-01-01',at:'2025-01-01'}];
+ documents.set('zms_meta/state',{updatedAt:'2026-01-01'});
+ documents.set('zms_activities/remote',{id:'remote',actorId:'other',actor:'Other user',updatedAt:'2026-01-01',at:'2026-01-01'});
+ await p.cloudsync.enable();
+ assert.ok(p.store.data.activities.some(e=>e.id==='offline'));
+ assert.ok(documents.has('zms_activities/offline'));
+ assert.ok(documents.has('zms_activities/remote'));
+ }finally{await close();}
+});
+test('member and manager activities reach an admin on independent clients without exposing global logs to members',async()=>{
+ const documents=new Map();
+ const member=await syncFixture({id:'member-local',cloudUid:'member',role:'member',personId:'member-person'},documents);
+ const manager=await syncFixture({id:'manager-local',cloudUid:'manager',role:'manager',personId:'manager-person'},documents);
+ const admin=await syncFixture(undefined,documents);
+ try{
+ for(const [client,id,actor]of [[member,'member-action','Member'],[manager,'manager-action','Manager']]){
+  client.p.store.data.activities=[{id,actor,actorId:id==='member-action'?'member-local':'manager-local',updatedAt:'2025-01-01',at:'2025-01-01',entity:'task',action:'status'}];
+  assert.equal(await client.p.cloudsync.push(),true);
+ }
+ assert.equal(await admin.p.cloudsync.pull('merge'),true);
+ assert.deepEqual(Array.from(admin.p.store.data.activities,e=>e.actor).sort(),['Manager','Member']);
+ assert.equal(await member.p.cloudsync.pull('merge'),true);
+ assert.equal(member.p.store.data.activities.length,0);
+ assert.equal(member.queries.some(q=>q[0]==='zms_activities'),false);
+ }finally{await member.close();await manager.close();await admin.close();}
+});
+test('missing local activity rows never delete cloud history without an explicit clear',async()=>{
+ const {p,documents,mirror,close}=await syncFixture();try{
+ documents.set('zms_activities/history',{id:'history',actor:'Other user',updatedAt:'1'});
+ mirror.setCollection('activities',{history:true});
+ p.store.data.activities=[];p.store.data.tasks=[{id:'new',title:'New task'}];
+ assert.equal(await p.cloudsync.push(),true);
+ assert.ok(documents.has('zms_activities/history'));
+ }finally{await close();}
+});
+test('explicit activity clearing records deletion intent and preserves concurrent new events',async()=>{
+ const {dom,p}=appFixture();try{
+ p.store.data.activities=[{id:'old',actor:'Old user'}];p.activity.clear();
+ assert.equal(p.store.data.activities.length,0);assert.deepEqual(Array.from(p.store.data.activityDeletedIds),['old']);
+ }finally{dom.window.close();}
+ const client=await syncFixture();try{
+ client.documents.set('zms_meta/state',{updatedAt:'2026-01-02'});
+ client.documents.set('zms_activities/old',{id:'old',updatedAt:'2026-01-01'});
+ client.documents.set('zms_activities/new',{id:'new',actor:'New concurrent user',updatedAt:'2026-01-02'});
+ client.mirror.setCollection('activities',{old:true});client.p.store.data.activityDeletedIds=['old'];
+ assert.equal(await client.p.cloudsync.pull('merge'),true);
+ assert.deepEqual(Array.from(client.p.store.data.activities,e=>e.id),['new']);
+ assert.equal(await client.p.cloudsync.push(),true);
+ assert.equal(client.documents.has('zms_activities/old'),false);assert.equal(client.documents.has('zms_activities/new'),true);
+ }finally{await client.close();}
+});
+test('successful immutable event writes stay tracked when the shared clock write fails',async()=>{
+ const {p,documents,control,mirror,close}=await syncFixture();try{
+ p.store.data.activities=[{id:'event',actor:'Member',updatedAt:'1'}];
+ let failClock=true;
+ control.beforeWrite=async key=>{
+  if(key==='zms_meta/state'&&failClock)throw new Error('Network interrupted');
+  if(key==='zms_activities/event'&&documents.has(key))throw new Error('Immutable event cannot be overwritten');
+ };
+ assert.equal(await p.cloudsync.push(),false);assert.ok(documents.has('zms_activities/event'));
+ assert.equal(mirror.forCollection('activities').event,true);
+ failClock=false;assert.equal(await p.cloudsync.push(),true);assert.ok(documents.has('zms_meta/state'));
+ }finally{await close();}
+});
+test('offline record deletions survive startup reconciliation and conflict with remote edits',async()=>{
+ const {p,documents,mirror,close}=await syncFixture();try{
+ const base={id:'deleted',title:'Deleted offline',updatedAt:'2026-01-01'};
+ mirror.setCollection('tasks',{deleted:mirror.recordTrack('tasks',base)});
+ documents.set('zms_meta/state',{updatedAt:'2026-01-02'});documents.set('zms_tasks/deleted',base);
+ await p.cloudsync.enable();assert.equal(p.store.data.tasks.length,0);assert.equal(documents.has('zms_tasks/deleted'),false);
+ mirror.setCollection('tasks',{deleted:mirror.recordTrack('tasks',base)});
+ documents.set('zms_tasks/deleted',{...base,title:'Edited by another user',updatedAt:'2026-01-03'});
+ assert.equal(await p.cloudsync.pull('merge'),false);assert.equal(p.cloudsync.conflicts().length,1);
+ assert.equal(p.store.data.tasks.length,0);assert.equal(documents.get('zms_tasks/deleted').title,'Edited by another user');
+ }finally{await close();}
+});
+
+test('reference dataset uploads retain remote additions and merge concurrent fields',async()=>{
+ const {p,documents,mirror,close}=await syncFixture();try{
+ const base={id:'person',name:'Original',email:'old@example.com',updatedAt:'1'};
+ mirror.setCollection('people',{person:mirror.recordTrack('people',base)});
+ documents.set('zms_people/data',{items:[{...base,email:'remote@example.com',updatedAt:'3'},{id:'other',name:'Added by another user',updatedAt:'3'}]});
+ p.store.data.people=[{...base,name:'Local edit',updatedAt:'2'}];
+ assert.equal(await p.cloudsync.push(),true);
+ const rows=documents.get('zms_people/data').items;
+ assert.equal(rows.length,2);assert.equal(rows.find(r=>r.id==='person').email,'remote@example.com');assert.equal(rows.find(r=>r.id==='person').name,'Local edit');
+ }finally{await close();}
+});
+test('reference dataset overlapping edits raise a conflict and preserve both copies',async()=>{
+ const {p,documents,mirror,close}=await syncFixture();try{
+ const base={id:'person',name:'Original',updatedAt:'1'};
+ mirror.setCollection('people',{person:mirror.recordTrack('people',base)});
+ documents.set('zms_people/data',{items:[{...base,name:'Remote edit',updatedAt:'3'}]});
+ p.store.data.people=[{...base,name:'Local edit',updatedAt:'2'}];
+ assert.equal(await p.cloudsync.push(),false);assert.equal(p.store.data.people[0].name,'Local edit');
+ assert.equal(documents.get('zms_people/data').items[0].name,'Remote edit');assert.equal(p.cloudsync.conflicts()[0].collection,'people');
+ }finally{await close();}
+});
+
+test('sign-in events identify the new cloud user even before local session adoption',async()=>{
+ const {c,p,documents,close}=await syncFixture();try{
+ const auth={currentUser:{uid:'new-user'},signInWithEmailAndPassword:async()=>({user:{uid:'new-user',email:'new@example.com'}})};
+ c.firebase.auth=()=>auth;
+ documents.set('zms_auth_users/new-user',{displayName:'New User',role:'member',active:true});
+ const result=await p.cloudsync.signInWithPassword({email:'new@example.com',password:'test-password'});
+ assert.equal(result.uid,'new-user');
+ const event=Array.from(documents.entries()).find(([key])=>key.startsWith('zms_account_events/'))[1];
+ assert.equal(event.actor,'New User');assert.equal(event.actorUid,'new-user');assert.equal(event.actorRole,'member');assert.equal(event.target,'new@example.com');
+ }finally{await close();}
+});
+test('typed dependencies enforce their own start or finish gate and retain signed lag',()=>{
+ const {dom,p}=appFixture();try{
+ for(const type of ['FS','SS','FF','SF']){
+  const pred=p.repos.tasks.add({title:type+' predecessor',status:'todo',plannedSubtasks:0,startDate:'2026-01-01',dueDate:'2026-01-05'});
+  const succ=p.repos.tasks.add({title:type+' successor',status:'todo',plannedSubtasks:0,startDate:'2026-01-03',dueDate:'2026-01-08',dependencies:[{id:pred.id,type,lag:-2}]});
+  assert.deepEqual(JSON.parse(JSON.stringify(p.repos.tasks.dependenciesOf(succ.id))),[{id:pred.id,type,lag:-2}]);
+  assert.equal(p.dependencies.blocking(p.store.data,succ,'inprogress').length,(type==='FS'||type==='SS')?1:0);
+  assert.equal(p.dependencies.blocking(p.store.data,succ,'done').length,1);
+  p.repos.tasks.setStatus(pred.id,'inprogress');
+  assert.equal(p.dependencies.blocking(p.store.data,succ,'done').length,(type==='FS'||type==='FF')?1:0);
+  p.repos.tasks.setStatus(pred.id,'done');assert.equal(p.dependencies.blocking(p.store.data,succ,'done').length,0);
+  const n=p.store.data.activities.length;
+  assert.ok(p.repos.tasks.update(succ.id,{dependencies:[{id:succ.id,type:'FS',lag:0}]}).error);
+  assert.equal(p.store.data.activities.length,n,'refused links must not log a successful edit');
+ }
+ }finally{dom.window.close();}
+});
+
+test('subtask creation, status edits, comments and checklist changes enter the global activity timeline',()=>{
+ const {dom,p}=appFixture();try{
+ const task=p.repos.tasks.add({title:'Audit task',status:'todo'});
+ const sub=p.repos.subtasks.add({taskId:task.id,title:'Audited subtask',status:'todo'});
+ p.repos.subtasks.update(sub.id,{status:'done'});
+ p.repos.tasks.update(task.id,{comments:[{id:'comment',text:'A note'}]});
+ p.repos.tasks.update(task.id,{checklist:[{id:'check',text:'Check',done:true}]});
+ const entries=p.activity.entries();
+ assert.ok(entries.some(e=>e.entity==='subtask'&&e.action==='created'&&e.entityName==='Audited subtask'));
+ assert.ok(entries.some(e=>e.entity==='subtask'&&e.action==='status'));
+ assert.ok(entries.some(e=>e.entityId===task.id&&e.detail==='comments'));
+ assert.ok(entries.some(e=>e.entityId===task.id&&e.detail==='checklist'));
+ assert.ok(entries.every(e=>e.actor==='review-admin'||e.actor===''));
+ }finally{dom.window.close();}
+});
+
+test('a legacy cleanup probe failure cannot hide successfully uploaded activity entries',async()=>{
+ const {p,documents,control,mirror,close}=await syncFixture();try{
+ p.store.data.activities=[{id:'acknowledged',actor:'Admin',updatedAt:'1'}];
+ control.beforeRead=async key=>{if(key==='zms_projects/data')throw new Error('Cleanup probe interrupted');};
+ assert.equal(await p.cloudsync.push(),false);
+ assert.ok(documents.has('zms_activities/acknowledged'));assert.equal(mirror.forCollection('activities').acknowledged,true);
+ control.beforeRead=null;
+ control.beforeWrite=async key=>{if(key==='zms_activities/acknowledged'&&documents.has(key))throw new Error('Immutable event cannot be overwritten');};
+ assert.equal(await p.cloudsync.push(),false,'no outstanding writes after successful clock publication');
+ assert.equal(p.cloudsync.status().error,'Cleanup probe interrupted');
+ }finally{await close();}
+});
+
+test('an in-flight task edit retains both its newer local field and concurrent cloud-only fields',async()=>{
+ const {p,documents,mirror,control,close}=await syncFixture();try{
+ const base={id:'task',title:'Original',description:'Original note',updatedAt:'1'};
+ mirror.setCollection('tasks',{task:mirror.recordTrack('tasks',base)});
+ documents.set('zms_tasks/task',{...base,description:'Other user note',updatedAt:'3'});
+ p.store.data.tasks=[{...base,title:'First local title',updatedAt:'2'}];
+ let release,entered;const blocked=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ control.beforeRead=async key=>{if(key==='zms_tasks/task'){entered();await blocked;}};
+ const upload=p.cloudsync.push();await started;p.store.data.tasks[0].title='Newest local title';p.store.data.tasks[0].updatedAt='4';release();
+ assert.equal(await upload,true);control.beforeRead=null;
+ assert.equal(p.store.data.tasks[0].title,'Newest local title');assert.equal(p.store.data.tasks[0].description,'Other user note');
+ assert.equal(await p.cloudsync.push(),true);assert.equal(documents.get('zms_tasks/task').description,'Other user note');
+ }finally{await close();}
+});
+test('an in-flight reference edit cannot erase remote additions on its next upload',async()=>{
+ const {p,documents,mirror,control,close}=await syncFixture();try{
+ const base={id:'person',name:'Original',email:'old@example.com',updatedAt:'1'};
+ mirror.setCollection('people',{person:mirror.recordTrack('people',base)});
+ documents.set('zms_people/data',{items:[{...base,email:'remote@example.com',updatedAt:'3'},{id:'new-person',name:'Other user addition',updatedAt:'3'}]});
+ p.store.data.people=[{...base,name:'First local name',updatedAt:'2'}];
+ let release,entered;const blocked=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ control.beforeRead=async key=>{if(key==='zms_people/data'){entered();await blocked;}};
+ const upload=p.cloudsync.push();await started;p.store.data.people[0].name='Newest local name';p.store.data.people[0].updatedAt='4';release();
+ assert.equal(await upload,true);control.beforeRead=null;
+ assert.equal(p.store.data.people.length,2);assert.equal(p.store.data.people[0].name,'Newest local name');assert.equal(p.store.data.people[0].email,'remote@example.com');
+ assert.equal(await p.cloudsync.push(),true);assert.equal(documents.get('zms_people/data').items.length,2);
+ }finally{await close();}
+});
+
+test('conflicting in-flight reference edits retain other users additions until explicit resolution',async()=>{
+ const {p,documents,mirror,control,close}=await syncFixture();try{
+ const base={id:'person',name:'Original',email:'old@example.com',updatedAt:'1'};
+ mirror.setCollection('people',{person:mirror.recordTrack('people',base)});
+ documents.set('zms_people/data',{items:[{...base,email:'remote@example.com',updatedAt:'3'},{id:'new-person',name:'Keep this addition',updatedAt:'3'}]});
+ p.store.data.people=[{...base,name:'Local name',updatedAt:'2'}];
+ let release,entered;const blocked=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ control.beforeRead=async key=>{if(key==='zms_people/data'){entered();await blocked;}};
+ const upload=p.cloudsync.push();await started;p.store.data.people[0].email='new-local@example.com';p.store.data.people[0].updatedAt='4';release();
+ assert.equal(await upload,false);control.beforeRead=null;
+ assert.equal(p.store.data.people.length,2);assert.equal(p.store.data.people[0].email,'new-local@example.com');
+ assert.equal(p.cloudsync.conflicts().length,1);assert.equal(await p.cloudsync.push(),false);
+ assert.equal(documents.get('zms_people/data').items[0].email,'remote@example.com');
+ assert.equal(p.cloudsync.resolveConflict('people/person',true),true);
+ assert.equal(await p.cloudsync.push(),true);assert.equal(documents.get('zms_people/data').items.length,2);
+ assert.equal(documents.get('zms_people/data').items.find(r=>r.id==='person').email,'new-local@example.com');
+ }finally{await close();}
 });

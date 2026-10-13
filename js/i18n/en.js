@@ -383,7 +383,7 @@
       cleared: "Activity log cleared",
       at: "When", user: "User", entity: "Entity", entityName: "Item",
       action: "Action", detail: "Details",
-      entities: { task: "Task", project: "Pillar", person: "Person", department: "Department", meeting: "Meeting", account: "Account" },
+      entities: { task: "Task", subtask: "Subtask", project: "Pillar", person: "Person", department: "Department", meeting: "Meeting", account: "Account" },
       actions: {
         created: "created", updated: "updated", status: "changed status",
         progress: "changed progress", deleted: "deleted", archived: "archived",
