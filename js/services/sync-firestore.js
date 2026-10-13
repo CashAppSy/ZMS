@@ -60,6 +60,7 @@
   var SDK_VERSION = "10.12.2";
   var INTERVAL = 15000;       // poll interval for remote changes
   var COOLDOWN = 3000;        // min gap between pulls
+  var RECONCILE_INTERVAL = 60000; // recover record writes whose clock update was interrupted
   var PUSH_DEBOUNCE = 500;    // debounce between a local edit and its upload
   // How long the cloud must be quiet before the NEXT edit is treated as a
   // single deliberate action and uploaded immediately instead of debounced.
@@ -92,6 +93,7 @@
   var debounce = null;
   var timer = null;
   var lastPulled = 0;
+  var lastReconciled = 0;
   var lastPushed = 0;
   var lastPushAt = 0;   // when the last push STARTED, for the settle check
 
@@ -1042,9 +1044,7 @@
     Object.keys(mirror).forEach(function (id) {
       if (have[id]) return;
       if (!idn.isAdmin) {
-        if (idn.role !== "manager" || !idn.personId) return;
-        var creator = (mirror[id] && mirror[id].createdByPersonId) || null;
-        if (creator !== idn.personId) return;
+        if (!canDeleteMirroredRecord(mirror[id], idn)) return;
       }
       ops.push(deleteRecord(cname, id, mirror[id]).then(function () { mirrorUpdates[id] = null; }));
     });
@@ -1426,6 +1426,7 @@
       if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
       applying = false;
       lastPulled = Date.now();
+      lastReconciled = lastPulled;
       lastPullError = null;
       if (!hasPendingLocalChanges(PMS.store.data)) lastPushError = null;
       lastError = lastPushError;
@@ -1508,6 +1509,11 @@
           var baseline = recMirror[e.id];
           if (!baseline) return true; // never published -> keep
           if (incoming.some(function (row) { return row.id === e.id; })) return true;
+          // Old clients stored only a timestamp/status mirror, without the
+          // acknowledged cloud snapshot. Its absence remotely cannot prove a
+          // deletion: preserve the local record for explicit reconciliation.
+          if (!baseline.snapshot) throw rememberConflict(cname, e.id, e, null, null,
+            new Error("sync-conflict: legacy mirror cannot verify remote deletion " + e.id));
           var changed = baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, e) : baseline.updatedAt !== e.updatedAt;
           if (changed) throw rememberConflict(cname, e.id, e, null, baseline.snapshot,
             new Error("sync-conflict: locally edited record was deleted remotely " + e.id));
@@ -1559,7 +1565,7 @@
     if (t - lastPulled < COOLDOWN) return;
     lastPulled = t;
     polling = true;
-    return pull().then(function (changed) {
+    return pull(t - lastReconciled >= RECONCILE_INTERVAL ? "merge" : undefined).then(function (changed) {
       if (changed && PMS.router && PMS.router.handle) PMS.router.handle();
       // A successful read does not upload pending edits. Retry them even when
       // the shared clock matches, without waiting for another user action.
@@ -1602,19 +1608,48 @@
   // Push local data only when the cloud is empty or strictly older — so
   // enabling on a fresh device seeds the cloud, but never clobbers newer
   // changes another device already uploaded.
+  function canDeleteMirroredRecord(baseline, idn) {
+    if (idn.isAdmin) return true;
+    if (idn.role !== "manager" || !baseline) return false;
+    return !!((idn.personId && baseline.createdByPersonId === idn.personId)
+      || (idn.cloudUid && baseline.snapshot && baseline.snapshot.createdByCloudUid === idn.cloudUid));
+  }
+
+  function recordChangeIsWritable(cname, record, baseline, local, idn) {
+    var full = idn.isAdmin, statusOnly = false;
+    if (!full && cname === "meetings") full = idn.role === "manager";
+    if (!full && cname === "projects") full = idn.role === "manager" && idn.personId && record.managerId === idn.personId;
+    if (!full && (cname === "tasks" || cname === "subtasks")) {
+      var parent = cname === "tasks" ? record : (local.tasks || []).find(function (task) { return task.id === record.taskId; });
+      if (!parent) return false;
+      full = idn.role === "manager" && ((cname === "tasks" && !baseline)
+        || (idn.personId && projectManagerOf(local, parent.projectId) === idn.personId));
+      statusOnly = !full && !!(idn.personId && (parent.assignees || []).indexOf(idn.personId) !== -1);
+    }
+    if (!full && !statusOnly) return false;
+    if (!baseline) return !!full;
+    if (statusOnly) return ["status", "progress", "activity"].some(function (key) {
+      return !statusFieldEquals(key, record, baseline.snapshot ? statusTrack(baseline.snapshot) : baseline);
+    });
+    return baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, record) : baseline.updatedAt !== record.updatedAt;
+  }
+
   function hasPendingLocalChanges(local) {
     if (!local) return false;
     if (pendingClock || (identity().isAdmin && (local.activityDeletedIds || []).length)) return true;
     var hasContent = USER_COLS.some(function (cname) { return (local[cname] || []).length; });
+    var idn = identity();
     return COLLECTIONS.some(function (cname) {
       if (unavailableCollections[cname]) return false;
       if (WHOLE_COLS.indexOf(cname) !== -1 && (!hasContent || identity().role === "member")) return false;
       var mirror = mirrorFor(cname), rows = local[cname] || [];
       if (APPEND_COLS.indexOf(cname) === -1 && Object.keys(mirror).some(function (id) {
+        if (RECORD_COLS.indexOf(cname) !== -1 && !canDeleteMirroredRecord(mirror[id], idn)) return false;
         return !rows.some(function (record) { return record.id === id; });
       })) return true;
       return rows.some(function (record) {
         var baseline = mirror[record.id];
+        if (RECORD_COLS.indexOf(cname) !== -1) return recordChangeIsWritable(cname, record, baseline, local, idn);
         return !baseline || (APPEND_COLS.indexOf(cname) === -1 && (baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, record) : baseline.updatedAt !== record.updatedAt));
       });
     });

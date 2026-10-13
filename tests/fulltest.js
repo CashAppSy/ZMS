@@ -3034,18 +3034,19 @@ section("Cloud sync (offline-safe API)");
       // from "this was never uploaded". t1/t2 were published by this device,
       // so remote deletions apply to unchanged rows; t3/t4 were never published and must
       // survive the pull even though it is absent from the remote snapshot.
+      PMS.store.setData(local);
       const mirrorSaved = PMS.cloudsync._getMirrorForTest("tasks");
+      // A deletion is proven by acknowledged snapshots, not a legacy clock.
       PMS.cloudsync._setMirrorForTest("tasks", {
-        t1: { updatedAt: "2026-01-01T00:00:00.000Z" },
-        t2: { updatedAt: "2026-01-01T00:00:00.000Z" }
+        t1: { updatedAt: local.tasks[0].updatedAt, snapshot: PMS.utils.deepClone(local.tasks[0]) },
+        t2: { updatedAt: local.tasks[1].updatedAt, snapshot: PMS.utils.deepClone(local.tasks[1]) }
       });
       const projMirrorSaved = PMS.cloudsync._getMirrorForTest("projects");
-      PMS.cloudsync._setMirrorForTest("projects", { p1: { updatedAt: "2026-01-01T00:00:00.000Z" } });
+      PMS.cloudsync._setMirrorForTest("projects", { p1: { updatedAt: local.projects[0].updatedAt, snapshot: PMS.utils.deepClone(local.projects[0]) } });
       const remote = PMS.utils.deepClone(local);
       remote.projects = [{ id: "p1", name: "After", updatedAt: "2026-01-02T00:00:00.000Z" }];
       remote.tasks = [{ id: "t1", title: "New", statusId: "s2", updatedAt: "2026-01-02T00:00:00.000Z" }];
       remote.meta = { updatedAt: "2026-01-02T00:00:00.000Z" };
-      PMS.store.setData(local);
       let mergedOk = false;
       try {
         const merged = PMS.cloudsync._mergeForTest(remote);
@@ -3093,15 +3094,15 @@ section("Cloud sync (offline-safe API)");
       { id: "m-unpublished", title: "Never synced", updatedAt: "2026-01-01T00:00:00.000Z" },
       { id: "m-deleted-remotely", title: "Gone", updatedAt: "2026-01-01T00:00:00.000Z" }
     ];
+    PMS.store.setData(mtgLocal);
     // The mirror knows m-edit and m-deleted-remotely (both were published
     // before) but NOT m-unpublished, which predates meetings being syncable.
     window.localStorage.setItem("pms-cloud-mirror", JSON.stringify({
       meetings: {
-        "m-edit": { updatedAt: "2026-01-01T00:00:00.000Z" },
-        "m-deleted-remotely": { updatedAt: "2026-01-01T00:00:00.000Z" }
+        "m-edit": { updatedAt: mtgRemote.meetings[1].updatedAt, snapshot: PMS.utils.deepClone(mtgRemote.meetings[1]) },
+        "m-deleted-remotely": { updatedAt: mtgLocal.meetings[2].updatedAt, snapshot: PMS.utils.deepClone(mtgLocal.meetings[2]) }
       }
     }));
-    PMS.store.setData(mtgLocal);
     let mtgMergeOk = false;
     try {
       const merged = PMS.cloudsync._mergeForTest(mtgRemote);
@@ -3252,8 +3253,15 @@ section("Cloud sync (offline-safe API)");
     // the local record is gone, so there is nothing left to read it from.
     ok("the mirror keeps createdByPersonId so a deletion can be authorized",
       /function recordTrack[\s\S]{0,700}createdByPersonId = \(rec && rec\.createdByPersonId\) \|\| null/.test(syncSrc));
+    const deleteGuardSource = syncSrc.match(/function canDeleteMirroredRecord\([\s\S]*?^  \}/m);
+    const deleteGuard = deleteGuardSource ? window.eval("(" + deleteGuardSource[0] + ")") : null;
+    const managerIdentity = {role: "manager", personId: "person-mgr", cloudUid: "uid-mgr", isAdmin: false};
     ok("a manager may delete a record they created, and only that one",
-      /if \(idn\.role !== "manager" \|\| !idn\.personId\) return;[\s\S]{0,200}creator !== idn\.personId\) return;/.test(syncSrc));
+      deleteGuard && deleteGuard({createdByPersonId: "person-mgr"}, managerIdentity) &&
+      deleteGuard({snapshot: {createdByCloudUid: "uid-mgr"}}, Object.assign({}, managerIdentity, {personId: null})) &&
+      !deleteGuard({createdByPersonId: "someone-else", snapshot: {createdByCloudUid: "uid-other"}}, managerIdentity) &&
+      !deleteGuard({createdByPersonId: "person-mgr"}, Object.assign({}, managerIdentity, {role: "member"})) &&
+      !deleteGuard({}, managerIdentity));
 
     // the UI must not offer a delete it will refuse
     ok("the task detail hides delete for a manager on someone else's task",

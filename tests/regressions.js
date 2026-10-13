@@ -781,3 +781,46 @@ test('manager tasks missing from an admin export propagate after automatic retry
   assert.equal(new Set(admin.p.store.data.tasks.map(task=>task.id)).size,54);
  }finally{await manager.close();await admin.close();}
 });
+
+test('an old timestamp-only mirror cannot silently delete a manager task absent from the cloud',async()=>{
+ const {p,documents,mirror,close}=await syncFixture({id:'manager-local',cloudUid:'manager',role:'manager',personId:'manager-person'});try{
+ documents.set('zms_meta/state',{updatedAt:'2026-01-03'});
+ const task={id:'manager-only',title:'Task Test',createdByCloudUid:'manager',createdByPersonId:'manager-person',updatedAt:'2026-01-02'};
+ p.store.data.tasks=[task];mirror.setCollection('tasks',{'manager-only':{updatedAt:task.updatedAt,status:'todo'}});
+ assert.equal(await p.cloudsync.pull('merge'),false);assert.equal(p.store.data.tasks.length,1);assert.equal(p.store.data.tasks[0].title,'Task Test');
+ assert.equal(p.cloudsync.conflicts().length,1);assert.equal(p.cloudsync.resolveConflict('tasks/manager-only',true),true);
+ assert.equal(await p.cloudsync.push(),true);assert.equal(documents.get('zms_tasks/manager-only').title,'Task Test');
+ }finally{await close();}
+});
+
+test('read-only normalization differences do not keep manager synchronization pending forever',async()=>{
+ const {p,documents,mirror,close}=await syncFixture({id:'manager-local',cloudUid:'manager',role:'manager',personId:'manager-person'});try{
+ const base={id:'foreign',title:'Read-only work',projectId:'foreign-pillar',assignees:['other-person'],status:'todo',updatedAt:'1'};
+ documents.set('zms_tasks/foreign',base);p.store.data.tasks=[{...base,plannedSubtasks:10,calculatedProgress:0}];
+ mirror.setCollection('tasks',{foreign:mirror.recordTrack('tasks',base)});
+ assert.equal(p.cloudsync.status().pending,false);
+ p.store.data.tasks[0].assignees=['manager-person'];mirror.setCollection('tasks',{foreign:mirror.recordTrack('tasks',{...base,assignees:['manager-person']})});
+ assert.equal(p.cloudsync.status().pending,false);
+ p.store.data.tasks[0].status='inprogress';assert.equal(p.cloudsync.status().pending,true);
+ }finally{await close();}
+});
+test('a manager without a person link can synchronize deletion of its own UID-attributed record',async()=>{
+ const {p,documents,mirror,close}=await syncFixture({id:'manager-local',cloudUid:'manager',role:'manager',personId:null});try{
+ const base={id:'own',title:'Own record',createdByCloudUid:'manager',updatedAt:'1'};
+ documents.set('zms_tasks/own',base);mirror.setCollection('tasks',{own:mirror.recordTrack('tasks',base)});
+ assert.equal(p.cloudsync.status().pending,true);assert.equal(await p.cloudsync.push(),true);assert.equal(documents.has('zms_tasks/own'),false);
+ }finally{await close();}
+});
+
+test('periodic reconciliation discovers manager tasks even when an interrupted upload left the shared clock unchanged',async()=>{
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}]]);
+ for(let i=0;i<52;i++)shared.set('zms_tasks/original-'+i,{id:'original-'+i,title:'Original '+i,updatedAt:'2026-01-01'});
+ const admin=await syncFixture(undefined,shared);try{
+  assert.equal(admin.p.store.data.tasks.length,52);
+  shared.set('zms_tasks/task-test',{id:'task-test',title:'Task Test',createdByCloudUid:'manager',updatedAt:'2026-01-02'});
+  shared.set('zms_tasks/test-4',{id:'test-4',title:'Test 4',createdByCloudUid:'manager',updatedAt:'2026-01-02'});
+  for(let i=0;i<15;i++)await admin.poll();
+  assert.equal(shared.get('zms_meta/state').updatedAt,'2026-01-01');
+  assert.equal(admin.p.store.data.tasks.length,54);assert.ok(admin.p.store.data.tasks.some(t=>t.title==='Task Test'));assert.ok(admin.p.store.data.tasks.some(t=>t.title==='Test 4'));
+ }finally{await admin.close();}
+});
