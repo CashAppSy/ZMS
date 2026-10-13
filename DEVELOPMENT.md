@@ -42,7 +42,7 @@ Passing local tests establishes the checked local behaviors. It does not establi
 
 - Full jsdom suite: 1,036 passed, 0 failed.
 - Smoke suite: passed with jsdom.
-- Regression suite: 28 passed, including dependency validation and cycle repair, typed milestone gates, cascade cleanup/undo, account invitations, scoped member pulls, concurrent field merges, conflict resolution, slower client clocks, remote deletion conflicts, and edits made during an in-flight write.
+- Regression suite: 35 passed, including dependency validation and cycle repair, typed milestone gates, cascade cleanup/undo, account invitations, scoped member pulls, concurrent field merges, conflict resolution, slower client clocks, remote deletion conflicts, and edits made during an in-flight write.
 - Chromium: 22 route checks across English/Arabic, all 8 settings sections, backup-refresh loop prevention, task create/update/delete and undo/redo, dependency creation/type/lag/search/duplicate and cycle guards, table labels and Gantt arrows on desktop/mobile EN/AR, modal keyboard focus, mobile RTL/LTR sidebar behavior, IndexedDB reload and session persistence passed.
 - Frozen dependency reinstall and Git whitespace checks passed.
 - Firestore rules emulator: **9 tests passed, 0 failed**, including immutable creator attribution, scoped reads and queries, subtask inheritance, role checks independent of person linkage, signup/profile protections, and atomic first-admin bootstrap.
@@ -89,3 +89,10 @@ npx firebase deploy --only functions,firestore:rules --project YOUR_PROJECT_ID
 ```
 
 Publish the static client through the site's existing hosting process and reload clients. No live deployment, production data mutation or real multi-device Firebase test was performed in this workspace.
+
+## Compatibility with rules that have not yet been deployed
+
+A permission denial reading the newly added `subtasks` collection must not cancel the task/project pull. The client records that collection as unavailable, keeps its local rows and cloud baseline, and skips its writes while primary tasks continue syncing. Members retain only subtasks of tasks they can read. Once rules permit access, polling retries even when the shared clock is unchanged. Primary collection permission errors and network failures remain hard failures, preserve local data, and appear in the existing save indicator; no toolbar button is added. `Saved` describes local persistence, not proof of a cloud upload.
+
+Subtasks never had a whole-document legacy wrapper, so admin migration does not read `zms_subtasks/data`. Startup performs a merge reconciliation even if the stored clocks match, recovering tasks written before an interrupted push updated the shared clock. Deploy `firestore.rules` in Firebase Console → Firestore Database → Rules → Publish, then refresh clients. The compatibility path does not replace deployment of the security rules.
+Startup also checks per-record baselines after merging, so unpublished local tasks and offline edits upload even when reconciliation has made the dataset clock equal to the remote clock. Role and field permissions are still enforced by the record writer and Firestore.

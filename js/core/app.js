@@ -10,6 +10,7 @@
 
   var searchInput = null;
   var saveLabel = null;
+  var localSaveFailed = false;
   var started = false;
   var profileBuilt = false;
 
@@ -135,8 +136,9 @@
 
     // save status events
     PMS.bus.on("save:starting", function () { saveInd.className = "save-indicator"; saveLabel.textContent = t("save.saving"); });
-    PMS.bus.on("save:done", function () { saveInd.classList.add("ok"); saveLabel.textContent = t("save.saved"); });
+    PMS.bus.on("save:done", function () { localSaveFailed = false; saveInd.classList.add("ok"); saveLabel.textContent = t("save.saved"); showCloudSaveState(); });
     PMS.bus.on("save:error", function (e) {
+      localSaveFailed = true;
       var msg = (e && e.message) || "";
       saveInd.classList.add("err");
       saveLabel.textContent = t("save.error");
@@ -416,6 +418,23 @@
       PMS.authUI.show(showShell);
     });
   }
+
+  function showCloudSaveState() {
+    var indicator = document.getElementById("save-indicator");
+    if (!indicator || !PMS.cloudsync || !PMS.cloudsync.status) return;
+    var state = PMS.cloudsync.status(), label = indicator.querySelector("span:last-child");
+    if (!label) return;
+    if (localSaveFailed) { indicator.classList.add("err"); label.textContent = t("save.error"); return; }
+    if (state.error || (state.unavailableCollections || []).length) {
+      indicator.classList.remove("ok"); indicator.classList.add("err");
+      label.textContent = t(state.error ? "save.cloudFailed" : "save.cloudPartial");
+      indicator.title = state.error ? t("cloud.connectFail") + " (" + state.error + ")" : t("cloud.subtasksRulesRequired");
+    } else {
+      indicator.classList.remove("err");
+      label.textContent = t("save.saved"); indicator.title = t("settings.saveIndicator");
+    }
+  }
+  PMS.bus.on("cloud:state", showCloudSaveState);
 
   PMS.app = { init: init, showShell: showShell, hideShell: hideShell, applyTheme: applyTheme, applyLocale: applyLocale };
 })(window.PMS);

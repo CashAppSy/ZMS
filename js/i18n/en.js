@@ -342,6 +342,7 @@
       }
     },
     save: {
+      cloudFailed: "Saved locally — sync failed", cloudPartial: "Saved locally — partial sync",
       saved: "Saved", saving: "Saving...", error: "Save error", local: "Saved locally",
       file: "Saved to file", enhancedSync: "syncing", fileFail: "Saved locally; file sync failed"
     },
@@ -472,6 +473,7 @@
       password: "Password"
     },
     cloud: {
+      subtasksRulesRequired: "Subtask cloud access is unavailable. Deploy the updated Firestore rules; tasks continue syncing.",
       conflictAction: "Resolve sync conflicts",
       noConflicts: "No sync conflicts",
       localDeleted: "You deleted this record locally.",

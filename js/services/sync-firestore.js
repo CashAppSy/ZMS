@@ -101,6 +101,22 @@
   var onVisibility = null;
   var onBeforeUnload = null;
   var onPageHide = null;
+  var lastError = null;
+  var unavailableCollections = {};
+  function permissionDenied(error) {
+    return !!(error && /(^|\/)permission-denied$/.test(error.code || ""));
+  }
+  function optionalSubtasksRead(read) {
+    return Promise.resolve().then(read).then(function (result) {
+      delete unavailableCollections.subtasks; return result;
+    }).catch(function (error) {
+      if (!permissionDenied(error)) throw error;
+      unavailableCollections.subtasks = true;
+      console.warn("[cloudsync] subtask sync unavailable; update Firestore rules");
+      return null;
+    });
+  }
+
   var functionsReady = null; // backend availability memo (null = unknown)
 
   function now() { return new Date().toISOString(); }
@@ -135,6 +151,8 @@
       projectId: c ? c.projectId : null,
       config: c,
       realtime: enabled,
+      error: lastError,
+      unavailableCollections: Object.keys(unavailableCollections),
       lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null)
     };
   }
@@ -1041,7 +1059,7 @@
   // per-record documents as the only source of truth.
   function legacyCleanupOps(idn) {
     if (!idn.isAdmin) return Promise.resolve([]);
-    return Promise.all(RECORD_COLS.map(function (cname) {
+    return Promise.all(RECORD_COLS.filter(function (cname) { return cname !== "subtasks"; }).map(function (cname) {
       return colRef(cname).get().then(function (s) {
         if (!s.exists || !s.data() || !Array.isArray(s.data().items)) return [];
         var items = s.data().items || [];
@@ -1093,6 +1111,7 @@
           var mirrorPatches = {};
           var skippedByCol = {};
           RECORD_COLS.forEach(function (cname) {
+            if (unavailableCollections[cname]) return;
             var built = buildRecordOps(cname, d, idn, t);
             ops = ops.concat(built.ops);
             if (built.mirror) mirrorPatches[cname] = built.mirror;
@@ -1140,6 +1159,7 @@
                 PMS.store.flush();
               }
               lastPushed = Date.now();
+              lastError = null;
               PMS.bus.emit("cloud:state", { pushed: true });
               var summarized = {};
               COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
@@ -1158,6 +1178,7 @@
       });
     }).catch(function (e) {
       console.error("[cloudsync] push failed:", e);
+      lastError = (e && (e.code || e.message)) || String(e);
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
     }).then(function (r) {
@@ -1169,6 +1190,7 @@
   /* ---------------- pull (cloud -> local) ---------------- */
   // mode: undefined (only when remote is newer) | "replace" | "merge"
   function pull(mode) {
+    var omitted = {};
     if (!enabled) return Promise.resolve(false);
     PMS.bus.emit("cloud:inflight", { busy: true, op: "pull" });
     return waitForSignedIn().then(function (ok) {
@@ -1188,7 +1210,8 @@
         // shared dataset regardless of clocks. An empty local store must never
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
-        if (!localEmpty && localUpdated && remoteUpdated === localUpdated) return null;
+        if (!localEmpty && localUpdated && remoteUpdated === localUpdated
+          && !lastError && !Object.keys(unavailableCollections).length) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
         if (cname === "subtasks" && identity().role === "member") return Promise.resolve([]);
@@ -1204,8 +1227,9 @@
             queries = idn.personId ? [recordCol(cname).where(field, "array-contains", idn.personId).get(),
               recordCol(cname).where("createdByPersonId", "==", idn.personId).get()] : [];
             if (idn.cloudUid) queries.push(recordCol(cname).where("createdByCloudUid", "==", idn.cloudUid).get());
-          } else queries = [recordCol(cname).get()];
+          } else queries = [cname === "subtasks" ? optionalSubtasksRead(function () { return recordCol(cname).get(); }) : recordCol(cname).get()];
           return Promise.all(queries).then(function (snapshots) {
+            if (cname === "subtasks" && snapshots[0] === null) { omitted.subtasks = true; return null; }
             var seen = {};
             var qs = { forEach: function (fn) { snapshots.forEach(function (snapshot) {
               snapshot.forEach(function (doc) { if (!seen[doc.id]) { seen[doc.id] = true; fn(doc); } });
@@ -1240,10 +1264,15 @@
           obj[COLLECTIONS[i]] = items || [];
         });
         if (identity().role !== "member") return obj;
-        return Promise.all((obj.tasks || []).map(function (task) {
-          return recordCol("subtasks").where("taskId", "==", task.id).get();
-        })).then(function (snapshots) {
-          snapshots.forEach(function (qs) { qs.forEach(function (doc) { obj.subtasks.push(doc.data()); }); });
+        var tasks = obj.tasks || [];
+        if (!tasks.length) return obj;
+        return optionalSubtasksRead(function () {
+          return Promise.all(tasks.map(function (task) {
+            return recordCol("subtasks").where("taskId", "==", task.id).get();
+          }));
+        }).then(function (snapshots) {
+          if (snapshots === null) omitted.subtasks = true;
+          else snapshots.forEach(function (qs) { qs.forEach(function (doc) { obj.subtasks.push(doc.data()); }); });
           return obj;
         });
       });
@@ -1258,7 +1287,13 @@
       // copy). Automatic / merge pulls UNION by id, so a slow device whose
       // pushes failed (e.g. editing before cloud rules were ready) keeps its
       // local additions instead of silently losing them to a newer clock.
-      if (mode !== "replace") obj = mergeWithLocal(obj);
+      if (mode !== "replace") obj = mergeWithLocal(obj, omitted);
+      if (omitted.subtasks) {
+        var allowedTasks = (obj.tasks || []).map(function (task) { return task.id; });
+        obj.subtasks = PMS.utils.deepClone((PMS.store.data.subtasks || []).filter(function (subtask) {
+          return identity().role !== "member" || allowedTasks.indexOf(subtask.taskId) !== -1;
+        }));
+      }
       // accounts + per-device preferences never come from the cloud
       obj.users = PMS.utils.deepClone((PMS.store.data && PMS.store.data.users) || []);
       obj.settings = PMS.utils.deepClone((PMS.store.data && PMS.store.data.settings) || PMS.schema.defaultData().settings);
@@ -1269,6 +1304,7 @@
       // Projects/tasks track status fields; append-only collections (activity
       // log) just track which entry ids the cloud already holds.
       COLLECTIONS.forEach(function (cname) {
+        if (omitted[cname]) return;
         var map = {};
         (rawRemote[cname] || []).forEach(function (rec) {
           if (rec && rec.id) map[rec.id] = RECORD_COLS.indexOf(cname) !== -1 ? recordTrack(cname, rec) : true;
@@ -1283,9 +1319,11 @@
       if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
       applying = false;
       lastPulled = Date.now();
+      lastError = null;
       PMS.bus.emit("cloud:state", { pulled: true });
       return true;
     }).catch(function (e) {
+      lastError = (e && (e.code || e.message)) || String(e);
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
     }).then(function (r) {
@@ -1305,10 +1343,12 @@
   // merges. Overlapping edits and edit/delete conflicts remain local until the
   // user resolves them. Never-uploaded records survive a remote pull.
   // Legacy reference datasets retain their per-item timestamp merge policy.
-  function mergeWithLocal(remoteObj) {
+  function mergeWithLocal(remoteObj, omitted) {
+    omitted = omitted || {};
     var merged = PMS.utils.deepClone(PMS.store.data);
     var remoteAt = remoteObj.meta && remoteObj.meta.updatedAt;
     COLLECTIONS.forEach(function (cname) {
+      if (omitted[cname]) return;
       var incoming = remoteObj[cname] || [];
       var existing = merged[cname] || [];
       // Per-record collections carry a mirror of every id this device has
@@ -1442,6 +1482,17 @@
     if (!hasLocal) return Promise.resolve(false);
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
+      // Reconciliation updates the dataset clock, but unpublished rows and
+      // offline edits must still upload independently of that shared clock.
+      var pending = RECORD_COLS.some(function (cname) {
+        if (unavailableCollections[cname]) return false;
+        var mirror = mirrorFor(cname);
+        return (local[cname] || []).some(function (record) {
+          var baseline = mirror[record.id];
+          return !baseline || (baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, record) : baseline.updatedAt !== record.updatedAt);
+        });
+      });
+      if (pending) return push();
       return canWriteShared().then(function (can) {
         if (!can) return false;
         return stateRef().get().then(function (s) {
@@ -1479,7 +1530,7 @@
       startPoller();
       // pull the shared state immediately, then seed it with local data when
       // the cloud is empty or older than this device
-      return pull().then(function () {
+      return pull("merge").then(function () {
         return pushIfLocalIsAhead();
       });
     }).then(function () {
@@ -1517,7 +1568,9 @@
       // rejected by the rules as "Missing or insufficient permissions".
       return waitForSignedIn().then(function (ok) {
         if (!ok) return false;
-        return pull();
+        // Reconcile all collections once on startup, even if a previous
+        // partial write left the shared clock unchanged.
+        return pull("merge");
       });
     }).then(function (changed) {
       // seed the cloud with this device's data when it is empty or older, so

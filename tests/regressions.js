@@ -277,10 +277,11 @@ test('adding a cloud member uses the admin callable and preserves person link an
 });
 
 async function syncFixture(user={id:'admin',cloudUid:'admin',role:'admin',personId:'admin-person'}) {
- const documents=new Map(),queries=[],writes=[],control={beforeRead:null};
+ const documents=new Map(),queries=[],writes=[],control={beforeRead:null,beforeQuery:null};
  const snapshot=key=>({exists:documents.has(key),data:()=>structuredClone(documents.get(key))});
  const ref=key=>({key,get:async()=>{if(control.beforeRead)await control.beforeRead(key);return snapshot(key);},set:async(value,opts)=>{documents.set(key,opts&&opts.merge?{...(documents.get(key)||{}),...structuredClone(value)}:structuredClone(value));writes.push(key);},delete:async()=>{documents.delete(key);writes.push(key);}});
  const col=(name,filters=[])=>({doc:id=>ref(name+'/'+id),where:(...filter)=>col(name,filters.concat([filter])),get:async()=>{
+  if(control.beforeQuery)await control.beforeQuery(name,filters);
   queries.push([name,filters]);const records=[...documents.entries()].filter(([key,value])=>key.startsWith(name+'/')&&filters.every(([field,op,wanted])=>op==='array-contains'?(value[field]||[]).includes(wanted):value[field]===wanted));
   return {forEach:fn=>records.forEach(([key])=>fn({...snapshot(key),id:key.split('/')[1]}))};
  }});
@@ -413,5 +414,77 @@ test('members receive conflict resolution after editing without an added toolbar
  assert.ok(p.modal.body.textContent.includes('My edit'));assert.ok(p.modal.body.textContent.includes('Cloud edit'));
  [...p.modal.body.querySelectorAll('button')].find(b=>b.textContent===p.i18n.t('cloud.keepLocal')).click();
  assert.deepEqual(choice,{key:'tasks/own',keepLocal:true});assert.equal(p.modal.isOpen,false);
+ }finally{dom.window.close();}
+});
+
+test('old rules denying subtasks do not suppress manager task pulls or erase local subtasks',async()=>{
+ const {p,documents,control,mirror,close}=await syncFixture({id:'manager',cloudUid:'manager',role:'manager',personId:'person'});try{
+ documents.set('zms_meta/state',{updatedAt:'2026-01-03'});
+ documents.set('zms_tasks/task',{id:'task',title:'Shared task',assignees:['person'],updatedAt:'2026-01-02'});
+ p.store.data.subtasks=[{id:'local-sub',taskId:'task',title:'Pending local work'}];
+ const original={old:mirror.recordTrack('subtasks',{id:'old',taskId:'task',updatedAt:'1'})};mirror.setCollection('subtasks',original);
+ control.beforeQuery=async name=>{if(name==='zms_subtasks')throw Object.assign(new Error('Old rules'),{code:'permission-denied'});};
+ assert.equal(await p.cloudsync.pull('merge'),true);
+ assert.equal(p.store.data.tasks[0].title,'Shared task');assert.equal(p.store.data.subtasks[0].id,'local-sub');
+ assert.equal(JSON.stringify(mirror.forCollection('subtasks')),JSON.stringify(original));
+ assert.ok(p.cloudsync.status().unavailableCollections.includes('subtasks'));
+ control.beforeQuery=null;documents.set('zms_subtasks/local-sub',{id:'local-sub',taskId:'task',title:'Synced work'});
+ assert.equal(await p.cloudsync.pull(),true);assert.equal(p.cloudsync.status().unavailableCollections.length,0);
+ }finally{await close();}
+});
+test('primary task permission errors remain visible and never replace local data with an empty dataset',async()=>{
+ const {p,documents,control,close}=await syncFixture();try{
+ documents.set('zms_meta/state',{updatedAt:'2026-01-03'});p.store.data.tasks=[{id:'local',title:'Keep local task'}];
+ control.beforeQuery=async name=>{if(name==='zms_tasks')throw Object.assign(new Error('Denied'),{code:'permission-denied'});};
+ assert.equal(await p.cloudsync.pull('merge'),false);assert.equal(p.store.data.tasks[0].title,'Keep local task');
+ assert.equal(p.cloudsync.status().error,'permission-denied');
+ }finally{await close();}
+});
+test('existing save indicator reports cloud failure without adding a button',()=>{
+ const {dom,w,p}=appFixture();try{
+ p.app.applyLocale();p.cloudsync.status=()=>({error:'permission-denied',unavailableCollections:[]});
+ p.bus.emit('cloud:state',{});p.bus.emit('save:done',{});
+ assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.cloudFailed')));
+ assert.equal(w.document.getElementById('sync-conflicts-btn'),null);
+ }finally{dom.window.close();}
+});
+
+test('admin task upload is not blocked by the nonexistent legacy subtask wrapper',async()=>{
+ const {p,documents,control,close}=await syncFixture();try{
+ documents.set('zms_meta/state',{updatedAt:'2026-01-03'});
+ documents.set('zms_tasks/task',{id:'task',title:'Original',updatedAt:'2026-01-02'});
+ control.beforeQuery=async name=>{if(name==='zms_subtasks')throw Object.assign(new Error('Old rules'),{code:'permission-denied'});};
+ control.beforeRead=async key=>{if(key==='zms_subtasks/data')throw new Error('This collection never had a legacy wrapper');};
+ assert.equal(await p.cloudsync.pull('merge'),true);
+ p.store.data.tasks[0].title='Publish this task edit';p.store.data.tasks[0].updatedAt='2026-01-04';
+ p.store.data.subtasks=[{id:'pending-sub',taskId:'task',title:'Do not erase'}];
+ assert.equal(await p.cloudsync.push(),true);
+ assert.equal(documents.get('zms_tasks/task').title,'Publish this task edit');assert.equal(p.store.data.subtasks[0].title,'Do not erase');
+ assert.equal(documents.has('zms_subtasks/pending-sub'),false);
+ }finally{await close();}
+});
+test('startup repairs an empty task cache even when the shared clock has not changed',async()=>{
+ const {p,documents,close}=await syncFixture({id:'manager',cloudUid:'manager',role:'manager',personId:'person'});try{
+ const at='2026-01-03';documents.set('zms_meta/state',{updatedAt:at});
+ documents.set('zms_tasks/task',{id:'task',title:'Task written before clock update',updatedAt:'2026-01-02'});
+ p.store.data.meta.updatedAt=at;p.store.data.projects=[{id:'project',name:'Cached pillar'}];p.store.data.tasks=[];
+ await p.cloudsync.boot();assert.equal(p.store.data.tasks[0].title,'Task written before clock update');
+ }finally{await close();}
+});
+
+test('startup uploads unpublished local tasks after merging an equal-clock cloud snapshot',async()=>{
+ const {p,documents,close}=await syncFixture();try{
+ const at='2026-01-03';documents.set('zms_meta/state',{updatedAt:at});
+ p.store.data.meta.updatedAt=at;p.store.data.tasks=[{id:'local-only',title:'Publish existing local task',updatedAt:'2026-01-02'}];
+ await p.cloudsync.boot();assert.equal(documents.get('zms_tasks/local-only').title,'Publish existing local task');
+ }finally{await close();}
+});
+
+test('cloud success never hides a failed local save',()=>{
+ const {dom,w,p}=appFixture();try{
+ p.app.applyLocale();p.cloudsync.status=()=>({error:null,unavailableCollections:[]});
+ p.bus.emit('save:error',{message:'Test quota failure'});p.bus.emit('cloud:state',{pushed:true});
+ assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.error')));
+ p.bus.emit('save:done',{});assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.saved')));
  }finally{dom.window.close();}
 });
