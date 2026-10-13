@@ -289,12 +289,14 @@ async function syncFixture(user={id:'admin',cloudUid:'admin',role:'admin',person
   const pending=[];const result=await fn({get:r=>r.get(),set:(r,value)=>pending.push(()=>r.set(value)),update:(r,value)=>pending.push(()=>r.set(value,{merge:true})),delete:r=>pending.push(()=>r.delete())});
   for(const operation of pending)await operation();return result;
  }};
- const c=context({console:{error(){},warn(){},info(){}},setInterval:()=>1,clearInterval(){},addEventListener(){},removeEventListener(){},document:{addEventListener(){},removeEventListener(){}}});
+ const clock={now:Date.now()},polls=[];
+ class Clock extends Date{constructor(...args){super(...(args.length?args:[clock.now]));}static now(){return clock.now;}}
+ const c=context({Date:Clock,console:{error(){},warn(){},info(){}},setInterval:fn=>{polls.push(fn);return 1;},clearInterval(){},addEventListener(){},removeEventListener(){},document:{addEventListener(){},removeEventListener(){}}});
  c.firebase={apps:[],initializeApp:()=>({}),app:()=>({}),firestore:()=>firestore,auth:()=>({currentUser:{uid:user.cloudUid}})};
  Object.assign(c.PMS,{ids:{uuid:()=> 'page-id'},cloudConfig:{projectId:'demo'},auth:{currentUser:()=>user},bus:{on:()=>()=>{},emit(){}},i18n:{t:key=>key},toast:{show(){}},schema:{VERSION:1,defaultData:()=>({settings:{}})},store:{initialized:true,data:{meta:{},settings:{},users:[],tasks:[],projects:[],people:[],departments:[],subtasks:[]},commit:fn=>fn(c.PMS.store.data),flush:()=>Promise.resolve(),setData:data=>{c.PMS.store.data=structuredClone(data);}}});
  c.load('js/services/sync-mirror.js');c.load('js/services/sync-firestore.js');
  await c.PMS.cloudsync.enable();
- return {c,p:c.PMS,documents,queries,writes,control,mirror:c.PMS.syncMirror.create('pms-cloud-mirror'),close:()=>c.PMS.cloudsync.disable()};
+ return {c,p:c.PMS,documents,queries,writes,control,mirror:c.PMS.syncMirror.create('pms-cloud-mirror'),poll:()=>{clock.now+=4000;return polls[polls.length-1]();},close:()=>c.PMS.cloudsync.disable()};
 }
 test('public cloud push combines concurrent fields and resolves overlapping conflicts',async()=>{
  const {p,documents,mirror,close}=await syncFixture();try{
@@ -705,4 +707,77 @@ test('conflicting in-flight reference edits retain other users additions until e
  assert.equal(await p.cloudsync.push(),true);assert.equal(documents.get('zms_people/data').items.length,2);
  assert.equal(documents.get('zms_people/data').items.find(r=>r.id==='person').email,'new-local@example.com');
  }finally{await close();}
+});
+
+test('unconnected dated tasks never display a confirmed critical path or invented slack',()=>{
+ const {dom,p}=appFixture();try{
+ p.store.data.tasks=[{id:'long',title:'Independent long work',startDate:'2026-10-05',dueDate:'2027-01-03',status:'todo',dependencies:[]},{id:'short',title:'Independent short work',startDate:'2026-10-05',dueDate:'2026-10-06',status:'todo',dependencies:[]}];
+ const result=p.dependencies.analyzeCached(p.store.data);assert.equal(result.hasNetwork,false);
+ for(const row of p.store.data.tasks){assert.equal(p.dependencies.isCritical(result,row.id),false);assert.equal(p.dependencies.slackOf(result,row.id),null);assert.equal(p.vformat.depMarkers(p.store.data,row,result).length,0);}
+ const notice=p.vformat.networkNotice(result);assert.equal(notice.textContent,p.i18n.t('deps.noNetwork'));
+ }finally{dom.window.close();}
+});
+test('critical path with missing dates is visibly estimated and cycles have a distinct notice',()=>{
+ const {dom,p}=appFixture();try{
+ const data={tasks:[{id:'a',title:'A'},{id:'b',title:'B',dependencies:[{id:'a',type:'FS',lag:0}]}]};
+ const result=p.dependencies.analyze(data);assert.equal(result.estimated,true);assert.equal(result.hasNetwork,true);
+ for(const lang of ['en','ar']){
+  p.i18n.setLang(lang);assert.ok(p.vformat.depMarkers(data,data.tasks[1],result).some(n=>n.textContent.includes(p.i18n.t('deps.criticalEstimate'))));
+  assert.equal(p.vformat.networkNotice(result).textContent,p.i18n.t('deps.estimateHint'));
+ }
+ data.tasks[0].dependencies=['b'];const cycle=p.dependencies.analyze(data);
+ assert.equal(p.vformat.networkNotice(cycle).textContent,p.i18n.t('deps.cyclicAnalysis'));assert.equal(p.dependencies.isCritical(cycle,'a'),false);
+ }finally{dom.window.close();}
+});
+test('critical arrows mark binding constraints rather than just two critical endpoints',()=>{
+ const c=context();c.PMS.utils.parseDate=s=>s?new Date(s):null;c.load('js/services/dependencies.js');
+ const data={tasks:[{id:'a',startDate:'2026-01-01',dueDate:'2026-01-02'},{id:'b',startDate:'2026-01-01',dueDate:'2026-01-02',dependencies:[{id:'a',type:'SS',lag:-1}]}]};
+ const analysis=c.PMS.dependencies.analyze(data),edge=c.PMS.dependencies.edges(data)[0];
+ assert.equal(c.PMS.dependencies.isCritical(analysis,'a'),true);assert.equal(c.PMS.dependencies.isCritical(analysis,'b'),true);
+ assert.equal(c.PMS.dependencies.isCriticalEdge(analysis,edge),false);
+ data.tasks[1].dependencies[0].lag=0;assert.equal(c.PMS.dependencies.isCriticalEdge(c.PMS.dependencies.analyze(data),c.PMS.dependencies.edges(data)[0]),true);
+});
+test('dependency date checks match the inclusive-day durations used by critical path analysis',()=>{
+ const c=context();c.PMS.utils.parseDate=s=>s?new Date(s):null;c.load('js/services/dependencies.js');const d=c.PMS.dependencies;
+ assert.equal(d.isSatisfied({type:'FS',lag:0},{dueDate:'2026-01-02'},{startDate:'2026-01-02'}),false);
+ assert.equal(d.isSatisfied({type:'FS',lag:0},{dueDate:'2026-01-02'},{startDate:'2026-01-03'}),true);
+ assert.equal(d.isSatisfied({type:'FS',lag:-1},{dueDate:'2026-01-02'},{startDate:'2026-01-02'}),true);
+ assert.equal(d.isSatisfied({type:'SF',lag:0},{startDate:'2026-01-03'},{dueDate:'2026-01-02'}),true);
+ assert.equal(d.isSatisfied({type:'SF',lag:1},{startDate:'2026-01-03'},{dueDate:'2026-01-02'}),false);
+});
+test('successful pulls do not hide a failed upload and polling retries pending records automatically',async()=>{
+ const {p,documents,control,poll,close}=await syncFixture();try{
+ p.store.data.tasks=[{id:'local',title:'Must reach the other user',updatedAt:'1'}];
+ control.beforeWrite=async key=>{if(key==='zms_tasks/local')throw Object.assign(new Error('Temporary network failure'),{code:'unavailable'});};
+ assert.equal(await p.cloudsync.push(),false);assert.equal(p.cloudsync.status().error,'unavailable');assert.equal(p.cloudsync.status().pending,true);
+ assert.equal(await p.cloudsync.pull('merge'),true);assert.equal(p.cloudsync.status().error,'unavailable');assert.equal(p.cloudsync.status().pending,true);
+ control.beforeWrite=null;await poll();
+ assert.equal(documents.get('zms_tasks/local').title,'Must reach the other user');assert.equal(p.cloudsync.status().pending,false);assert.equal(p.cloudsync.status().error,null);
+ }finally{await close();}
+});
+test('the save indicator differentiates pending cloud uploads from confirmed reconciliation',()=>{
+ const {dom,w,p}=appFixture();try{
+ p.app.applyLocale();p.cloudsync.status=()=>({pending:true,error:null,unavailableCollections:[]});p.bus.emit('cloud:state',{});
+ assert.ok(w.document.getElementById('save-indicator').textContent.includes(p.i18n.t('save.cloudPending')));
+ assert.equal(w.document.getElementById('save-indicator').classList.contains('ok'),false);
+ }finally{dom.window.close();}
+});
+
+test('manager tasks missing from an admin export propagate after automatic retry without losing the existing 52 tasks',async()=>{
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}],['zms_projects/foreign',{id:'foreign',name:'Foreign pillar',managerId:'admin-person',updatedAt:'2026-01-01'}]]);
+ for(let i=0;i<52;i++)shared.set('zms_tasks/existing-'+i,{id:'existing-'+i,title:'Existing '+i,projectId:'foreign',assignees:[],updatedAt:'2026-01-01'});
+ const manager=await syncFixture({id:'manager-local',cloudUid:'manager',role:'manager',personId:'manager-person'},shared);
+ const admin=await syncFixture(undefined,shared);
+ try{
+  assert.equal(manager.p.store.data.tasks.length,52);assert.equal(admin.p.store.data.tasks.length,52);
+  for(const [id,title]of [['task-test','Task Test'],['test-4','Test 4']])manager.p.store.data.tasks.push({id,title,projectId:'foreign',assignees:['admin-person'],createdByPersonId:'manager-person',createdByCloudUid:'manager',updatedAt:'2026-01-02'});
+  manager.control.beforeWrite=async key=>{if(key==='zms_tasks/task-test'||key==='zms_tasks/test-4')throw Object.assign(new Error('Upload interrupted'),{code:'unavailable'});};
+  assert.equal(await manager.p.cloudsync.push(),false);
+  await admin.p.cloudsync.pull('merge');assert.equal(admin.p.store.data.tasks.length,52);
+  await manager.p.cloudsync.pull('merge');assert.equal(manager.p.store.data.tasks.length,54);assert.equal(manager.p.cloudsync.status().error,'unavailable');
+  manager.control.beforeWrite=null;await manager.poll();await admin.poll();
+  assert.equal(admin.p.store.data.tasks.length,54);assert.equal(manager.p.cloudsync.status().pending,false);
+  for(const title of ['Task Test','Test 4'])assert.ok(admin.p.store.data.tasks.some(task=>task.title===title));
+  assert.equal(new Set(admin.p.store.data.tasks.map(task=>task.id)).size,54);
+ }finally{await manager.close();await admin.close();}
 });

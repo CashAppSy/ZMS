@@ -217,7 +217,8 @@
       indeg[id] = 0;
     }
 
-    edges(data).forEach(function (link) {
+    var networkEdges = edges(data);
+    networkEdges.forEach(function (link) {
       if (!(link.fromId in dur) || !(link.toId in dur)) return;
       preds[link.toId].push(link);
       succs[link.fromId].push(link);
@@ -236,7 +237,12 @@
     var cyclic = order.length !== tasks.length;
     var result = {
       cyclic: cyclic, critical: critical, slack: slack, dur: dur,
-      es: es, ef: ef, ls: ls, lf: lf, order: order, length: 0
+      es: es, ef: ef, ls: ls, lf: lf, order: order, length: 0,
+      hasNetwork: networkEdges.length > 0,
+      estimated: !opts.duration && tasks.some(function (task) {
+        var start = PMS.utils.parseDate(task.startDate), end = PMS.utils.parseDate(task.dueDate);
+        return !start || !end || end < start;
+      })
     };
     if (cyclic) return result;
 
@@ -276,7 +282,9 @@
 
     order.forEach(function (tid) {
       slack[tid] = Math.max(0, ls[tid] - es[tid]);
-      if (slack[tid] <= EPS) critical[tid] = true;
+      // With no links this is only a comparison of independent durations;
+      // it is not an established dependency path to present to the user.
+      if (result.hasNetwork && slack[tid] <= EPS) critical[tid] = true;
     });
     return result;
   }
@@ -298,13 +306,19 @@
   }
 
   function isCritical(result, taskId) {
-    return !!(result && !result.cyclic && result.critical[taskId]);
+    return !!(result && result.hasNetwork !== false && !result.cyclic && result.critical[taskId]);
   }
 
   function slackOf(result, taskId) {
-    if (!result || result.cyclic) return null;
+    if (!result || result.hasNetwork === false || result.cyclic) return null;
     var v = result.slack[taskId];
     return v === undefined ? null : v;
+  }
+
+  function isCriticalEdge(result, edge) {
+    if (!edge || !isCritical(result, edge.fromId) || !isCritical(result, edge.toId)) return false;
+    var start = earliestStart(edge.dep, result.es[edge.fromId], result.ef[edge.fromId], result.dur[edge.toId]);
+    return Math.abs(result.es[edge.toId] - start) <= EPS;
   }
 
   /* --------------------------------------------------------------------------
@@ -402,11 +416,11 @@
       case "SS": if (pS && sS) need = pS.getTime() + dep.lag * DAY; break;
       case "FF": if (pE && sE) need = pE.getTime() + dep.lag * DAY; break;
       case "SF": if (pS && sE) need = pS.getTime() + dep.lag * DAY; break;
-      default: if (pE && sS) need = pE.getTime() + dep.lag * DAY; break;   // FS
+      default: if (pE && sS) need = pE.getTime() + (1 + dep.lag) * DAY; break;   // FS: due dates include the whole last day
     }
     if (need === null) return null;
     var have = (dep.type === "SS" || dep.type === "FS") ? sS : sE;
-    return have.getTime() >= need;
+    return have.getTime() + (dep.type === "SF" ? DAY : 0) >= need;
   }
 
   function label(type) {
@@ -434,6 +448,7 @@
     analyzeCached: analyzeCached,
     isCritical: isCritical,
     slackOf: slackOf,
+    isCriticalEdge: isCriticalEdge,
     blocking: blocking,
     isBlocked: isBlocked,
     isTaskDone: isTaskDone,

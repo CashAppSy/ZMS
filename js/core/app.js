@@ -429,6 +429,9 @@
       indicator.classList.remove("ok"); indicator.classList.add("err");
       label.textContent = t(state.error ? "save.cloudFailed" : "save.cloudPartial");
       indicator.title = state.error ? t("cloud.connectFail") + " (" + state.error + ")" : t("cloud.subtasksRulesRequired");
+    } else if (state.pending) {
+      indicator.classList.remove("ok", "err");
+      label.textContent = t("save.cloudPending"); indicator.title = t("save.cloudPending");
     } else {
       indicator.classList.remove("err");
       label.textContent = t("save.saved"); indicator.title = t("settings.saveIndicator");

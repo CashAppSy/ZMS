@@ -144,3 +144,15 @@ test('admin reads activity from every active role while entries remain immutable
  await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'zms_auth_users/inactive-auditor'),{role:'member',active:false}));
  await assertFails(setDoc(doc(env.authenticatedContext('inactive-auditor').firestore(),'zms_activities/inactive'),{id:'inactive'}));
 });
+
+test('manager may create tasks in another admins pillar assigned to the admin and the admin can read them',async()=>{
+ await env.withSecurityRulesDisabled(async c=>{
+  await setDoc(doc(c.firestore(),'zms_projects/foreign-pillar'),{id:'foreign-pillar',managerId:'admin-person'});
+ });
+ const manager=env.authenticatedContext('manager').firestore(),admin=env.authenticatedContext('admin').firestore();
+ for(const id of ['manager-task-test','manager-test-4']){
+  const row={id,title:id,projectId:'foreign-pillar',assignees:['admin-person'],createdByPersonId:'manager-person',createdByCloudUid:'manager',status:'todo'};
+  await assertSucceeds(setDoc(doc(manager,'zms_tasks',id),row));
+  await assertSucceeds(getDoc(doc(admin,'zms_tasks',id)));
+ }
+});

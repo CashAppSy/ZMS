@@ -232,6 +232,10 @@
       pickTask: "Pick a task...",
       missingTask: "(unavailable or deleted task)",
       critical: "Critical path",
+      criticalEstimate: "Critical path (estimate)",
+      noNetwork: "Critical path is not established: no dependencies connect the tasks.",
+      estimateHint: "Critical path is an estimate: some task durations have incomplete dates. Complete start and due dates to confirm the plan.",
+      cyclicAnalysis: "Critical path cannot be calculated while dependencies contain a cycle.",
       criticalHint: "On the critical path — a delay here moves the end of the program",
       slack: "Slack", slackDays: "slack", blocked: "Blocked", blockedBy: "Blocked by",
       broken: "Dates do not satisfy this dependency",
@@ -342,6 +346,7 @@
       }
     },
     save: {
+      cloudPending: "Saved locally — awaiting sync",
       cloudFailed: "Saved locally — sync failed", cloudPartial: "Saved locally — partial sync",
       saved: "Saved", saving: "Saving...", error: "Save error", local: "Saved locally",
       file: "Saved to file", enhancedSync: "syncing", fileFail: "Saved locally; file sync failed"

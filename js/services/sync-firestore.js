@@ -102,6 +102,9 @@
   var onBeforeUnload = null;
   var onPageHide = null;
   var lastError = null;
+  var lastPushError = null;
+  var lastPullError = null;
+  var polling = false;
   var pendingClock = false;
   var unavailableCollections = {};
   function permissionDenied(error) {
@@ -153,6 +156,7 @@
       config: c,
       realtime: enabled,
       error: lastError,
+      pending: enabled && hasPendingLocalChanges(PMS.store.data),
       unavailableCollections: Object.keys(unavailableCollections),
       lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null)
     };
@@ -1259,7 +1263,8 @@
                 PMS.store.flush();
               }
               lastPushed = Date.now();
-              lastError = null;
+              lastPushError = null;
+              lastError = lastPullError;
               PMS.bus.emit("cloud:state", { pushed: true });
               var summarized = {};
               COLLECTIONS.forEach(function (cname) { if (Array.isArray(d[cname])) summarized[cname] = d[cname].length; });
@@ -1279,6 +1284,7 @@
     }).catch(function (e) {
       console.error("[cloudsync] push failed:", e);
       lastError = (e && (e.code || e.message)) || String(e);
+      lastPushError = lastError;
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
     }).then(function (r) {
@@ -1420,11 +1426,14 @@
       if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
       applying = false;
       lastPulled = Date.now();
-      lastError = null;
+      lastPullError = null;
+      if (!hasPendingLocalChanges(PMS.store.data)) lastPushError = null;
+      lastError = lastPushError;
       PMS.bus.emit("cloud:state", { pulled: true });
       return true;
     }).catch(function (e) {
       lastError = (e && (e.code || e.message)) || String(e);
+      lastPullError = lastError;
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
     }).then(function (r) {
@@ -1544,16 +1553,18 @@
   }
 
   function tick() {
-    if (!enabled || applying) return;
+    if (!enabled || applying || polling) return;
     if (!PMS.store.initialized) return;
     var t = Date.now();
     if (t - lastPulled < COOLDOWN) return;
     lastPulled = t;
-    pull().then(function (changed) {
-      if (!changed) return;
-      if (PMS.toast) PMS.toast.show(PMS.i18n.t("cloud.synced"), "success");
-      if (PMS.router && PMS.router.handle) PMS.router.handle();
-    }).catch(function () {});
+    polling = true;
+    return pull().then(function (changed) {
+      if (changed && PMS.router && PMS.router.handle) PMS.router.handle();
+      // A successful read does not upload pending edits. Retry them even when
+      // the shared clock matches, without waiting for another user action.
+      return pushIfLocalIsAhead();
+    }).catch(function () {}).finally(function () { polling = false; });
   }
 
   function startPoller() {
@@ -1591,6 +1602,24 @@
   // Push local data only when the cloud is empty or strictly older — so
   // enabling on a fresh device seeds the cloud, but never clobbers newer
   // changes another device already uploaded.
+  function hasPendingLocalChanges(local) {
+    if (!local) return false;
+    if (pendingClock || (identity().isAdmin && (local.activityDeletedIds || []).length)) return true;
+    var hasContent = USER_COLS.some(function (cname) { return (local[cname] || []).length; });
+    return COLLECTIONS.some(function (cname) {
+      if (unavailableCollections[cname]) return false;
+      if (WHOLE_COLS.indexOf(cname) !== -1 && (!hasContent || identity().role === "member")) return false;
+      var mirror = mirrorFor(cname), rows = local[cname] || [];
+      if (APPEND_COLS.indexOf(cname) === -1 && Object.keys(mirror).some(function (id) {
+        return !rows.some(function (record) { return record.id === id; });
+      })) return true;
+      return rows.some(function (record) {
+        var baseline = mirror[record.id];
+        return !baseline || (APPEND_COLS.indexOf(cname) === -1 && (baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, record) : baseline.updatedAt !== record.updatedAt));
+      });
+    });
+  }
+
   function pushIfLocalIsAhead() {
     var local = PMS.store.data;
     var hasLocal = USER_COLS.concat(APPEND_COLS).some(function (c) { return Array.isArray(local[c]) && local[c].length > 0; });
@@ -1601,17 +1630,7 @@
       if (!ok) return false;
       // Reconciliation updates the dataset clock, but unpublished rows and
       // offline edits must still upload independently of that shared clock.
-      var pending = COLLECTIONS.some(function (cname) {
-        if (unavailableCollections[cname]) return false;
-        var mirror = mirrorFor(cname);
-        if (APPEND_COLS.indexOf(cname) === -1 && Object.keys(mirror).some(function (id) {
-          return !(local[cname] || []).some(function (record) { return record.id === id; });
-        })) return true;
-        return (local[cname] || []).some(function (record) {
-          var baseline = mirror[record.id];
-          return !baseline || (APPEND_COLS.indexOf(cname) === -1 && (baseline.snapshot ? !mirrorStore.equal(baseline.snapshot, record) : baseline.updatedAt !== record.updatedAt));
-        });
-      });
+      var pending = hasPendingLocalChanges(local);
       if (pending || pendingClock || (local.activityDeletedIds || []).length) return push();
       return canWriteShared().then(function (can) {
         if (!can) return false;

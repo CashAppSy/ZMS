@@ -53,6 +53,8 @@
     container.appendChild(header);
 
     var tasks = tasksForGantt();
+    var networkNotice = PMS.vformat.networkNotice(PMS.dependencies.analyzeCached(PMS.store.data));
+    if (networkNotice) container.appendChild(networkNotice);
     var canDrag = PMS.auth ? PMS.auth.can("tasks.write") : true;
     container.appendChild(h("div.u-muted", { text: (tasks.length ? (t("tasksTotal") + ": " + tasks.length + " · ") : "") + (canDrag ? t("gantt.dragHint") : t("gantt.viewOnly")), style: { marginBlockEnd: "12px", fontSize: "0.8rem" } }));
 
@@ -339,8 +341,7 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
       // A link whose dates already break it is drawn in the danger colour: the
       // arrow is then saying something is wrong, not just that a link exists.
       var broken = PMS.dependencies.isSatisfied(edge.dep, edge.from, edge.to) === false;
-      var critical = PMS.dependencies.isCritical(netAnalysis, edge.fromId) &&
-        PMS.dependencies.isCritical(netAnalysis, edge.toId);
+      var critical = PMS.dependencies.isCriticalEdge(netAnalysis, edge);
       var cls = "dep-" + edge.type + (broken ? " dep-broken" : "") + (critical ? " dep-critical" : "");
       var title = edge.from.title + " → " + edge.to.title + " (" + PMS.dependencies.label(edge.type) +
         (edge.dep.lag ? " " + (edge.dep.lag > 0 ? "+" : "") + edge.dep.lag + "d" : "") + ")" +

@@ -176,8 +176,8 @@ function priorityBadge(prioKey) {
     }
     if (DD.isCritical(analysis, task.id)) {
       out.push(h("span.dep-marker.dep-marker-critical", {
-        text: "◆ " + t("deps.critical"),
-        attrs: { title: t("deps.criticalHint") }
+        text: "◆ " + t(analysis.estimated ? "deps.criticalEstimate" : "deps.critical"),
+        attrs: { title: t(analysis.estimated ? "deps.estimateHint" : "deps.criticalHint") }
       }));
     } else {
       var slack = DD.slackOf(analysis, task.id);
@@ -189,6 +189,14 @@ function priorityBadge(prioKey) {
       }
     }
     return out;
+  }
+
+  function networkNotice(analysis) {
+    if (!analysis) return null;
+    var key = analysis.cyclic ? "deps.cyclicAnalysis" : !analysis.hasNetwork ? "deps.noNetwork" : analysis.estimated ? "deps.estimateHint" : null;
+    if (!key) return null;
+    return h("div.dep-analysis-note.u-muted", {text: t(key), attrs: {role: "status"},
+      style: {fontSize: ".85rem", marginBlock: "8px", padding: "8px 12px", borderInlineStart: "3px solid var(--border)"}});
   }
 
   // One line for a list of links: what this task waits on.
@@ -236,6 +244,7 @@ function priorityBadge(prioKey) {
     creatorChip: creatorChip,
     depChip: depChip,
     depMarkers: depMarkers,
+    networkNotice: networkNotice,
     depSummary: depSummary
   };
 })(window.PMS);

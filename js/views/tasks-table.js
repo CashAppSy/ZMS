@@ -170,6 +170,9 @@
     toolbar.appendChild(h("button.btn.btn-sm.btn-ghost", { text: t("common.saveFilter"), on: { click: saveFilter } }));
     container.appendChild(toolbar);
 
+    var networkNotice = PMS.vformat.networkNotice(PMS.dependencies.analyzeCached(PMS.store.data));
+    if (networkNotice) container.appendChild(networkNotice);
+
     var rows = filteredRows();
     container.appendChild(buildTable(rows));
   }
