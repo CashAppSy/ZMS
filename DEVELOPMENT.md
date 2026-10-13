@@ -48,7 +48,7 @@ Passing local tests establishes the checked local behaviors. It does not establi
 - Firestore rules emulator: **11 tests passed, 0 failed**, including immutable creator attribution, scoped reads and queries, subtask inheritance, role checks independent of person linkage, signup/profile protections, and atomic first-admin bootstrap.
 - Trusted Functions: 3 tests passed on Node 22.23.3 using the actual Functions v1 SDK with a mocked Admin transport. All five deployed callable definitions load on Node 22 against isolated emulator configuration; real authentication identities are not created by these tests.
 - Production Functions dependency audit: **0 known vulnerabilities** after updating Firebase Admin/Functions and locking their dependencies.
-- Hosted site and real Firebase integration: not deployed or validated by this change.
+- Hosted static client: HTTPS HTML/assets and Chromium rendering were verified with production Firebase disabled. Actual authenticated multi-device Firebase data remains unverified.
 
 ## Project hierarchy recovery
 
@@ -88,7 +88,7 @@ Run these with Node 22 for the deployment runtime. The browser test workflow con
 npx firebase deploy --only functions,firestore:rules --project YOUR_PROJECT_ID
 ```
 
-Publish the static client through the site's existing hosting process. Existing users receive versioned client assets on their next normal opening once the new HTML is served. No live deployment, production data mutation or real multi-device Firebase test was performed in this workspace.
+Publish the static client through the site's existing hosting process. Existing users receive versioned client assets on their next normal opening once the new HTML is served. The static client was pushed and its published assets/rendering were verified. No production data mutation or real authenticated multi-device Firebase test was performed in this workspace.
 
 ## Compatibility with rules that have not yet been deployed
 
@@ -128,3 +128,5 @@ A legacy timestamp-only mirror cannot prove that a record absent from the cloud 
 Pending-state detection respects writable fields: harmless normalization of read-only tasks cannot leave a manager permanently awaiting synchronization. Assignee status edits still count as pending. Own-record deletion uses the stable creator UID as well as a linked person, matching Firestore authorization even for unlinked managers.
 
 A full merge reconciliation runs at least every 60 seconds during active polling, independent of shared-clock equality. It recovers records successfully written before an interrupted metadata-clock update, even when the sender has restarted and no longer remembers a pending clock. Ordinary polls still check the clock and retry writable local changes.
+
+After publication of the critical-path correction, a fresh isolated Chromium profile rendered the uploaded 66 task records using the hosted HTML/JS/CSS fetched over verified HTTPS. All 70 requested versioned assets (excluding the deliberately disabled cloud config) matched their content hashes. The zero-edge dataset produced zero critical markers and the no-network notice. Production Firebase configuration and every non-GET/external request were blocked. The final published HTML and sync source also matched the committed correction; these checks do not establish arrival of the two real manager-only tasks.
