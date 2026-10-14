@@ -296,7 +296,7 @@ async function syncFixture(user={id:'admin',cloudUid:'admin',role:'admin',person
  Object.assign(c.PMS,{ids:{uuid:()=> 'page-id'},cloudConfig:{projectId:'demo'},auth:{currentUser:()=>user},bus:{on:()=>()=>{},emit(){}},i18n:{t:key=>key},toast:{show(){}},schema:{VERSION:1,defaultData:()=>({settings:{}})},store:{initialized:true,data:{meta:{},settings:{},users:[],tasks:[],projects:[],people:[],departments:[],subtasks:[]},commit:fn=>fn(c.PMS.store.data),flush:()=>Promise.resolve(),setData:data=>{c.PMS.store.data=structuredClone(data);}}});
  c.load('js/services/sync-mirror.js');c.load('js/services/sync-firestore.js');
  await c.PMS.cloudsync.enable();
- return {c,p:c.PMS,documents,queries,writes,control,mirror:c.PMS.syncMirror.create('pms-cloud-mirror'),poll:()=>{clock.now+=4000;return polls[polls.length-1]();},close:()=>c.PMS.cloudsync.disable()};
+ return {c,p:c.PMS,documents,queries,writes,control,clock,mirror:c.PMS.syncMirror.create('pms-cloud-mirror'),poll:()=>{clock.now+=4000;return polls[polls.length-1]();},close:()=>c.PMS.cloudsync.disable()};
 }
 test('public cloud push combines concurrent fields and resolves overlapping conflicts',async()=>{
  const {p,documents,mirror,close}=await syncFixture();try{
@@ -747,6 +747,7 @@ test('dependency date checks match the inclusive-day durations used by critical 
 });
 test('successful pulls do not hide a failed upload and polling retries pending records automatically',async()=>{
  const {p,documents,control,poll,close}=await syncFixture();try{
+ documents.set('zms_meta/state',{updatedAt:'2026-01-01'});
  p.store.data.tasks=[{id:'local',title:'Must reach the other user',updatedAt:'1'}];
  control.beforeWrite=async key=>{if(key==='zms_tasks/local')throw Object.assign(new Error('Temporary network failure'),{code:'unavailable'});};
  assert.equal(await p.cloudsync.push(),false);assert.equal(p.cloudsync.status().error,'unavailable');assert.equal(p.cloudsync.status().pending,true);
@@ -819,8 +820,47 @@ test('periodic reconciliation discovers manager tasks even when an interrupted u
   assert.equal(admin.p.store.data.tasks.length,52);
   shared.set('zms_tasks/task-test',{id:'task-test',title:'Task Test',createdByCloudUid:'manager',updatedAt:'2026-01-02'});
   shared.set('zms_tasks/test-4',{id:'test-4',title:'Test 4',createdByCloudUid:'manager',updatedAt:'2026-01-02'});
-  for(let i=0;i<15;i++)await admin.poll();
+  admin.clock.now+=6*60*60000;await admin.poll();
   assert.equal(shared.get('zms_meta/state').updatedAt,'2026-01-01');
   assert.equal(admin.p.store.data.tasks.length,54);assert.ok(admin.p.store.data.tasks.some(t=>t.title==='Task Test'));assert.ok(admin.p.store.data.tasks.some(t=>t.title==='Test 4'));
  }finally{await admin.close();}
+});
+
+test('quota exhaustion pauses cloud reads and writes across reloads while retaining pending edits',async()=>{
+ const f=await syncFixture();try{
+  f.p.store.data.tasks=[{id:'offline-task',title:'Keep locally',updatedAt:'2026-01-02'}];
+  let reads=0;f.control.beforeRead=async()=>{reads++;throw Object.assign(new Error('Quota exceeded'),{code:'resource-exhausted'});};
+  assert.equal(await f.p.cloudsync.pull('merge'),false);assert.equal(reads,1);
+  for(let i=0;i<10;i++){await f.poll();await f.p.cloudsync.push();await f.p.cloudsync.pull('merge');}
+  assert.equal(reads,1);assert.equal(f.p.store.data.tasks[0].title,'Keep locally');assert.equal(f.p.cloudsync.status().pending,true);
+  // A new sync module in the same browser must respect the saved deadline.
+  await f.p.cloudsync.disable();f.c.load('js/services/sync-firestore.js');
+  await f.p.cloudsync.enable();assert.equal(reads,1);
+  f.control.beforeRead=null;f.clock.now+=30*60000;
+  await f.p.cloudsync.push();assert.equal(f.documents.get('zms_tasks/offline-task').title,'Keep locally');
+ }finally{await f.close();}
+});
+
+test('unchanged data does not reread the complete history each minute and hidden tabs do not poll',async()=>{
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}],['zms_tasks/task',{id:'task',title:'Task',updatedAt:'2026-01-01'}],['zms_activities/event',{id:'event'}]]);
+ const f=await syncFixture(undefined,shared);try{
+  const initial=f.queries.length;
+  for(let i=0;i<100;i++)await f.poll();
+  assert.equal(f.queries.length,initial);
+  let reads=0;f.control.beforeRead=async()=>{reads++;};f.c.document.hidden=true;
+  f.clock.now+=6*60*60000;await f.poll();assert.equal(reads,0);
+  f.c.document.hidden=false;await f.poll();assert.ok(f.queries.length>initial);
+ }finally{await f.close();}
+});
+
+test('editing a task does not transact unchanged reference datasets',async()=>{
+ const person={id:'person',name:'Person'};
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}],['zms_people/data',{items:[person]}],['zms_tasks/task',{id:'task',title:'Task',updatedAt:'2026-01-01'}]]);
+ const f=await syncFixture(undefined,shared);try{
+  const reads=[];f.control.beforeRead=async key=>{reads.push(key);};
+  f.p.store.data.tasks[0].title='Edited';f.p.store.data.tasks[0].updatedAt='2026-01-02';
+  assert.equal(await f.p.cloudsync.push(),true);
+  assert.equal(reads.includes('zms_people/data'),false);assert.equal(f.documents.get('zms_people/data').items[0].name,'Person');
+  assert.equal(f.documents.get('zms_tasks/task').title,'Edited');
+ }finally{await f.close();}
 });

@@ -58,9 +58,9 @@
   var MIRROR_KEY = "pms-cloud-mirror";
   var APP_NAME = "pms-cloud";
   var SDK_VERSION = "10.12.2";
-  var INTERVAL = 15000;       // poll interval for remote changes
+  var INTERVAL = 60000;       // poll interval for remote changes
   var COOLDOWN = 3000;        // min gap between pulls
-  var RECONCILE_INTERVAL = 60000; // recover record writes whose clock update was interrupted
+  var RECONCILE_INTERVAL = 6 * 60 * 60000; // recover record writes whose clock update was interrupted
   var PUSH_DEBOUNCE = 500;    // debounce between a local edit and its upload
   // How long the cloud must be quiet before the NEXT edit is treated as a
   // single deliberate action and uploaded immediately instead of debounced.
@@ -106,8 +106,22 @@
   var lastError = null;
   var lastPushError = null;
   var lastPullError = null;
+  // Persist quota cooldown across reloads. Local saves continue during it.
+  var quotaUntil = 0;
+  function quotaKey() { var c = config(); return "pms-cloud-quota-" + (c && c.projectId || ""); }
+  function quotaBlocked() {
+    try { return Math.max(quotaUntil, Number(window.localStorage.getItem(quotaKey()) || 0)) > Date.now(); }
+    catch (e) { return quotaUntil > Date.now(); }
+  }
+  function noteQuota(error) {
+    if (!error || !/(^|\/)resource-exhausted$/.test(error.code || "")) return;
+    quotaUntil = Date.now() + 30 * 60000;
+    try { window.localStorage.setItem(quotaKey(), String(quotaUntil)); } catch (e) {}
+  }
   var polling = false;
   var pendingClock = false;
+  var recentState = null;
+  var recentStateAt = 0;
   var unavailableCollections = {};
   function permissionDenied(error) {
     return !!(error && /(^|\/)permission-denied$/.test(error.code || ""));
@@ -157,7 +171,7 @@
       projectId: c ? c.projectId : null,
       config: c,
       realtime: enabled,
-      error: lastError,
+      error: lastError || (quotaBlocked() ? "resource-exhausted" : null),
       pending: enabled && hasPendingLocalChanges(PMS.store.data),
       unavailableCollections: Object.keys(unavailableCollections),
       lastSyncAt: lastPushed && lastPulled ? (lastPushed > lastPulled ? lastPushed : lastPulled) : (lastPushed || lastPulled || null)
@@ -854,7 +868,7 @@
     conflicts = {};
     lastPulled = 0;
     lastPushAt = 0;
-    if (!enabled || applying) return Promise.resolve(false);
+    if (!enabled || applying || quotaBlocked()) return Promise.resolve(false);
     return push();
   }
 
@@ -948,8 +962,16 @@
   // Reference data still uses one Firestore document, but must merge within
   // a transaction: a stale client changing a task must not erase new people,
   // departments or status definitions written by another user.
+  function referenceUnchanged(cname, rows) {
+    var baseline = mirrorFor(cname);
+    return Object.keys(baseline).length === rows.length && rows.every(function (row) {
+      return baseline[row.id] && baseline[row.id].snapshot && mirrorStore.equal(baseline[row.id].snapshot, row);
+    });
+  }
   function writeWholeCollection(cname, localRows, mirrorUpdates, t) {
     var ref = colRef(cname), baseline = mirrorFor(cname), merged;
+    // A task edit must not read and rewrite all seven reference documents.
+    if (referenceUnchanged(cname, localRows)) return Promise.resolve();
     return firestore.runTransaction(function (tx) {
       return tx.get(ref).then(function (snap) {
         var remoteRows = snap.exists && Array.isArray(snap.data().items) ? snap.data().items : [];
@@ -1169,7 +1191,7 @@
     return request;
   }
   function pushNow() {
-    if (!enabled || applying) return Promise.resolve(false);
+    if (!enabled || applying || quotaBlocked()) return Promise.resolve(false);
     // An acknowledged write may conflict with an edit made while in flight.
     // Keep both versions pending until the existing resolution dialog decides.
     if (listConflicts().length) return Promise.resolve(false);
@@ -1195,7 +1217,7 @@
           // whole-dataset reference collections: only manager/admin (+bootstrap)
           if (sharedWrite) {
             WHOLE_COLS.forEach(function (cname) {
-              if (Array.isArray(d[cname])) {
+              if (Array.isArray(d[cname]) && !referenceUnchanged(cname, d[cname])) {
                 mirrorPatches[cname] = {};
                 ops.push(writeWholeCollection(cname, PMS.utils.deepClone(d[cname]), mirrorPatches[cname], t));
               }
@@ -1282,6 +1304,7 @@
         });
       });
     }).catch(function (e) {
+      noteQuota(e);
       console.error("[cloudsync] push failed:", e);
       lastError = (e && (e.code || e.message)) || String(e);
       lastPushError = lastError;
@@ -1297,7 +1320,7 @@
   // mode: undefined (only when remote is newer) | "replace" | "merge"
   function pull(mode) {
     var omitted = {};
-    if (!enabled) return Promise.resolve(false);
+    if (!enabled || quotaBlocked()) return Promise.resolve(false);
     PMS.bus.emit("cloud:inflight", { busy: true, op: "pull" });
     return waitForSignedIn().then(function (ok) {
       if (!ok) return false;
@@ -1305,6 +1328,7 @@
     }).then(function () {
       return stateRef().get();
     }).then(function (snap) {
+      recentState = snap; recentStateAt = Date.now();
       if (!snap.exists) return null;
       var remoteUpdated = snap.data().updatedAt;
       var localData = PMS.store.data;
@@ -1317,7 +1341,7 @@
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
         if (!localEmpty && localUpdated && remoteUpdated === localUpdated
-          && !lastError && !Object.keys(unavailableCollections).length) return null;
+          && !Object.keys(unavailableCollections).length) return null;
       }
       return Promise.all(COLLECTIONS.map(function (cname) {
         if (cname === "subtasks" && identity().role === "member") return Promise.resolve([]);
@@ -1434,6 +1458,7 @@
       return true;
     }).catch(function (e) {
       lastError = (e && (e.code || e.message)) || String(e);
+      noteQuota(e);
       lastPullError = lastError;
       PMS.bus.emit("cloud:state", { error: e && e.message ? e.message : String(e) });
       return false;
@@ -1559,7 +1584,7 @@
   }
 
   function tick() {
-    if (!enabled || applying || polling) return;
+    if (!enabled || applying || polling || document.hidden || quotaBlocked()) return;
     if (!PMS.store.initialized) return;
     var t = Date.now();
     if (t - lastPulled < COOLDOWN) return;
@@ -1656,6 +1681,7 @@
   }
 
   function pushIfLocalIsAhead() {
+    if (quotaBlocked()) return Promise.resolve(false);
     var local = PMS.store.data;
     var hasLocal = USER_COLS.concat(APPEND_COLS).some(function (c) { return Array.isArray(local[c]) && local[c].length > 0; });
     if ((local.activityDeletedIds || []).length || pendingClock) hasLocal = true;
@@ -1669,7 +1695,7 @@
       if (pending || pendingClock || (local.activityDeletedIds || []).length) return push();
       return canWriteShared().then(function (can) {
         if (!can) return false;
-        return stateRef().get().then(function (s) {
+        return (recentState && Date.now() - recentStateAt < 3000 ? Promise.resolve(recentState) : stateRef().get()).then(function (s) {
         if (!s.exists) return hasLocal ? push() : false;
         var d = s.data() || {};
         // a cloud whose last push carried no real data (hasData:false) is hollow —
@@ -1694,7 +1720,7 @@
     return loadSDK().then(function () {
       return ensureReady().then(function () {
         return waitForSignedIn().then(function (ok) {
-          if (!ok) return null; // signed out: skip the connectivity probe
+          if (!ok || quotaBlocked()) return null; // skip probes during quota cooldown
           return probeRef().get(); // connectivity check (doc may not exist)
         });
       });
