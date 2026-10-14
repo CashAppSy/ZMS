@@ -1002,3 +1002,16 @@ test('malformed incremental hints fall back to complete reads without discarding
   assert.equal(f.reader.p.store.data.activities.length,502);
  }finally{await f.close();}
 });
+
+test('a stale legacy wrapper never overrides a modern task status regardless of document order',async()=>{
+ for(const wrapperFirst of [true,false]){
+  const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-02'}]]);
+  const legacy=['zms_tasks/data',{items:[{id:'task',title:'Old',status:'todo',updatedAt:'2026-01-01'},{id:'legacy-only',title:'Preserve fallback',updatedAt:'2026-01-01'}]}];
+  const modern=['zms_tasks/task',{id:'task',title:'Current',status:'inprogress',updatedAt:'2026-01-02'}];
+  for(const [key,value] of wrapperFirst?[legacy,modern]:[modern,legacy])shared.set(key,value);
+  const f=await syncFixture(undefined,shared);try{
+   const task=f.p.store.data.tasks.find(t=>t.id==='task');assert.equal(task.status,'inprogress');assert.equal(task.title,'Current');
+   assert.equal(f.p.store.data.tasks.filter(t=>t.id==='task').length,1);assert.ok(f.p.store.data.tasks.some(t=>t.id==='legacy-only'));
+  }finally{await f.close();}
+ }
+});

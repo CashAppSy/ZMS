@@ -1465,19 +1465,23 @@
             var qs = { forEach: function (fn) { snapshots.forEach(function (snapshot) {
               snapshot.forEach(function (doc) { if (!seen[doc.id]) { seen[doc.id] = true; fn(doc); } });
             }); } };
-            var items = [];
+            var items = [], legacyItems = [];
             qs.forEach(function (ds) {
               if (!ds.exists) return;
               var dd = ds.data() || {};
               if (ds.id === "data" && Array.isArray(dd.items)) {
-                dd.items.forEach(function (it) { if (it && it.id) items.push(it); });
+                dd.items.forEach(function (it) { if (it && it.id) legacyItems.push(it); });
               } else if (ds.id === "data") {
                 // empty legacy wrapper: nothing to expand
               } else {
                 items.push(dd);
               }
             });
-            return items;
+            // Individual records are authoritative. A stale legacy wrapper
+            // must never override them merely because its doc sorts later.
+            var modernIds = {};
+            items.forEach(function (item) { if (item && item.id) modernIds[item.id] = true; });
+            return items.concat(legacyItems.filter(function (item) { return !modernIds[item.id]; }));
           });
         }
         return colRef(cname).get().then(function (s) {
