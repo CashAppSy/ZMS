@@ -77,7 +77,11 @@
       var error = new Error("sync-conflict: " + conflicts.join(", "));
       error.code = "sync-conflict"; error.fields = conflicts; throw error;
     }
-    result.updatedAt = locallyChanged ? (local.updatedAt || remote.updatedAt) : remote.updatedAt;
+    var updatedAt = locallyChanged ? (local.updatedAt || remote.updatedAt) : remote.updatedAt;
+    // Reference rows such as status definitions have no per-row timestamp.
+    // Never introduce an undefined property: Firestore rejects the payload.
+    if (updatedAt === undefined) delete result.updatedAt;
+    else result.updatedAt = updatedAt;
     return result;
   }
 

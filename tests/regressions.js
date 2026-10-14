@@ -1015,3 +1015,15 @@ test('a stale legacy wrapper never overrides a modern task status regardless of 
   }finally{await f.close();}
  }
 });
+
+
+test('reference merges never introduce undefined timestamps into Firestore payloads',()=>{
+ const c=context();c.load('js/services/sync-mirror.js');const m=c.PMS.syncMirror.create('test');
+ const base={id:'todo',name:{en:'To do'},color:'#888'};
+ const merged=m.mergeRecord(base,{...base,name:{en:'Ready'}},{...base,color:'#999'});
+ assert.equal(merged.name.en,'Ready');assert.equal(merged.color,'#999');
+ assert.equal(Object.prototype.hasOwnProperty.call(merged,'updatedAt'),false);
+ const untouched=m.mergeRecord(base,base,{...base,color:'#999'});
+ assert.equal(Object.prototype.hasOwnProperty.call(untouched,'updatedAt'),false);
+ assert.deepEqual(JSON.parse(JSON.stringify(merged)),JSON.parse(JSON.stringify({...base,name:{en:'Ready'},color:'#999'})));
+});

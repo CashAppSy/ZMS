@@ -1,6 +1,7 @@
 "use strict";
 const { test, before, after } = require('node:test');
 const fs = require('node:fs');
+const assert = require('node:assert/strict');
 const path = require('node:path');
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, updateDoc, writeBatch, getDoc, deleteDoc, getDocs, query, collection, where, runTransaction } = require('firebase/firestore');
@@ -164,4 +165,23 @@ test('bounded sync hints are writable by managers while members remain clock-onl
  const member=env.authenticatedContext('member').firestore(),memberRef=doc(member,'zms_meta/incremental-test');
  await assertSucceeds(updateDoc(memberRef,{updatedAt:'2026-01-02'}));
  await assertFails(updateDoc(memberRef,{syncJournal:{revision:'forged'}}));
+});
+
+test('real Firebase transactions accept merged status definitions without per-row timestamps',async()=>{
+ const vm=require('node:vm');
+ const c={PMS:{utils:{deepClone:value=>value===undefined?undefined:structuredClone(value)}},localStorage:{getItem:()=>null,setItem(){}}};c.window=c;
+ vm.createContext(c);vm.runInContext(fs.readFileSync(path.join(__dirname,'../js/services/sync-mirror.js'),'utf8'),c);
+ const mirror=c.PMS.syncMirror.create('test');
+ const db=env.authenticatedContext('admin').firestore(),ref=doc(db,'zms_taskStatuses/data');
+ const base={id:'todo',name:{en:'To do'},color:'#888'};
+ await setDoc(ref,{items:[{...base,color:'#999'}],updatedAt:'2026-01-01'});
+ await assertSucceeds(runTransaction(db,async tx=>{
+  const snapshot=await tx.get(ref);
+  const merged=mirror.mergeRecord(base,{...base,name:{en:'Ready'}},snapshot.data().items[0]);
+  // Use native SDK validation, preserving properties (JSON serialization would hide this bug).
+  const item=structuredClone(merged);
+  tx.set(ref,{items:[item],updatedAt:'2026-01-02'});
+ }));
+ const saved=(await getDoc(ref)).data().items[0];assert.equal(saved.name.en,'Ready');assert.equal(saved.color,'#999');
+ assert.equal(Object.prototype.hasOwnProperty.call(saved,'updatedAt'),false);
 });

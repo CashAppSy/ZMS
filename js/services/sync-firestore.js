@@ -1010,7 +1010,8 @@
         try { merged = mirrorStore.mergeRecord(base, local, remote); }
         catch (error) { throw rememberConflict(cname, rec.id, rec, remote, base, error); }
         if (statusOnly) {
-          var payload = { updatedAt: merged.updatedAt };
+          var payload = { updatedAt: merged.updatedAt || now() };
+          merged.updatedAt = payload.updatedAt;
           ["status", "progress", "activity"].forEach(function (key) {
             if (!mirrorStore.equal(merged[key], remote[key])) payload[key] = merged[key];
           });
