@@ -117,11 +117,91 @@
     if (!error || !/(^|\/)resource-exhausted$/.test(error.code || "")) return;
     quotaUntil = Date.now() + 30 * 60000;
     try { window.localStorage.setItem(quotaKey(), String(quotaUntil)); } catch (e) {}
+    PMS.bus.emit("cloud:state", { error: "resource-exhausted" });
   }
   var polling = false;
   var pendingClock = false;
   var recentState = null;
   var recentStateAt = 0;
+  var journalRevision = null;
+  var pendingJournal = {};
+  var journalSequence = 0;
+
+  function rememberJournal(patches) {
+    Object.keys(patches).forEach(function (cname) {
+      Object.keys(patches[cname]).forEach(function (id) {
+        if (!pendingJournal[cname]) pendingJournal[cname] = {};
+        pendingJournal[cname][id] = true;
+      });
+    });
+  }
+  // Bounded change hints, without task contents or user names. A transaction
+  // preserves concurrent writers; interrupted/older clients force a full pull.
+  function publishClock(sharedWrite) {
+    if (!sharedWrite) return stateRef().set({ updatedAt: now() }, { merge: true });
+    var revision = PAGE_ID + ":" + Date.now() + ":" + (++journalSequence);
+    return firestore.runTransaction(function (tx) {
+      return tx.get(stateRef()).then(function (snap) {
+        var state = snap.exists ? snap.data() : {};
+        var old = state.syncJournal;
+        var valid = old && old.clock === state.updatedAt && Array.isArray(old.batches);
+        var changes = {};
+        Object.keys(pendingJournal).forEach(function (cname) { changes[cname] = Object.keys(pendingJournal[cname]); });
+        var clock = now();
+        var batches = valid ? old.batches.slice() : [];
+        batches.push({ previous: valid ? old.revision : null, revision: revision, changes: changes });
+        while (batches.length > 20 || (batches.length > 1 && JSON.stringify(batches).length > 180000)) batches.shift();
+        var journal = JSON.stringify(batches).length <= 180000 ? { revision: revision, clock: clock, batches: batches } : null;
+        tx.set(stateRef(), { updatedAt: clock, schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true, syncJournal: journal }, { merge: true });
+      });
+    });
+  }
+
+  function deltaChanges(state) {
+    var journal = state.syncJournal;
+    if (!journalRevision || !journal || journal.clock !== state.updatedAt || !Array.isArray(journal.batches)) return null;
+    if (journal.revision === journalRevision) return {};
+    if (journal.batches.length > 20 || journal.batches.some(function (batch) {
+      return !batch || typeof batch.revision !== "string" || !batch.changes || Object.keys(batch.changes).some(function (cname) {
+        return !Array.isArray(batch.changes[cname]) || batch.changes[cname].some(function (id) { return typeof id !== "string" || !id || id.indexOf("/") !== -1; });
+      });
+    })) return null;
+    var revision = journalRevision, found = false, changes = {};
+    journal.batches.forEach(function (batch) {
+      if (batch.previous !== revision) return;
+      found = true; revision = batch.revision;
+      Object.keys(batch.changes || {}).forEach(function (cname) {
+        if (COLLECTIONS.indexOf(cname) === -1) return;
+        if (!changes[cname]) changes[cname] = {};
+        batch.changes[cname].forEach(function (id) { changes[cname][id] = true; });
+      });
+    });
+    return found && revision === journal.revision ? changes : null;
+  }
+
+  function readDelta(changes, remoteUpdated) {
+    var obj = { schemaVersion: PMS.schema.VERSION, meta: { updatedAt: remoteUpdated } };
+    // Rebuild from acknowledged remote baselines, never from pending local edits.
+    COLLECTIONS.forEach(function (cname) {
+      var mirror = mirrorFor(cname);
+      obj[cname] = APPEND_COLS.indexOf(cname) !== -1
+        ? (PMS.store.data[cname] || []).filter(function (row) { return mirror[row.id]; }).map(function (row) { return PMS.utils.deepClone(row); })
+        : Object.keys(mirror).map(function (id) { return PMS.utils.deepClone(mirror[id].snapshot); });
+    });
+    if (COLLECTIONS.some(function (cname) { return obj[cname].length !== Object.keys(mirrorFor(cname)).length || obj[cname].some(function (row) { return !row || !row.id; }); })) return Promise.resolve(null);
+    if (Object.keys(changes).some(function (cname) { return WHOLE_COLS.indexOf(cname) === -1 && changes[cname].data; })) return Promise.resolve(null);
+    return Promise.all(Object.keys(changes).map(function (cname) {
+      if (WHOLE_COLS.indexOf(cname) !== -1) {
+        return colRef(cname).get().then(function (snap) { obj[cname] = snap.exists && Array.isArray(snap.data().items) ? snap.data().items : []; });
+      }
+      return Promise.all(Object.keys(changes[cname]).map(function (id) {
+        return recordRef(cname, id).get().then(function (snap) {
+          obj[cname] = obj[cname].filter(function (row) { return row.id !== id; });
+          if (snap.exists) obj[cname].push(snap.data());
+        });
+      }));
+    })).then(function () { return obj; });
+  }
   var unavailableCollections = {};
   function permissionDenied(error) {
     return !!(error && /(^|\/)permission-denied$/.test(error.code || ""));
@@ -286,6 +366,7 @@
      render immediately and offline.
      -------------------------------------------------------------------- */
   var accountEventsFetched = false;
+  var accountReadAt = 0, accountReadOwner = null, accountReadPending = null;
 
   function isAdminReader() {
     var u = PMS.auth && PMS.auth.currentUser ? PMS.auth.currentUser() : null;
@@ -304,15 +385,20 @@
   // deny these documents to everyone else, and a non-admin simply gets the
   // local cache rather than a failed read.
   function accountEvents() {
-    if (!enabled || !isAdminReader()) {
-      return Promise.resolve((PMS.store.data && PMS.store.data.accountEvents) || []);
+    if (!isAdminReader()) return Promise.resolve([]);
+    var cached = (PMS.store.data && PMS.store.data.accountEvents) || [];
+    if (!enabled || quotaBlocked()) return Promise.resolve(cached);
+    var owner = identity().cloudUid;
+    if (accountReadOwner === owner) {
+      if (accountReadPending) return accountReadPending;
+      if (accountReadAt && Date.now() - accountReadAt < 60000) return Promise.resolve(cached);
     }
-    return waitForSignedIn().then(function (ok) {
-      if (!ok) return (PMS.store.data && PMS.store.data.accountEvents) || [];
-      return ensureReady();
-    }).then(function () {
-      return accountEventsCol().get();
+    accountReadOwner = owner; accountReadAt = Date.now();
+    var request = waitForSignedIn().then(function (ok) {
+      if (!ok) return null;
+      return ensureReady().then(function () { return accountEventsCol().get(); });
     }).then(function (qs) {
+      if (!qs || identity().cloudUid !== owner || !isAdminReader()) return cached;
       var rows = [];
       qs.forEach(function (ds) { if (ds.exists) rows.push(ds.data() || {}); });
       rows.sort(function (a, b) { return String(b.at || "").localeCompare(String(a.at || "")); });
@@ -320,9 +406,12 @@
       cacheAccountEvents(rows);
       return rows;
     }).catch(function (e) {
+      noteQuota(e);
       console.warn("[cloudsync] account events unavailable:", e);
-      return (PMS.store.data && PMS.store.data.accountEvents) || [];
-    });
+      return cached;
+    }).finally(function () { if (accountReadPending === request) accountReadPending = null; });
+    accountReadPending = request;
+    return request;
   }
 
   /* ---------------- Firebase SDK loader (dynamic) ---------------- */
@@ -1174,7 +1263,14 @@
         var local = PMS.store.data && PMS.store.data[cname];
         if (Array.isArray(local)) local.forEach(function (it) { if (it && it.id) localIds[it.id] = true; });
         var mirrored = items.every(function (it) { return it && it.id && localIds[it.id]; });
-        return mirrored ? [colRef(cname).delete()] : [];
+        if (!mirrored) return [];
+        return Promise.all(items.map(function (item) { return recordRef(cname, item.id).get(); })).then(function (records) {
+          if (!records.every(function (record) { return record.exists; })) return [];
+          return [colRef(cname).delete().then(function () {
+            if (!pendingJournal[cname]) pendingJournal[cname] = {};
+            pendingJournal[cname].data = true;
+          })];
+        });
       });
     })).then(function (groups) {
       var out = [];
@@ -1267,10 +1363,8 @@
                 return !(mirrorPatches.activities && mirrorPatches.activities[id] === null);
               });
               pendingClock = true;
-              var clock = sharedWrite
-                ? stateRef().set({ updatedAt: now(), schemaVersion: PMS.schema.VERSION, writer: PAGE_ID, hasData: true })
-                : stateRef().set({ updatedAt: now() }, { merge: true });
-              return clock.then(function () { pendingClock = false; return failure; });
+              rememberJournal(mirrorPatches);
+              return publishClock(sharedWrite).then(function () { pendingClock = false; pendingJournal = {}; recentState = null; return failure; });
             }).then(function (failure) {
               // Successful records remain tracked even if a different record
               // failed, so a retry cannot mistake our own write for a conflict.
@@ -1319,18 +1413,19 @@
   /* ---------------- pull (cloud -> local) ---------------- */
   // mode: undefined (only when remote is newer) | "replace" | "merge"
   function pull(mode) {
-    var omitted = {};
+    var omitted = {}, pulledJournal = null, fullPull = false;
     if (!enabled || quotaBlocked()) return Promise.resolve(false);
     PMS.bus.emit("cloud:inflight", { busy: true, op: "pull" });
     return waitForSignedIn().then(function (ok) {
-      if (!ok) return false;
-      return ensureReady();
-    }).then(function () {
-      return stateRef().get();
+      if (!ok) return null;
+      return ensureReady().then(function () { return stateRef().get(); });
     }).then(function (snap) {
+      if (!snap) return null;
       recentState = snap; recentStateAt = Date.now();
       if (!snap.exists) return null;
-      var remoteUpdated = snap.data().updatedAt;
+      var state = snap.data();
+      var remoteUpdated = state.updatedAt;
+      pulledJournal = state.syncJournal && state.syncJournal.clock === remoteUpdated ? state.syncJournal.revision : null;
       var localData = PMS.store.data;
       var localUpdated = localData.meta && localData.meta.updatedAt;
       var localEmpty = USER_COLS.every(function (c) { return !Array.isArray(localData[c]) || localData[c].length === 0; });
@@ -1341,9 +1436,15 @@
         // be treated as "ahead" of a populated cloud.
         if (!remoteUpdated) return null;
         if (!localEmpty && localUpdated && remoteUpdated === localUpdated
-          && !Object.keys(unavailableCollections).length) return null;
+          && (!pulledJournal || pulledJournal === journalRevision) && !lastPullError && !Object.keys(unavailableCollections).length) return null;
       }
-      return Promise.all(COLLECTIONS.map(function (cname) {
+      var delta = mode !== "merge" && mode !== "replace" && identity().role !== "member"
+        && !lastPullError && !Object.keys(unavailableCollections).length ? deltaChanges(state) : null;
+      var incremental = delta ? readDelta(delta, remoteUpdated) : Promise.resolve(null);
+      return incremental.then(function (partial) {
+        if (partial) return partial;
+        fullPull = true;
+        return Promise.all(COLLECTIONS.map(function (cname) {
         if (cname === "subtasks" && identity().role === "member") return Promise.resolve([]);
         if (isRecordCol(cname)) {
           // per-record collection: read every doc. A legacy whole-doc
@@ -1406,6 +1507,7 @@
           return obj;
         });
       });
+      });
     }).then(function (obj) {
       if (!obj) return false;
       // Capture the RAW remote rows (before merging) so the per-record mirror
@@ -1450,7 +1552,8 @@
       if (rawRemote.accountEvents) cacheAccountEvents(rawRemote.accountEvents);
       applying = false;
       lastPulled = Date.now();
-      lastReconciled = lastPulled;
+      if (fullPull) lastReconciled = lastPulled;
+      journalRevision = pulledJournal;
       lastPullError = null;
       if (!hasPendingLocalChanges(PMS.store.data)) lastPushError = null;
       lastError = lastPushError;
@@ -1568,6 +1671,7 @@
       if (app) { try { app.delete(); } catch (e) {} }
     }
     firestore = null;
+    journalRevision = null; recentState = null;
   }
   function onChange() {
     if (applying || !enabled) return;

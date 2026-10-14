@@ -864,3 +864,141 @@ test('editing a task does not transact unchanged reference datasets',async()=>{
   assert.equal(f.documents.get('zms_tasks/task').title,'Edited');
  }finally{await f.close();}
 });
+
+async function incrementalPair(){
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}]]);
+ for(let i=0;i<52;i++)shared.set('zms_tasks/task-'+i,{id:'task-'+i,title:'Task '+i,description:'Original',updatedAt:'2026-01-01'});
+ for(let i=0;i<502;i++)shared.set('zms_activities/event-'+i,{id:'event-'+i,entityName:'Task '+i,createdAt:'2026-01-01'});
+ const writer=await syncFixture(undefined,shared);
+ writer.p.store.data.tasks[0].title='Initial hint';writer.p.store.data.tasks[0].updatedAt='2026-01-02';await writer.p.cloudsync.push();
+ const reader=await syncFixture(undefined,shared);
+ return {writer,reader,shared,close:async()=>{await writer.close();await reader.close();}};
+}
+
+test('incremental pulls read only changed tasks and new activity without reloading 502 events',async()=>{
+ const f=await incrementalPair();try{
+  const queries=f.reader.queries.length,reads=[];
+  f.reader.control.beforeRead=async key=>{reads.push(key);};
+  const row=f.writer.p.store.data.tasks.find(t=>t.id==='task-0');row.title='Updated';row.updatedAt='2026-01-03';
+  f.writer.p.store.data.activities.push({id:'new-event',entityName:'New action',createdAt:'2026-01-03'});
+  assert.equal(await f.writer.p.cloudsync.push(),true);await f.reader.poll();
+  assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-0').title,'Updated');
+  assert.equal(f.reader.p.store.data.tasks.length,52);assert.equal(f.reader.p.store.data.activities.length,503);
+  assert.equal(f.reader.queries.length,queries);assert.deepEqual(reads.sort(),['zms_activities/new-event','zms_meta/state','zms_tasks/task-0'].sort());
+ }finally{await f.close();}
+});
+
+test('incremental deletion removes only acknowledged deleted records and preserves other history',async()=>{
+ const f=await incrementalPair();try{
+  f.writer.p.store.data.tasks=f.writer.p.store.data.tasks.filter(t=>t.id!=='task-1');
+  f.writer.p.store.data.activities=f.writer.p.store.data.activities.filter(t=>t.id!=='event-1');
+  f.writer.p.store.data.activityDeletedIds=['event-1'];
+  const queries=f.reader.queries.length;
+  assert.equal(await f.writer.p.cloudsync.push(),true);await f.reader.poll();
+  assert.equal(f.reader.p.store.data.tasks.length,51);assert.equal(f.reader.p.store.data.activities.length,501);
+  assert.equal(f.reader.p.store.data.tasks.some(t=>t.id==='task-1'),false);assert.equal(f.reader.p.store.data.activities.some(t=>t.id==='event-1'),false);
+  assert.equal(f.reader.queries.length,queries);
+ }finally{await f.close();}
+});
+
+test('incremental pulls merge pending local fields and detect overlapping conflicts',async()=>{
+ const f=await incrementalPair();try{
+  const local=f.reader.p.store.data.tasks.find(t=>t.id==='task-0');local.description='Local edit';local.updatedAt='2026-01-04';
+  const remote=f.writer.p.store.data.tasks.find(t=>t.id==='task-0');remote.title='Remote title';remote.updatedAt='2026-01-03';
+  await f.writer.p.cloudsync.push();await f.reader.poll();
+  assert.equal(f.shared.get('zms_tasks/task-0').description,'Local edit');assert.equal(f.shared.get('zms_tasks/task-0').title,'Remote title');
+  await f.writer.p.cloudsync.pull('merge');await f.reader.p.cloudsync.pull('merge');
+  f.writer.p.store.data.tasks.find(t=>t.id==='task-0').title='Their next edit';
+  f.reader.p.store.data.tasks.find(t=>t.id==='task-0').title='My next edit';
+  await f.writer.p.cloudsync.push();await f.reader.poll();
+  assert.equal(f.reader.p.cloudsync.conflicts().length,1);assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-0').title,'My next edit');
+ }finally{await f.close();}
+});
+
+test('clock-only older clients invalidate incremental hints and trigger a complete safe merge',async()=>{
+ const f=await incrementalPair();try{
+  f.shared.set('zms_tasks/task-2',{...f.shared.get('zms_tasks/task-2'),title:'Older client edit',updatedAt:'2026-02-01'});
+  f.shared.set('zms_meta/state',{...f.shared.get('zms_meta/state'),updatedAt:'2026-02-01'});
+  const queries=f.reader.queries.length;await f.reader.poll();
+  assert.ok(f.reader.queries.length>queries);assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-2').title,'Older client edit');
+  assert.equal(f.reader.p.store.data.activities.length,502);
+ }finally{await f.close();}
+});
+
+test('a client missing the bounded change window safely falls back to full reconciliation',async()=>{
+ const f=await incrementalPair();try{
+  for(let i=0;i<22;i++){
+   const t=f.writer.p.store.data.tasks.find(t=>t.id==='task-0');t.title='Edit '+i;t.updatedAt='2026-02-'+String(i+1).padStart(2,'0');
+   assert.equal(await f.writer.p.cloudsync.push(),true);
+  }
+  assert.equal(f.shared.get('zms_meta/state').syncJournal.batches.length,20);
+  const queries=f.reader.queries.length;await f.reader.poll();
+  assert.ok(f.reader.queries.length>queries);assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-0').title,'Edit 21');
+  assert.equal(f.reader.p.store.data.activities.length,502);
+ }finally{await f.close();}
+});
+
+test('an interrupted clock publish retains change hints for a later retry',async()=>{
+ const f=await incrementalPair();try{
+  f.writer.control.beforeWrite=async key=>{if(key==='zms_meta/state')throw Object.assign(new Error('Clock interrupted'),{code:'unavailable'});};
+  const t=f.writer.p.store.data.tasks.find(t=>t.id==='task-0');t.title='Acknowledged before clock';t.updatedAt='2026-03-01';
+  assert.equal(await f.writer.p.cloudsync.push(),false);assert.equal(f.shared.get('zms_tasks/task-0').title,t.title);
+  f.writer.control.beforeWrite=null;assert.equal(await f.writer.p.cloudsync.push(),true);
+  const queries=f.reader.queries.length;await f.reader.poll();
+  assert.equal(f.reader.queries.length,queries);assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-0').title,'Acknowledged before clock');
+ }finally{await f.close();}
+});
+
+test('legacy wrappers are retained until their records actually exist in Firestore',async()=>{
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}],['zms_tasks/data',{items:[{id:'legacy',title:'Only backup',updatedAt:'2026-01-01'}]}]]);
+ const f=await syncFixture(undefined,shared);try{
+  assert.ok(shared.has('zms_tasks/data'));assert.equal(shared.has('zms_tasks/legacy'),false);
+  assert.equal(f.p.store.data.tasks[0].title,'Only backup');
+  await f.p.cloudsync.push();assert.ok(shared.has('zms_tasks/data'));
+ }finally{await f.close();}
+});
+
+test('activity renders in automatic scroll batches while preserving the complete history',async()=>{
+ const {dom,w,p}=appFixture();let callback,disconnects=0;
+ try{
+  w.IntersectionObserver=class{constructor(fn){callback=fn;}observe(){}disconnect(){disconnects++;}};
+  p.activity.refreshAccountEvents=()=>Promise.resolve([]);
+  p.store.data.activities=Array.from({length:250},(_,i)=>({id:'history-'+i,entity:'task',actor:'User',at:'2026-01-01'}));
+  const root=w.document.getElementById('view-root'),cleanup=p.registry.getView('activity').render(root);
+  assert.equal(root.querySelectorAll('.act-row').length,100);
+  callback([{isIntersecting:true}]);assert.equal(root.querySelectorAll('.act-row').length,200);
+  callback([{isIntersecting:true}]);assert.equal(root.querySelectorAll('.act-row').length,250);
+  assert.equal(p.activity.entries().length,250);cleanup();assert.ok(disconnects>0);
+ }finally{dom.window.close();}
+});
+
+test('account audit reads coalesce simultaneous requests and cache repeated refreshes',async()=>{
+ const f=await syncFixture();try{
+  f.documents.set('zms_account_events/event',{id:'event',actor:'Member',at:'2026-01-01'});
+  await Promise.all([f.p.cloudsync.accountEvents(),f.p.cloudsync.accountEvents(),f.p.cloudsync.accountEvents()]);
+  for(let i=0;i<5;i++)await f.p.cloudsync.accountEvents();
+  assert.equal(f.queries.filter(q=>q[0]==='zms_account_events').length,1);
+  f.clock.now+=60000;await f.p.cloudsync.accountEvents();assert.equal(f.queries.filter(q=>q[0]==='zms_account_events').length,2);
+  assert.equal(f.p.store.data.accountEvents[0].actor,'Member');
+ }finally{await f.close();}
+});
+
+test('quota recovery verifies collection reads even when the shared clock did not change',async()=>{
+ const shared=new Map([['zms_meta/state',{updatedAt:'2026-01-01'}],['zms_tasks/task',{id:'task',title:'Preserved',updatedAt:'2026-01-01'}]]);
+ const f=await syncFixture(undefined,shared);try{
+  f.control.beforeRead=async()=>{throw Object.assign(new Error('Quota'),{code:'resource-exhausted'});};
+  assert.equal(await f.p.cloudsync.pull(),false);assert.equal(f.p.cloudsync.status().error,'resource-exhausted');
+  f.control.beforeRead=null;f.clock.now+=30*60000;const queries=f.queries.length;await f.poll();
+  assert.ok(f.queries.length>queries);assert.equal(f.p.cloudsync.status().error,null);assert.equal(f.p.store.data.tasks[0].title,'Preserved');
+ }finally{await f.close();}
+});
+
+test('malformed incremental hints fall back to complete reads without discarding cached history',async()=>{
+ const f=await incrementalPair();try{
+  const state=f.shared.get('zms_meta/state');state.syncJournal.revision='broken';state.syncJournal.batches=[{revision:'broken',changes:{tasks:'not-an-array'}}];
+  f.shared.set('zms_tasks/task-2',{...f.shared.get('zms_tasks/task-2'),title:'Recovered by full read'});
+  const queries=f.reader.queries.length;await f.reader.poll();
+  assert.ok(f.reader.queries.length>queries);assert.equal(f.reader.p.store.data.tasks.find(t=>t.id==='task-2').title,'Recovered by full read');
+  assert.equal(f.reader.p.store.data.activities.length,502);
+ }finally{await f.close();}
+});

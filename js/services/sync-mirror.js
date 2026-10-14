@@ -61,11 +61,12 @@
   // Three-way field merge. Different fields combine; overlapping edits are
   // refused and retained locally for explicit resolution, never silently lost.
   function mergeRecord(base, local, remote) {
-    var result = PMS.utils.deepClone(remote), conflicts = [];
+    var result = PMS.utils.deepClone(remote), conflicts = [], locallyChanged = false;
     var keys = Object.keys(Object.assign({}, base, local));
     keys.forEach(function (key) {
       if (key === "updatedAt") return;
       if (equal(base[key], local[key])) return;
+      locallyChanged = true;
       if (!equal(base[key], remote[key]) && !equal(local[key], remote[key])) {
         conflicts.push(key); return;
       }
@@ -76,7 +77,7 @@
       var error = new Error("sync-conflict: " + conflicts.join(", "));
       error.code = "sync-conflict"; error.fields = conflicts; throw error;
     }
-    result.updatedAt = local.updatedAt || remote.updatedAt;
+    result.updatedAt = locallyChanged ? (local.updatedAt || remote.updatedAt) : remote.updatedAt;
     return result;
   }
 

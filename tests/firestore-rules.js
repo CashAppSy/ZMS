@@ -3,7 +3,7 @@ const { test, before, after } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
-const { doc, setDoc, updateDoc, writeBatch, getDoc, deleteDoc, getDocs, query, collection, where } = require('firebase/firestore');
+const { doc, setDoc, updateDoc, writeBatch, getDoc, deleteDoc, getDocs, query, collection, where, runTransaction } = require('firebase/firestore');
 let env;
 before(async()=>{
   env=await initializeTestEnvironment({projectId:'demo-zms',firestore:{host:'127.0.0.1',port:8085,rules:fs.readFileSync(path.join(__dirname,'../firestore.rules'),'utf8')}});
@@ -155,4 +155,13 @@ test('manager may create tasks in another admins pillar assigned to the admin an
   await assertSucceeds(setDoc(doc(manager,'zms_tasks',id),row));
   await assertSucceeds(getDoc(doc(admin,'zms_tasks',id)));
  }
+});
+
+test('bounded sync hints are writable by managers while members remain clock-only',async()=>{
+ const db=env.authenticatedContext('manager').firestore(),ref=doc(db,'zms_meta/incremental-test');
+ const state={updatedAt:'2026-01-01',syncJournal:{clock:'2026-01-01',revision:'r1',batches:[{previous:null,revision:'r1',changes:{tasks:['task-id'],activities:['event-id']}}]}};
+ await assertSucceeds(runTransaction(db,async tx=>{await tx.get(ref);tx.set(ref,state,{merge:true});}));
+ const member=env.authenticatedContext('member').firestore(),memberRef=doc(member,'zms_meta/incremental-test');
+ await assertSucceeds(updateDoc(memberRef,{updatedAt:'2026-01-02'}));
+ await assertFails(updateDoc(memberRef,{syncJournal:{revision:'forged'}}));
 });

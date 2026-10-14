@@ -82,6 +82,7 @@
   }
 
   function render(container) {
+    if (container._activityObserver) { container._activityObserver.disconnect(); container._activityObserver = null; }
     container.innerHTML = "";
     var entries = PMS.activity.entries();
     draw(container, entries);
@@ -99,6 +100,7 @@
   }
 
   function draw(container, entries) {
+    if (container._activityObserver) { container._activityObserver.disconnect(); container._activityObserver = null; }
 
     var head = h("div.card");
     var headRow = h("div.u-flex", { style: { flexWrap: "wrap", gap: "10px", alignItems: "center", justifyContent: "space-between" } });
@@ -119,7 +121,22 @@
     if (!entries.length) {
       body.appendChild(h("div.empty-state", [h("div", { text: t("activity.empty") })]));
     } else {
-      entries.forEach(function (e) { body.appendChild(entryRow(e)); });
+      if (!window.IntersectionObserver) entries.forEach(function (e) { body.appendChild(entryRow(e)); });
+      else {
+        var cursor = 0;
+        var sentinel = h("div", { attrs: { "aria-hidden": "true" }, style: { height: "1px" } });
+        function appendBatch() {
+          var end = Math.min(cursor + 100, entries.length);
+          while (cursor < end) body.insertBefore(entryRow(entries[cursor++]), sentinel);
+          if (cursor === entries.length) { observer.disconnect(); sentinel.remove(); }
+        }
+        var observer = new IntersectionObserver(function (events) {
+          if (events.some(function (event) { return event.isIntersecting; })) appendBatch();
+        }, { rootMargin: "300px" });
+        container._activityObserver = observer;
+        body.appendChild(sentinel); appendBatch();
+        if (cursor < entries.length) observer.observe(sentinel);
+      }
     }
     root.appendChild(body);
 
@@ -136,7 +153,7 @@
     render: function (container, params) {
       render(container);
       var off = PMS.bus.on("store:changed", function () { if (PMS.router.current === "/activity") render(container); });
-      return function () { off(); };
+      return function () { off(); if (container._activityObserver) { container._activityObserver.disconnect(); container._activityObserver = null; } };
     }
   };
   PMS.registry.registerView(view);
