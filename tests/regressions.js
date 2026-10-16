@@ -1106,3 +1106,21 @@ test('Gantt draws links only between matching tasks and shows a useful filtered 
   assert.equal(root.querySelector('.empty-state button'),null);off();
  }finally{dom.window.close();}
 });
+
+
+test('Gantt opens near today and preserves the calendar position when older tasks arrive',()=>{
+ const {dom,w,p}=appFixture();try{
+  const day=86400000,today=p.utils.parseDate(p.utils.todayISO());
+  const date=n=>p.utils.toISODate(new Date(today.getTime()+n*day));
+  p.repos.tasks.add({title:'Long schedule',startDate:date(-60),dueDate:date(60)});
+  const root=w.document.getElementById('view-root'),view=p.registry.getView('tasks-gantt');let off=view.render(root);
+  let chart=root.querySelector('.gantt-root'),scale=Number(chart.dataset.zoom);
+  assert.equal(chart.scrollLeft,58*scale);
+  chart.scrollLeft=10*scale;chart.scrollTop=40;
+  p.store.data.tasks.push({id:'older',title:'Earlier history',startDate:date(-90),dueDate:date(-85)});
+  off();off=view.render(root);chart=root.querySelector('.gantt-root');
+  assert.equal(chart.scrollLeft,40*scale);assert.equal(chart.scrollTop,40);
+  const zoom=root.querySelector('.page-header select');zoom.value='70';zoom.dispatchEvent(new w.Event('change'));
+  assert.equal(root.querySelector('.gantt-root').scrollLeft,40*70);off();
+ }finally{dom.window.close();}
+});

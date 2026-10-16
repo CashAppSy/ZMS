@@ -42,7 +42,7 @@
 
   function render(container) {
     var previous = container.querySelector(".gantt-root");
-    var scroll = previous ? { left: previous.scrollLeft * zoom / Number(previous.dataset.zoom || zoom), top: previous.scrollTop } : null;
+    var scroll = previous ? { days: previous.scrollLeft / Number(previous.dataset.zoom || zoom), start: PMS.utils.parseDate(previous.dataset.start), top: previous.scrollTop } : null;
     container.innerHTML = "";
     var header = h("div.page-header");
     header.appendChild(h("h1", { text: t("tasks.viewGantt") }));
@@ -92,12 +92,17 @@
     if (!min || !max) { min = new Date(); max = new Date(Date.now() + 7 * DAY); }
     min.setHours(0, 0, 0, 0); max.setHours(0, 0, 0, 0);
     var today = PMS.utils.parseDate(PMS.utils.todayISO());
+    // Keep today reachable even when every task is in the past or future.
+    var beforeToday = new Date(today.getTime() - 2 * DAY);
+    var afterToday = new Date(today.getTime() + 7 * DAY);
+    if (min > beforeToday) min = beforeToday;
+    if (max < afterToday) max = afterToday;
 
     var timeSpanDays = Math.round((max - min) / DAY) + 1;
     // cap gridline density for huge date ranges (keeps the DOM light)
     var gridStep = Math.max(1, Math.ceil(timeSpanDays / 240), Math.ceil(24 / zoom));
 
-    var root = h("div.gantt-root", { attrs: { role: "region", "aria-label": t("tasks.viewGantt"), tabindex: "0" }, dataset: { zoom: String(zoom) }, style: { background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" } });
+    var root = h("div.gantt-root", { attrs: { role: "region", "aria-label": t("tasks.viewGantt"), tabindex: "0" }, dataset: { zoom: String(zoom), start: PMS.utils.toISODate(min) }, style: { background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" } });
     // CSS reads the column width from here rather than keeping its own copy, so
     // the rows and the arrow overlay can never disagree about where the timeline
     // begins.
@@ -287,7 +292,16 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
     bodyWrapper.appendChild(body);
     bodyWrapper.appendChild(linksSvg);
     wrap.appendChild(bodyWrapper);
-    if (scroll) { root.scrollLeft = scroll.left; root.scrollTop = scroll.top; }
+    if (scroll) {
+      var shift = scroll.start ? Math.round((scroll.start - min) / DAY) : 0;
+      root.scrollLeft = Math.max(0, (shift + scroll.days) * zoom);
+      root.scrollTop = scroll.top;
+    } else {
+      // Leave up to two days of context beside the pinned task names. Do this only
+      // on opening the chart, never while a user is examining another date.
+      var contextWidth = root.clientWidth ? Math.min(2 * zoom, Math.max(0, (root.clientWidth - LABEL_W) / 4)) : 2 * zoom;
+      root.scrollLeft = Math.max(0, Math.round((today - min) / DAY) * zoom - contextWidth);
+    }
   }
 
   function addDragBar(bar, tsk, start, min, end, render, container, zoom) {

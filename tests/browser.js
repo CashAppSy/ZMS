@@ -104,8 +104,17 @@ const server = http.createServer((req,res)=>{
     assert.ok((await page.locator('.gantt-links path title').allTextContents()).some(text=>text.includes('Browser predecessor')));
   }
   await page.setViewportSize({width:390,height:844});
-  await page.evaluate(()=>{PMS.i18n.setLang('en');PMS.router.navigate('/tasks/gantt');PMS.router.handle();document.getElementById('sidebar').classList.add('collapsed');});
+  await page.evaluate(()=>{
+    PMS.i18n.setLang('en');
+    const today=PMS.utils.parseDate(PMS.utils.todayISO()),day=86400000;
+    PMS.repos.tasks.add({title:'Browser date span',startDate:PMS.utils.toISODate(new Date(today.getTime()-60*day)),dueDate:PMS.utils.toISODate(new Date(today.getTime()+60*day))});
+    PMS.router.navigate('/dashboard');PMS.router.handle();
+    PMS.router.navigate('/tasks/gantt');PMS.router.handle();document.getElementById('sidebar').classList.add('collapsed');
+  });
   const chart=page.locator('.gantt-root'),label=chart.locator('.gantt-row .gantt-label-col').first();
+  const todayLine=await chart.locator('.gantt-today').first().boundingBox(),chartBounds=await chart.boundingBox();
+  assert.ok(await chart.evaluate(el=>el.scrollLeft)>0,'Gantt initially scrolls past older months');
+  assert.ok(todayLine.x>=chartBounds.x+260&&todayLine.x<chartBounds.x+chartBounds.width,'today is visible beside pinned labels on mobile');
   const beforeSticky=await label.boundingBox();await chart.evaluate(el=>{el.scrollLeft=100;});
   const afterSticky=await label.boundingBox();
   assert.ok(Math.abs(beforeSticky.x-afterSticky.x)<2,'task labels remain visible on horizontal scroll');
