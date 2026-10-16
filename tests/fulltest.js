@@ -525,14 +525,14 @@ const root = () => document.getElementById("view-root");
   const sels = newRow.querySelectorAll("select");
   sels[0].value = vSide.id;
   sels[1].value = "FF";
-  newRow.querySelector('input[type="number"]').value = "1";
+  ok("the dependency editor omits the optional lag field", !newRow.querySelector('input[type="number"]'));
   const depBtns = document.getElementById("modal-root").querySelectorAll(".modal-footer .btn");
   depBtns[depBtns.length - 1].click();
   ok("the editor saved the typed link",
     PMS.repos.tasks.dependenciesOf(vMain.id).length === 1 &&
     PMS.repos.tasks.dependenciesOf(vMain.id)[0].id === vSide.id &&
     PMS.repos.tasks.dependenciesOf(vMain.id)[0].type === "FF" &&
-    PMS.repos.tasks.dependenciesOf(vMain.id)[0].lag === 1);
+    PMS.repos.tasks.dependenciesOf(vMain.id)[0].lag === 0);
 
   // A loop typed into the editor is refused and the modal stays open. The loop
   // has to be real: vMain waits on vSide, and vSide is made to wait on vGate,

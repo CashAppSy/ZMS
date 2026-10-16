@@ -9,7 +9,7 @@
   "use strict";
 
   var h = PMS.dom.h;
-  var t = function (k) { return PMS.i18n.t(k); };
+  var t = function (k, vars) { return PMS.i18n.t(k, vars); };
 
   function build(schema, values) {
     values = values || {};
@@ -324,6 +324,7 @@
         function addDepRow(entry) {
           entry = entry || { id: "", type: "FS", lag: 0 };
           var row = h("div.dep-row");
+          row.dataset.lag = String(entry.lag || 0);
           var search = h("input.input", { type: "search", placeholder: t("deps.searchTask"), attrs: { "aria-label": t("deps.searchTask") } });
           var whoSel = h("select.select", { required: true });
           whoSel.appendChild(h("option", { value: "", text: t("deps.pickTask") }));
@@ -346,18 +347,22 @@
             typeSel.appendChild(h("option", { value: ty, text: ty + " — " + PMS.dependencies.label(ty) }));
           });
           typeSel.value = PMS.dependencies.isType(entry.type) ? entry.type : "FS";
-          var lagIn = h("input.input", { type: "number", value: String(entry.lag || 0), attrs: { step: "1", required: true, dir: "ltr" } });
           var explanation = h("div.dep-explanation.hint", { attrs: { "aria-live": "polite" } });
-          function describe() { explanation.textContent = t("deps.explain" + typeSel.value) + " " + t("deps.lagHint"); }
+          function describe() {
+            explanation.textContent = t("deps.explain" + typeSel.value);
+            if (Number(row.dataset.lag)) explanation.textContent += " " + t("deps.existingOffset", { days: row.dataset.lag });
+          }
           var del = h("button.btn.btn-sm.btn-soft-danger", { text: "✕", type: "button",
             attrs: { title: t("common.delete"), "aria-label": t("deps.remove") },
             on: { click: function () { row.remove(); refreshDepOptions(); } } });
-          whoSel.addEventListener("change", refreshDepOptions);
+          whoSel.addEventListener("change", function () {
+            if (whoSel.value !== entry.id) row.dataset.lag = "0";
+            describe(); refreshDepOptions();
+          });
           search.addEventListener("input", refreshDepOptions);
           typeSel.addEventListener("change", describe);
           row.appendChild(taskControl);
           row.appendChild(labeledControl(t("deps.typeLabel"), typeSel, "dep-type-control"));
-          row.appendChild(labeledControl(t("deps.lag") + " (" + t("deps.lagDays") + ")", lagIn, "dep-lag-control"));
           row.appendChild(del); row.appendChild(explanation);
           depRows.appendChild(row); describe(); refreshDepOptions();
         }
@@ -368,7 +373,7 @@
           var out = [];
           depRows.querySelectorAll(".dep-row").forEach(function (row) {
             var id = row.querySelector("select").value;
-            if (id) out.push({ id: id, type: row.querySelectorAll("select")[1].value, lag: Number(row.querySelector('input[type="number"]').value) });
+            if (id) out.push({ id: id, type: row.querySelectorAll("select")[1].value, lag: Number(row.dataset.lag || 0) });
           });
           return out;
         };

@@ -213,6 +213,7 @@
       title: "Calendar", month: "Month", week: "Week", dayEvents: "tasks"
     },
     deps: {
+      existingOffset: "Existing scheduling offset: {days} days. Kept to preserve this link; remove and re-add the dependency to reset it.",
       searchTask: "Search by task name, number or pillar",
       remove: "Remove dependency",
       invalid: "Choose existing tasks, a valid relationship and a whole number of days.",

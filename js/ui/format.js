@@ -209,6 +209,7 @@ function priorityBadge(prioKey) {
     DD.edges(data).forEach(function (e) { if (e.toId === task.id) linked[e.fromId] = true; });
     var preds = DD.predecessors(task).filter(function (d) { return linked[d.id]; });
     var wrap = h("span.dep-summary");
+    if (preds.length) wrap.appendChild(h("span.u-muted", { text: t("deps.predecessor") + ": " }));
     preds.forEach(function (d) {
       var p = (data.tasks || []).find(function (x) { return x && x.id === d.id; });
       var ok = p ? DD.isSatisfied(d, p, task) : null;
@@ -223,8 +224,11 @@ function priorityBadge(prioKey) {
     var succs = DD.successors(data, task.id);
     if (succs.length) {
       wrap.appendChild(h("span.u-muted", {
-        text: "→ " + succs.length + " " + t("deps.chain"),
-        attrs: { title: t("deps.succs") }
+        text: t("deps.successor") + " (" + succs.length + ")",
+        attrs: { title: succs.map(function (entry) {
+          var number = numbers && numbers[entry.task.id];
+          return (number ? "#" + number + " " : "") + entry.task.title + " — " + DD.label(entry.dep.type);
+        }).join("\n") }
       }));
     }
     return wrap;

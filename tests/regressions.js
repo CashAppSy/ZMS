@@ -234,7 +234,7 @@ test('dependency fields have labels, full relationship names, search and duplica
  p.repos.tasks.addDependency(c.id,b.id,'FS',0);
  const control=p.forms.buildControl({type:'dependencies',excludeId:b.id},[{id:a.id,type:'FF',lag:-1}]);
  w.document.body.appendChild(control.el);
- const row=control.el.querySelector('.dep-row');assert.equal(row.querySelectorAll('label').length,3);
+ const row=control.el.querySelector('.dep-row');assert.equal(row.querySelectorAll('label').length,2);
  assert.ok(row.querySelectorAll('select')[1].options[0].textContent.includes('FS —'));
  assert.equal([...row.querySelector('select').options].find(o=>o.value===c.id).disabled,true);
  control.el.querySelector(':scope > button').click();
@@ -1026,4 +1026,37 @@ test('reference merges never introduce undefined timestamps into Firestore paylo
  const untouched=m.mergeRecord(base,base,{...base,color:'#999'});
  assert.equal(Object.prototype.hasOwnProperty.call(untouched,'updatedAt'),false);
  assert.deepEqual(JSON.parse(JSON.stringify(merged)),JSON.parse(JSON.stringify({...base,name:{en:'Ready'},color:'#999'})));
+});
+
+
+test('simple dependency fields omit lag, preserve legacy offsets and reset offsets for a replacement task',()=>{
+ const {dom,w,p}=appFixture();try{
+ const a=p.repos.tasks.add({title:'Alpha'}),b=p.repos.tasks.add({title:'Beta'}),c=p.repos.tasks.add({title:'Gamma'});
+ for(const lang of ['en','ar']){
+  p.i18n.setLang(lang);
+  const control=p.forms.buildControl({type:'dependencies',excludeId:b.id},[{id:a.id,type:'FF',lag:-2}]);
+  assert.equal(control.el.querySelectorAll('input[type=number]').length,0);
+  assert.equal(control.getValue()[0].lag,-2);assert.ok(control.el.querySelector('.dep-explanation').textContent.includes('-2'));
+  control.el.querySelector(':scope > button').click();
+  const rows=control.el.querySelectorAll('.dep-row'),added=rows[1].querySelector('select');added.value=c.id;added.dispatchEvent(new w.Event('change'));
+  assert.equal(control.getValue()[1].lag,0);
+  rows[1].querySelector('button').click();
+  const who=rows[0].querySelector('select');who.value=c.id;who.dispatchEvent(new w.Event('change'));
+  assert.equal(control.getValue()[0].lag,0);assert.ok(!rows[0].querySelector('.dep-explanation').textContent.includes('-2'));
+ }
+ }finally{dom.window.close();}
+});
+
+test('dependency summaries distinguish both directions and identify connected tasks',()=>{
+ const {dom,p}=appFixture();try{
+ const a=p.repos.tasks.add({title:'Predecessor task'}),b=p.repos.tasks.add({title:'Current task'}),c=p.repos.tasks.add({title:'Successor task'});
+ p.repos.tasks.addDependency(b.id,a.id,'FS',0);p.repos.tasks.addDependency(c.id,b.id,'FS',0);
+ for(const lang of ['en','ar']){
+  p.i18n.setLang(lang);const summary=p.vformat.depSummary(p.store.data,p.repos.tasks.get(b.id),p.utils.taskNumbers(p.store.data));
+  assert.ok(summary.textContent.includes(p.i18n.t('deps.predecessor')));
+  assert.ok(summary.textContent.includes(p.i18n.t('deps.successor')));
+  assert.ok(summary.textContent.includes('Predecessor task'));
+  assert.ok([...summary.querySelectorAll('[title]')].some(el=>el.title.includes('Successor task')));
+ }
+ }finally{dom.window.close();}
 });
