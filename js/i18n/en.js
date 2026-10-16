@@ -204,6 +204,12 @@
       title: "Kanban", addCard: "Add", total: "Total", collapseCol: "Collapse"
     },
     gantt: {
+      scale: "Timeline scale",
+      summary: "{shown} of {total} tasks · {undated} without dates",
+      filteredHint: "Arrows are shown when both linked tasks match the filters. Critical path still uses the complete task network.",
+      noMatches: "No tasks match these filters. Clear the filters to show all tasks.",
+      invalidDates: "Due date precedes start date",
+
       title: "Gantt", zoom: "Zoom", days: "days", week: "week", month: "month",
       links: "Dependencies", dragHint: "Drag the bar to move; drag edges to resize",
       viewOnly: "View only — admins can move or resize bars",

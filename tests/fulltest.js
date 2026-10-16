@@ -412,8 +412,14 @@ const root = () => document.getElementById("view-root");
   // The seed carries links of its own, so the arrows are counted rather than
   // assumed: one per link in the whole network, none invented, none missing.
   const depPaths = Array.from(root().querySelectorAll(".gantt-links path"));
-  ok("the gantt draws one arrow per link",
-    depPaths.length === vEdges.length, depPaths.length + " arrows vs " + vEdges.length + " links");
+  const chartDated = task => {
+    const start = PMS.utils.parseDate(task.startDate) || PMS.utils.parseDate(task.dueDate);
+    const end = PMS.utils.parseDate(task.dueDate) || start;
+    return !!(start && end && end >= start);
+  };
+  const datedEdges = vEdges.filter(edge => chartDated(edge.from) && chartDated(edge.to));
+  ok("the gantt draws one arrow per link between valid scheduled tasks",
+    depPaths.length === datedEdges.length, depPaths.length + " arrows vs " + datedEdges.length + " scheduled links");
   // A satisfied FS arrow points with the FS head; an unsatisfied one swaps to the
   // broken head, so the two cases are looked up separately.
   const fsArrow = depPaths.find(p => (p.getAttribute("class") || "").indexOf("dep-broken") === -1 &&
@@ -727,7 +733,8 @@ const root = () => document.getElementById("view-root");
   // gantt
   errors.length = 0; route("/tasks/gantt");
   ok("gantt rows = tasks (" + root().querySelectorAll(".gantt-row").length + ")", root().querySelectorAll(".gantt-row").length === tasks.length);
-  ok("gantt bars = tasks", root().querySelectorAll(".gantt-bar").length === tasks.length);
+  ok("gantt bars = valid scheduled tasks", root().querySelectorAll(".gantt-bar").length === tasks.filter(chartDated).length);
+  ok("gantt retains a label row for every task", root().querySelectorAll(".gantt-row").length === tasks.length);
   ok("gantt month labels", root().querySelectorAll(".gantt-month-label").length >= 1);
   ok("gantt day labels", root().querySelectorAll(".gantt-day-label").length >= 1);
   ok("gantt bars carry date tooltips", Array.from(root().querySelectorAll(".gantt-bar")).every(b => (b.getAttribute("title") || "").length > 3));

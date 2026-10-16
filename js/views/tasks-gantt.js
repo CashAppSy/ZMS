@@ -10,7 +10,7 @@
   var t = function (k, v) { return PMS.i18n.t(k, v); };
 
   var DAY = 24 * 60 * 60 * 1000;
-  var zoom = 40; // px per day
+  var zoom = 32; // px per day
 
   /* One source of truth for the chart's vertical geometry.
      The rows are DOM elements and the dependency arrows are an SVG painted on
@@ -30,18 +30,26 @@
      there too. */
   var LABEL_W = 260;
 
+  var query = {};
   function tasksForGantt() {
-    return PMS.repos.tasks.all();
+    return PMS.filterEngine.filterTasks(PMS.repos.tasks.all(), {
+      search: query.search, projectId: query.projectId, personId: query.assigneeId,
+      status: query.statusKey ? [query.statusKey] : [], priority: query.priorityKey ? [query.priorityKey] : [],
+      from: query.from, to: query.to, startFrom: query.startFrom, startTo: query.startTo,
+      lateOnly: query.lateOnly, blockedOnly: query.blockedOnly, criticalOnly: query.criticalOnly, mainOnly: query.mainOnly
+    }, PMS.store.data);
   }
 
   function render(container) {
+    var previous = container.querySelector(".gantt-root");
+    var scroll = previous ? { left: previous.scrollLeft * zoom / Number(previous.dataset.zoom || zoom), top: previous.scrollTop } : null;
     container.innerHTML = "";
     var header = h("div.page-header");
     header.appendChild(h("h1", { text: t("tasks.viewGantt") }));
     var actions = h("div.actions");
     actions.appendChild(PMS.taskModeSwitcher("gantt"));
-    var zoomSel = h("select.select", { on: { change: function (e) { zoom = Number(e.target.value); render(container); } } });
-    [["days", 26], ["week", 40], ["month", 70]].forEach(function (z) {
+    var zoomSel = h("select.select", { attrs: { "aria-label": t("gantt.scale") }, on: { change: function (e) { zoom = Number(e.target.value); render(container); } } });
+    [["days", 70], ["week", 32], ["month", 12]].forEach(function (z) {
       zoomSel.appendChild(h("option", { value: String(z[1]), text: t("gantt." + z[0]) }));
     });
     zoomSel.value = String(zoom);
@@ -52,15 +60,22 @@
     header.appendChild(actions);
     container.appendChild(header);
 
+    var filters = PMS.taskFilter.build({query: query, onApply: function (next) { query = next; render(container); }});
+    filters.classList.add("gantt-filters");
+    container.appendChild(filters);
     var tasks = tasksForGantt();
+    var total = PMS.repos.tasks.all().length;
+    var undated = tasks.filter(function (task) { return !task.startDate && !task.dueDate; }).length;
+    container.appendChild(h("div.gantt-summary.u-muted", { attrs: { role: "status" }, text: t("gantt.summary", {shown: tasks.length, total: total, undated: undated}) }));
+    if (tasks.length < total) container.appendChild(h("div.hint", {text: t("gantt.filteredHint")}));
     var networkNotice = PMS.vformat.networkNotice(PMS.dependencies.analyzeCached(PMS.store.data));
     if (networkNotice) container.appendChild(networkNotice);
     var canDrag = PMS.auth ? PMS.auth.can("tasks.write") : true;
-    container.appendChild(h("div.u-muted", { text: (tasks.length ? (t("tasksTotal") + ": " + tasks.length + " · ") : "") + (canDrag ? t("gantt.dragHint") : t("gantt.viewOnly")), style: { marginBlockEnd: "12px", fontSize: "0.8rem" } }));
+    container.appendChild(h("div.u-muted", { text: (canDrag ? t("gantt.dragHint") : t("gantt.viewOnly")), style: { marginBlockEnd: "12px", fontSize: "0.8rem" } }));
 
     if (!tasks.length) {
-      var emptyActions = [h("div", { text: t("tasks.noTasks") })];
-      if (PMS.auth ? PMS.auth.can("data.manage") : true) emptyActions.push(h("button.btn.btn-primary", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
+      var emptyActions = [h("div", { text: t(total ? "gantt.noMatches" : "tasks.noTasks") })];
+      if (!total && (PMS.auth ? PMS.auth.can("data.manage") : true)) emptyActions.push(h("button.btn.btn-primary", { text: t("settings.seedData"), on: { click: function () { PMS.auth.confirmSensitive(function () { PMS.editors.loadSampleData(); }); } } }));
       container.appendChild(h("div.empty-state", emptyActions));
       return;
     }
@@ -69,8 +84,10 @@
     var min = null, max = null;
     tasks.forEach(function (tsk) {
       var s = PMS.utils.parseDate(tsk.startDate), e = PMS.utils.parseDate(tsk.dueDate);
-      if (s && (!min || s < min)) min = s;
-      if (e && (!max || e > max)) max = e;
+      [s, e].forEach(function (date) {
+        if (date && (!min || date < min)) min = new Date(date);
+        if (date && (!max || date > max)) max = new Date(date);
+      });
     });
     if (!min || !max) { min = new Date(); max = new Date(Date.now() + 7 * DAY); }
     min.setHours(0, 0, 0, 0); max.setHours(0, 0, 0, 0);
@@ -78,9 +95,9 @@
 
     var timeSpanDays = Math.round((max - min) / DAY) + 1;
     // cap gridline density for huge date ranges (keeps the DOM light)
-    var gridStep = Math.max(1, Math.ceil(timeSpanDays / 240));
+    var gridStep = Math.max(1, Math.ceil(timeSpanDays / 240), Math.ceil(24 / zoom));
 
-    var root = h("div.gantt-root", { style: { background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" } });
+    var root = h("div.gantt-root", { attrs: { role: "region", "aria-label": t("tasks.viewGantt"), tabindex: "0" }, dataset: { zoom: String(zoom) }, style: { background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" } });
     // CSS reads the column width from here rather than keeping its own copy, so
     // the rows and the arrow overlay can never disagree about where the timeline
     // begins.
@@ -166,7 +183,7 @@
     function buildRow(tsk, idx) {
       var isSub = !!tsk.parentTaskId;
       var row = h("div.gantt-row" + (isSub ? ".gantt-row-sub" : ""), { style: { height: ROW_H + "px" } });
-      var labelCell = h("div.gantt-label-col", { style: { padding: "0 12px", borderInlineEnd: "1px solid var(--border)" } });
+      var labelCell = h("div.gantt-label-col", { dataset: { id: tsk.id }, style: { padding: "0 12px", borderInlineEnd: "1px solid var(--border)" } });
       if (isSub) labelCell.style.paddingInlineStart = "28px";
 // Title and dates are stacked and each truncates on its own, so the cell
     // keeps one fixed width no matter how long the title is. The markers ride
@@ -174,7 +191,7 @@
     // this column flex, and with the row only ROW_H tall the overflow spilled
     // over the dates and made the fields look stacked on top of each other.
     var labelHead = h("div.gantt-label-head");
-    labelHead.appendChild(h("span.gantt-label-title", { text: tsk.title, attrs: { title: tsk.title } }));
+    labelHead.appendChild(h("button.gantt-label-title", { type: "button", text: tsk.title, attrs: { title: tsk.title }, on: {click: function () { PMS.taskDetail.open(tsk.id); }} }));
     var markers = PMS.vformat.depMarkers(PMS.store.data, tsk, netAnalysis);
     markers.forEach(function (m) { labelHead.appendChild(m); });
     labelCell.appendChild(labelHead);
@@ -192,7 +209,10 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
       var timeCell = h("div.gantt-time-col", { style: { position: "relative" } });
       var start = PMS.utils.parseDate(tsk.startDate);
       var end = PMS.utils.parseDate(tsk.dueDate);
-      if (!start && !end) { start = today; end = new Date(today.getTime() + DAY); }
+      if ((!start && !end) || (start && end && end < start)) {
+        timeCell.appendChild(h("span.gantt-unscheduled.u-muted", {text: t(start || end ? "gantt.invalidDates" : "gantt.noDate")}));
+        row.appendChild(timeCell); body.appendChild(row); return;
+      }
       else if (!start) start = end;
       else if (!end) end = start;
       var left = Math.round((start - min) / DAY) * zoom;
@@ -267,6 +287,7 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
     bodyWrapper.appendChild(body);
     bodyWrapper.appendChild(linksSvg);
     wrap.appendChild(bodyWrapper);
+    if (scroll) { root.scrollLeft = scroll.left; root.scrollTop = scroll.top; }
   }
 
   function addDragBar(bar, tsk, start, min, end, render, container, zoom) {
@@ -319,7 +340,7 @@ if (PMS.dependencies.isCritical(netAnalysis, tsk.id)) labelCell.classList.add("i
     function edgesOf(tsk) {
       var s = PMS.utils.parseDate(tsk.startDate) || PMS.utils.parseDate(tsk.dueDate);
       var e = PMS.utils.parseDate(tsk.dueDate) || s;
-      if (!s) return null;
+      if (!s || (e && e < s)) return null;
       return {
         start: Math.round((s - min) / DAY) * zoom,
         end: Math.round((e - min) / DAY) * zoom + zoom

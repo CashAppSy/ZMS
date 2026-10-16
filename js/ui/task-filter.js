@@ -18,7 +18,7 @@
     var data = PMS.store.data;
 
     // search
-    var searchInput = h("input.input", { placeholder: t("search.placeholderTasks"), value: query.search || "" });
+    var searchInput = h("input.input", { attrs: { "aria-label": t("search.placeholderTasks") }, placeholder: t("search.placeholderTasks"), value: query.search || "" });
     searchInput.style.width = "140px";
     bar.appendChild(searchInput);
 
@@ -104,7 +104,7 @@
     }));
 
     function selectOptions(list, selected, placeholder) {
-      var sel = h("select.select.filter-multi");
+      var sel = h("select.select.filter-multi", { attrs: { "aria-label": placeholder } });
       sel.appendChild(h("option", { value: "", text: placeholder }));
       list.forEach(function (o) { sel.appendChild(h("option", { value: o.value, text: o.label })); });
       sel.value = selected || "";

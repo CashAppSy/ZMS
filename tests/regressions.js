@@ -1060,3 +1060,49 @@ test('dependency summaries distinguish both directions and identify connected ta
  }
  }finally{dom.window.close();}
 });
+
+test('Gantt combines task filters, preserves them on rerender and clears without changing data',()=>{
+ const {dom,w,p}=appFixture();try{
+  const project=p.repos.projects.add({name:'Filter pillar'}),person=p.repos.people.add({name:'Owner'});
+  const alpha=p.repos.tasks.add({title:'Gantt Alpha',projectId:project.id,status:'todo',priority:'high',assignees:[person.id],startDate:'2026-10-01',dueDate:'2026-10-10'});
+  p.repos.tasks.add({title:'Gantt Beta',status:'done',priority:'low',dueDate:'2026-10-12'});
+  const root=w.document.getElementById('view-root'),view=p.registry.getView('tasks-gantt');let off=view.render(root);
+  const before=JSON.stringify(p.store.data.tasks),bar=root.querySelector('.filter-bar'),selects=bar.querySelectorAll('select');
+  bar.querySelector('input').value='Alpha';selects[0].value=project.id;selects[1].value='todo';selects[2].value='high';selects[3].value=person.id;
+  [...bar.querySelectorAll('button')].find(b=>b.textContent===p.i18n.t('common.apply')).click();
+  assert.equal(root.querySelectorAll('.gantt-bar').length,1);assert.equal(root.querySelector('.gantt-bar').dataset.id,alpha.id);
+  assert.ok(root.querySelector('.gantt-summary').textContent.includes('1'));
+  off();off=view.render(root);assert.equal(root.querySelector('.filter-bar input').value,'Alpha');
+  assert.equal(root.querySelectorAll('.gantt-bar').length,1);
+  [...root.querySelectorAll('.filter-bar button')].find(b=>b.textContent===p.i18n.t('common.clear')).click();
+  assert.equal(root.querySelectorAll('.gantt-bar').length,2);assert.equal(JSON.stringify(p.store.data.tasks),before);off();
+ }finally{dom.window.close();}
+});
+
+test('Gantt shows undated and reversed-date tasks without fictional schedule bars and retains due-only tasks',()=>{
+ const {dom,w,p}=appFixture();try{
+  p.repos.tasks.add({title:'Undated task'});
+  const reversed=p.repos.tasks.add({title:'Reversed task',startDate:'2026-10-20',dueDate:'2026-10-10'});
+  const due=p.repos.tasks.add({title:'Due only',dueDate:'2026-12-10'});
+  // Import-shaped reversed ranges can still arrive even if editing validates them.
+  if(reversed.error)p.store.data.tasks.push({id:'reversed',title:'Reversed task',startDate:'2026-10-20',dueDate:'2026-10-10'});
+  const root=w.document.getElementById('view-root'),off=p.registry.getView('tasks-gantt').render(root);
+  assert.equal(root.querySelectorAll('.gantt-bar').length,1);assert.equal(root.querySelector('.gantt-bar').dataset.id,due.id);
+  assert.equal(root.querySelectorAll('.gantt-unscheduled').length,2);
+  assert.ok(parseFloat(root.querySelector('.gantt-bar').style.left)>=0);
+  assert.equal(root.querySelector('.gantt-root').getAttribute('tabindex'),'0');off();
+ }finally{dom.window.close();}
+});
+
+test('Gantt draws links only between matching tasks and shows a useful filtered empty state',()=>{
+ const {dom,w,p}=appFixture();try{
+  const a=p.repos.tasks.add({title:'Keep predecessor',startDate:'2026-10-01',dueDate:'2026-10-03'});
+  p.repos.tasks.add({title:'Other successor',startDate:'2026-10-04',dueDate:'2026-10-06',dependencies:[{id:a.id,type:'FS',lag:0}]});
+  const root=w.document.getElementById('view-root'),off=p.registry.getView('tasks-gantt').render(root);
+  assert.equal(root.querySelectorAll('.gantt-links path').length,1);
+  function search(value){root.querySelector('.filter-bar input').value=value;[...root.querySelectorAll('.filter-bar button')].find(b=>b.textContent===p.i18n.t('common.apply')).click();}
+  search('Keep');assert.equal(root.querySelectorAll('.gantt-links path').length,0);
+  search('No matches');assert.ok(root.querySelector('.empty-state').textContent.includes(p.i18n.t('gantt.noMatches')));
+  assert.equal(root.querySelector('.empty-state button'),null);off();
+ }finally{dom.window.close();}
+});

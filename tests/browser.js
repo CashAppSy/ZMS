@@ -103,7 +103,21 @@ const server = http.createServer((req,res)=>{
     await page.evaluate(()=>PMS.router.navigate('/tasks/gantt'));
     assert.ok((await page.locator('.gantt-links path title').allTextContents()).some(text=>text.includes('Browser predecessor')));
   }
+  await page.setViewportSize({width:390,height:844});
+  await page.evaluate(()=>{PMS.i18n.setLang('en');PMS.router.navigate('/tasks/gantt');PMS.router.handle();document.getElementById('sidebar').classList.add('collapsed');});
+  const chart=page.locator('.gantt-root'),label=chart.locator('.gantt-row .gantt-label-col').first();
+  const beforeSticky=await label.boundingBox();await chart.evaluate(el=>{el.scrollLeft=100;});
+  const afterSticky=await label.boundingBox();
+  assert.ok(Math.abs(beforeSticky.x-afterSticky.x)<2,'task labels remain visible on horizontal scroll');
+  const ganttFilters=page.locator('.gantt-filters');
+  await ganttFilters.locator('input').first().fill('Browser predecessor');
+  await ganttFilters.getByRole('button',{name:'Apply',exact:true}).click();
+  assert.equal(await page.locator('.gantt-bar').count(),1);assert.equal(await page.locator('.gantt-links path').count(),0);
+  await ganttFilters.getByRole('button',{name:'Clear',exact:true}).click();
+  assert.ok(await page.locator('.gantt-bar').count()>1);
   await page.setViewportSize({width:1280,height:844});
+  assert.ok(await page.locator('.gantt-label-title').evaluateAll(labels=>labels.every(label=>label.getBoundingClientRect().width>=79)),'critical/blocked badges must leave room for task names');
+  await page.screenshot({path:'/tmp/zms-gantt-improved-desktop.png',fullPage:true});
   await page.evaluate(id=>PMS.editors.openTaskEditor(PMS.repos.tasks.get(id),{}),task);
   await page.waitForSelector('.modal');
   assert.ok(await page.locator('.modal').getAttribute('aria-labelledby'));

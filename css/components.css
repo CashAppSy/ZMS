@@ -1078,3 +1078,28 @@ button.dep-chip { cursor: pointer; font: inherit; }
 
 .sync-conflict-card { padding: 12px; margin-block-end: 10px; }
 .sync-conflict-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Keep task names visible while the dated timeline scrolls independently. */
+.gantt-root { max-height: 65vh; }
+.gantt-header { z-index: 7; }
+.gantt-label-col { position: sticky; left: 0; z-index: 4; background: var(--bg-elevated); }
+.gantt-header .gantt-label-col { z-index: 8; background: var(--bg-subtle); }
+.gantt-row:hover .gantt-label-col, .gantt-row:hover .gantt-time-col { background-color: var(--bg-subtle); }
+button.gantt-label-title { border: 0; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; padding: 0; }
+.gantt-label-title:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.gantt-unscheduled { display: block; padding: 10px 12px; font-size: .8rem; }
+.gantt-summary { margin-block: 8px; font-size: .85rem; }
+.gantt-filters { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); }
+[dir="rtl"] .gantt-label-col { direction: rtl; }
+@media (max-width: 640px) {
+  .gantt-root { max-height: 60vh; }
+  .gantt-filters .input, .gantt-filters select { max-width: 100%; }
+}
+
+.gantt-filters > .filter-multi { width: auto; flex: 1 1 150px; min-width: 130px; }
+.gantt-filters > .input { flex: 1 1 180px; }
+@media (max-width: 640px) {
+  .gantt-filters > .filter-multi { flex-basis: 130px; min-width: 0; }
+}
+.gantt-label-head > .gantt-label-title { flex: 1 1 auto; min-width: 80px; }
+.gantt-label-head > .dep-marker { max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
